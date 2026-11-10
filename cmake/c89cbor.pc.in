@@ -1,0 +1,8 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+Name: c89cbor
+Description: Bounded streaming RFC 8949 CBOR for C89
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lc89cbor
+Cflags: -I${includedir}

@@ -1,0 +1,9 @@
+CompileFlags:
+  Remove: [-std=*]
+  Add: [-std=c89]
+  CompilationDatabase: build/x86_64-linux-gnu-debug
+---
+If:
+  PathMatch: (lua/.*|include/c89cbor/lua\.h)
+CompileFlags:
+  CompilationDatabase: build/lua-x86_64-linux-gnu-debug

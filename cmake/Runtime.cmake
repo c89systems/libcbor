@@ -1,0 +1,19 @@
+# Local executables only. Never exported to SDK consumers or shipped libraries.
+function(c89_runtime target)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    file(GLOB loaders "${CMAKE_SYSROOT}/lib/ld-linux*.so*" "${CMAKE_SYSROOT}/lib64/ld-linux*.so*"
+      "${CMAKE_SYSROOT}/lib/ld-musl-*.so.1")
+    if(NOT loaders)
+      message(FATAL_ERROR "No target ELF loader in ${CMAKE_SYSROOT}")
+    endif()
+    list(GET loaders 0 loader)
+    target_link_options(${target} PRIVATE "-Wl,--dynamic-linker=${loader}" "-Wl,--disable-new-dtags")
+    set_property(TARGET ${target} PROPERTY BUILD_RPATH
+      "${CMAKE_SYSROOT}/lib;${CMAKE_SYSROOT}/lib64;${CMAKE_SYSROOT}/usr/lib;${CMAKE_SYSROOT}/usr/lib64")
+    if(C89CBOR_TARGET MATCHES "^aarch64")
+      set_property(TARGET ${target} PROPERTY CROSSCOMPILING_EMULATOR "qemu-aarch64;-L;${CMAKE_SYSROOT}")
+    elseif(C89CBOR_TARGET MATCHES "^armhf")
+      set_property(TARGET ${target} PROPERTY CROSSCOMPILING_EMULATOR "qemu-arm;-L;${CMAKE_SYSROOT}")
+    endif()
+  endif()
+endfunction()

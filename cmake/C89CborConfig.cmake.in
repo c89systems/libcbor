@@ -1,0 +1,3 @@
+@PACKAGE_INIT@
+include("${CMAKE_CURRENT_LIST_DIR}/C89CborTargets.cmake")
+check_required_components(C89Cbor)

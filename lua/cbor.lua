@@ -1,0 +1,38 @@
+-- Documentation for require('cbor'), the native Lua 5.5.1 module.
+-- Every codec operation delegates to libc89cbor's public C API.
+--
+-- version() -> string; status_string(status) -> diagnostic string.
+-- frames(capacity=32) -> caller-owned nesting storage, shared by one codec.
+-- decoder(frames=nil, chunk=2048), encoder(frames=nil, chunk=2048) -> handles.
+-- decoder_create(allocator=nil), encoder_create(allocator=nil) -> heap handles,
+-- or nil,status on allocation failure. Allocator handles come from native C.
+-- decoder:next(string_or_span=nil) -> status, consumed, token_or_nil.
+-- Decoder input is borrowed and pinned by returned token handles.
+-- decoder:finish(), decoder:reset(), encoder:finish(), encoder:reset() -> status.
+-- token(kind, argument=0, data=nil, indefinite=false) -> token handle.
+-- Arguments preserve exact 64-bit patterns as Lua integers (negative integer
+-- bit patterns represent arguments >= 2^63, including negative-number magnitudes).
+-- token:kind(), token:argument(), token:indefinite() inspect without copying.
+-- token:span() -> borrowed DATA span, pinned to the token/input owner.
+-- token:float64_set(number) -> status; token:float64_get() -> status,number.
+-- encoder:put(token) -> status. OUTPUT means drain the previous token first.
+-- encoder:read(capacity=2048) -> status,string (explicit copying Lua path).
+-- Pending DATA keeps its token and data owner alive until drained.
+-- span(string_or_span) -> borrowed view; span:length() -> byte count;
+-- span:string() explicitly materializes the view as a Lua string.
+-- reader(mode=SINGLE, limit=131072) -> framed reader handle.
+-- reader:next(string_or_span=nil) -> status, consumed, event_or_nil.
+-- Events contain type, length and (for RECORD_TOKEN) a token handle.
+-- reader:finish() -> status; length32(length,limit=131072) -> status,prefix.
+-- fd(descriptor) -> borrowed POSIX descriptor (never closes it).
+-- fd:source(), fd:sink() -> native endpoints pinned to the descriptor view.
+-- transfer(source,sink,mode=SINGLE,limit=131072) -> bounded native transfer.
+-- transfer:step() -> progress/status; transfer:run() executes entirely C-side
+-- until DONE, INPUT, OUTPUT or error, without token traffic through Lua.
+-- transfer:counts() -> read_bytes,written_bytes; no logical-message buffering.
+-- All handles:close() -> status, idempotently. Owners with live borrowed child
+-- handles cannot close (INVALID). GC closes unreferenced owned handles.
+-- C endpoints and spans are attached through <c89cbor/lua.h>, with owner pins.
+-- Applications wanting Lua-side processing explicitly iterate next/put/read.
+-- See docs/lua.md for errors, lifetimes, numeric limits and API mapping.
+return require('cbor')
