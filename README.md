@@ -19,6 +19,7 @@ Include `<c89cbor/cbor.h>` for tokens and codec state, `<c89cbor/io.h>` for fram
 and I/O, or load `require('cbor')` from Lua 5.5.1. The `libc89cbor` filename and
 `c89cbor_*` symbols coexist with the unrelated PJK/libcbor implementation.
 
+- [Implementation specification](docs/spec.md)
 - [Design and type ownership](docs/design.md)
 - [C API and custom types](docs/c-api.md)
 - [Lua API and native pointer interop](docs/lua.md)
