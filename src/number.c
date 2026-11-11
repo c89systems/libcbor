@@ -1,5 +1,8 @@
 #define _GNU_SOURCE
 #include "number.h"
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 #include <errno.h>
 #include <fenv.h>
 #include <float.h>
