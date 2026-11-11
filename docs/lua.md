@@ -1,6 +1,6 @@
 # Lua 5.5.1 facade
 
-`require('cbor')` loads the native module linked to the installed libc89cbor
+`require('cbor')` loads the native module linked to the installed libcbor
 shared library and cpkt 0.7.0's public Lua facade. No FFI declarations, duplicate
 codec or private libcbor symbols. [Commented Lua API](../lua/cbor.lua) documents
 all public Lua constructors and methods. C interoperability is documented in

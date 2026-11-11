@@ -1,7 +1,7 @@
 /* Grammar and bounded UTF-8 technique derived from cai/src/cai_cbor.c,
  * c89.systems, MIT; see docs/provenance.md. Pull I/O and full RFC types are
  * new. */
-#include <c89cbor/cbor.h>
+#include "internal.h"
 #include <float.h>
 #include <stdlib.h>
 #include <string.h>
@@ -141,19 +141,52 @@ static int state_init(c89cbor_state *s, c89cbor_frame *frames, size_t capacity,
   s->chunk = chunk == 0 ? C89CBOR_CHUNK : chunk;
   return C89CBOR_OK;
 }
-int c89cbor_decoder_init(c89cbor_decoder *d, c89cbor_frame *f, size_t capacity,
-                         size_t chunk) {
+int c89cbor_decoder_init(c89cbor *runtime, c89cbor_decoder *d, c89cbor_frame *f,
+                         size_t capacity, size_t chunk) {
   if (d == NULL)
     return C89CBOR_INVALID;
   memset(d, 0, sizeof(*d));
-  return state_init(&d->state, f, capacity, chunk);
+  d->next = c89cbor_decoder_next;
+  d->finish = c89cbor_decoder_finish;
+  d->reset = c89cbor_decoder_reset;
+  d->cleanup = c89cbor_decoder_cleanup;
+  d->destroy = c89cbor_decoder_destroy;
+  d->diagnostic = c89cbor_decoder_diagnostic;
+  {
+    int status = c89_lifetime_init(&d->lifetime, runtime, NULL);
+    if (status == 0)
+      status = state_init(&d->state, f, capacity, chunk);
+    if (status != 0) {
+      d->state.frames = NULL;
+      (void)c89_lifetime_cleanup(&d->lifetime);
+    }
+    return status;
+  }
 }
-int c89cbor_encoder_init(c89cbor_encoder *e, c89cbor_frame *f, size_t capacity,
-                         size_t chunk) {
+int c89cbor_encoder_init(c89cbor *runtime, c89cbor_encoder *e, c89cbor_frame *f,
+                         size_t capacity, size_t chunk) {
   if (e == NULL)
     return C89CBOR_INVALID;
   memset(e, 0, sizeof(*e));
-  return state_init(&e->state, f, capacity, chunk);
+  e->put = c89cbor_encoder_put;
+  e->read = c89cbor_encoder_read;
+  e->peek = c89cbor_encoder_peek;
+  e->advance = c89cbor_encoder_advance;
+  e->finish = c89cbor_encoder_finish;
+  e->reset = c89cbor_encoder_reset;
+  e->cleanup = c89cbor_encoder_cleanup;
+  e->destroy = c89cbor_encoder_destroy;
+  e->diagnostic = c89cbor_encoder_diagnostic;
+  {
+    int status = c89_lifetime_init(&e->lifetime, runtime, NULL);
+    if (status == 0)
+      status = state_init(&e->state, f, capacity, chunk);
+    if (status != 0) {
+      e->state.frames = NULL;
+      (void)c89_lifetime_cleanup(&e->lifetime);
+    }
+    return status;
+  }
 }
 static int parse_header(c89cbor_decoder *d, c89cbor_token *t) {
   unsigned int major = d->header[0] >> 5U, extra = d->header[0] & 31U;
@@ -200,8 +233,8 @@ static int parse_header(c89cbor_decoder *d, c89cbor_token *t) {
   }
   return begin(&d->state, t);
 }
-int c89cbor_decoder_next(c89cbor_decoder *d, const void *input, size_t n,
-                         size_t *consumed, c89cbor_token *t) {
+static int decoder_next_work(c89cbor_decoder *d, const void *input, size_t n,
+                             size_t *consumed, c89cbor_token *t) {
   const unsigned char *p = input;
   c89cbor_frame *f;
   size_t take;
@@ -264,7 +297,19 @@ int c89cbor_decoder_next(c89cbor_decoder *d, const void *input, size_t n,
   d->have = d->need = 0;
   return rc < 0 ? rc : C89CBOR_TOKEN;
 }
-int c89cbor_decoder_finish(c89cbor_decoder *d) {
+
+int c89cbor_decoder_next(c89cbor_decoder *d, const void *input, size_t length,
+                         size_t *consumed, c89cbor_token *token) {
+  int status = decoder_next_work(d, input, length, consumed, token);
+  if (d != NULL && d->lifetime.magic == C89_LIFETIME_MAGIC) {
+    if (consumed != NULL)
+      d->lifetime.progress.input += (uint64_t)*consumed;
+    c89_error(&d->lifetime, status, "decoder");
+  }
+  return status;
+}
+
+static int decoder_finish_work(c89cbor_decoder *d) {
   if (d == NULL || d->state.frames == NULL)
     return C89CBOR_INVALID;
   if (d->state.failed)
@@ -279,7 +324,7 @@ int c89cbor_decoder_reset(c89cbor_decoder *d) {
   d->state.complete = 0;
   return C89CBOR_OK;
 }
-int c89cbor_encoder_put(c89cbor_encoder *e, const c89cbor_token *t) {
+static int encoder_put_work(c89cbor_encoder *e, const c89cbor_token *t) {
   c89cbor_frame *f;
   uint64_t value;
   size_t bytes = 0, i;
@@ -357,42 +402,83 @@ int c89cbor_encoder_put(c89cbor_encoder *e, const c89cbor_token *t) {
   e->size = bytes + 1;
   return C89CBOR_OK;
 }
-int c89cbor_encoder_read(c89cbor_encoder *e, void *out, size_t capacity,
-                         size_t *written) {
+int c89cbor_encoder_peek(c89cbor_encoder *e, const void **bytes,
+                         size_t *length) {
   size_t take;
-  int rc;
-  if (written != NULL)
-    *written = 0;
-  if (e == NULL || written == NULL || (capacity && out == NULL) ||
-      e->state.frames == NULL)
+  int status;
+  if (bytes != NULL)
+    *bytes = NULL;
+  if (length != NULL)
+    *length = 0;
+  if (e == NULL || bytes == NULL || length == NULL || e->state.frames == NULL)
     return C89CBOR_INVALID;
   if (e->state.failed)
-    return e->state.failed;
-  if (capacity > e->state.chunk)
-    capacity = e->state.chunk;
+    return c89_error(&e->lifetime, e->state.failed, "encoder");
   if (e->offset < e->size) {
     take = e->size - e->offset;
-    if (take > capacity)
-      take = capacity;
-    if (take)
-      memcpy(out, e->header + e->offset, take);
-    e->offset += take;
-    *written = take;
-  } else if (e->remaining) {
-    take = e->remaining < capacity ? e->remaining : capacity;
-    if (take) {
-      rc = data_take(&e->state, e->data, take);
-      if (rc < 0)
-        return rc;
-      memcpy(out, e->data, take);
-      e->data += take;
-      e->remaining -= take;
-      *written = take;
-    }
+    if (take > e->state.chunk)
+      take = e->state.chunk;
+    *bytes = e->header + e->offset;
+    *length = take;
+    return C89CBOR_OUTPUT;
   }
+  if (e->remaining == 0)
+    return C89CBOR_OK;
+  if (e->validated == 0) {
+    take = e->remaining < e->state.chunk ? e->remaining : e->state.chunk;
+    status = data_take(&e->state, e->data, take);
+    if (status != 0)
+      return c89_error(&e->lifetime, status, "encoder");
+    e->validated = take;
+  }
+  *bytes = e->data;
+  *length = e->validated;
+  return C89CBOR_OUTPUT;
+}
+int c89cbor_encoder_advance(c89cbor_encoder *e, size_t count) {
+  size_t available;
+  if (e == NULL || e->state.frames == NULL)
+    return C89CBOR_INVALID;
+  if (e->state.failed)
+    return c89_error(&e->lifetime, e->state.failed, "encoder");
+  if (e->offset < e->size) {
+    available = e->size - e->offset;
+    if (available > e->state.chunk)
+      available = e->state.chunk;
+    if (count > available)
+      return C89CBOR_INVALID;
+    e->offset += count;
+  } else {
+    if (count > e->validated)
+      return C89CBOR_INVALID;
+    if (count != 0)
+      e->data += count;
+    e->remaining -= count;
+    e->validated -= count;
+  }
+  e->lifetime.progress.output += (uint64_t)count;
   return e->offset < e->size || e->remaining ? C89CBOR_OUTPUT : C89CBOR_OK;
 }
-int c89cbor_encoder_finish(c89cbor_encoder *e) {
+int c89cbor_encoder_read(c89cbor_encoder *e, void *out, size_t capacity,
+                         size_t *written) {
+  const void *bytes;
+  size_t length;
+  int status;
+  if (written != NULL)
+    *written = 0;
+  if (written == NULL || (capacity != 0 && out == NULL))
+    return C89CBOR_INVALID;
+  status = c89cbor_encoder_peek(e, &bytes, &length);
+  if (status != C89CBOR_OUTPUT)
+    return status;
+  if (length > capacity)
+    length = capacity;
+  if (length != 0)
+    memcpy(out, bytes, length);
+  *written = length;
+  return c89cbor_encoder_advance(e, length);
+}
+static int encoder_finish_work(c89cbor_encoder *e) {
   if (e == NULL || e->state.frames == NULL)
     return C89CBOR_INVALID;
   if (e->state.failed)
@@ -410,50 +496,90 @@ int c89cbor_encoder_reset(c89cbor_encoder *e) {
   e->state.complete = 0;
   return C89CBOR_OK;
 }
-static int allocator_valid(const c89cbor_allocator *a) {
-  return a == NULL || (a->alloc != NULL && a->free != NULL);
-}
-int c89cbor_decoder_create(const c89cbor_allocator *a, c89cbor_decoder **out) {
+int c89cbor_decoder_create(c89cbor *runtime, const c89cbor_allocator *allocator,
+                           c89cbor_decoder **out) {
+  c89cbor_allocator selected;
+  void *storage;
+  int status;
   if (out == NULL)
     return C89CBOR_INVALID;
   *out = NULL;
-  if (!allocator_valid(a))
-    return C89CBOR_INVALID;
-  *out =
-      a == NULL ? malloc(sizeof(**out)) : a->alloc(a->context, sizeof(**out));
-  if (*out == NULL)
-    return C89CBOR_NOMEM;
-  return c89cbor_decoder_init(*out, NULL, 0, 0);
+  status = c89_allocate(runtime, allocator, sizeof(**out), &storage, &selected);
+  if (status != 0)
+    return status;
+  status = c89cbor_decoder_init(runtime, storage, NULL, 0, 0);
+  if (status != 0) {
+    selected.free(selected.context, storage);
+    return status;
+  }
+  *out = storage;
+  (*out)->lifetime.allocator = selected;
+  (*out)->lifetime.owned = 1;
+  return C89CBOR_OK;
 }
-int c89cbor_encoder_create(const c89cbor_allocator *a, c89cbor_encoder **out) {
+int c89cbor_decoder_cleanup(c89cbor_decoder *value) {
+  int status;
+  if (value == NULL)
+    return C89CBOR_OK;
+  status = c89_lifetime_cleanup(&value->lifetime);
+  if (status == 0) {
+    value->state.frames = NULL;
+  }
+  return status;
+}
+int c89cbor_decoder_destroy(c89cbor_decoder *value) {
+  return value == NULL ? C89CBOR_OK
+                       : c89_lifetime_destroy(&value->lifetime, value);
+}
+int c89cbor_decoder_diagnostic(const c89cbor_decoder *value,
+                               c89cbor_error *error) {
+  return c89_lifetime_diagnostic(value == NULL ? NULL : &value->lifetime,
+                                 error);
+}
+int c89cbor_encoder_create(c89cbor *runtime, const c89cbor_allocator *allocator,
+                           c89cbor_encoder **out) {
+  c89cbor_allocator selected;
+  void *storage;
+  int status;
   if (out == NULL)
     return C89CBOR_INVALID;
   *out = NULL;
-  if (!allocator_valid(a))
-    return C89CBOR_INVALID;
-  *out =
-      a == NULL ? malloc(sizeof(**out)) : a->alloc(a->context, sizeof(**out));
-  if (*out == NULL)
-    return C89CBOR_NOMEM;
-  return c89cbor_encoder_init(*out, NULL, 0, 0);
+  status = c89_allocate(runtime, allocator, sizeof(**out), &storage, &selected);
+  if (status != 0)
+    return status;
+  status = c89cbor_encoder_init(runtime, storage, NULL, 0, 0);
+  if (status != 0) {
+    selected.free(selected.context, storage);
+    return status;
+  }
+  *out = storage;
+  (*out)->lifetime.allocator = selected;
+  (*out)->lifetime.owned = 1;
+  return C89CBOR_OK;
 }
-void c89cbor_decoder_destroy(c89cbor_decoder *d, const c89cbor_allocator *a) {
-  if (d == NULL || !allocator_valid(a))
-    return;
-  if (a == NULL)
-    free(d);
-  else
-    a->free(a->context, d);
+int c89cbor_encoder_cleanup(c89cbor_encoder *value) {
+  int status;
+  if (value == NULL)
+    return C89CBOR_OK;
+  status = c89_lifetime_cleanup(&value->lifetime);
+  if (status == 0) {
+    value->state.frames = NULL;
+    value->data = NULL;
+    value->remaining = value->validated = 0;
+  }
+  return status;
 }
-void c89cbor_encoder_destroy(c89cbor_encoder *e, const c89cbor_allocator *a) {
-  if (e == NULL || !allocator_valid(a))
-    return;
-  if (a == NULL)
-    free(e);
-  else
-    a->free(a->context, e);
+int c89cbor_encoder_destroy(c89cbor_encoder *value) {
+  return value == NULL ? C89CBOR_OK
+                       : c89_lifetime_destroy(&value->lifetime, value);
 }
-int c89cbor_float64_set(c89cbor_token *t, double value) {
+int c89cbor_encoder_diagnostic(const c89cbor_encoder *value,
+                               c89cbor_error *error) {
+  return c89_lifetime_diagnostic(value == NULL ? NULL : &value->lifetime,
+                                 error);
+}
+int c89cbor_float64_set(c89cbor *runtime, c89cbor_token *t, double value) {
+  (void)runtime;
   if (t == NULL || sizeof(value) != sizeof(uint64_t) || DBL_MANT_DIG != 53 ||
       DBL_MAX_EXP != 1024)
     return C89CBOR_INVALID;
@@ -462,7 +588,9 @@ int c89cbor_float64_set(c89cbor_token *t, double value) {
   memcpy(&t->argument, &value, sizeof(value));
   return C89CBOR_OK;
 }
-int c89cbor_float64_get(const c89cbor_token *t, double *value) {
+int c89cbor_float64_get(c89cbor *runtime, const c89cbor_token *t,
+                        double *value) {
+  (void)runtime;
   if (t == NULL || value == NULL || t->type != C89CBOR_FLOAT64 ||
       t->indefinite || sizeof(*value) != sizeof(uint64_t) ||
       DBL_MANT_DIG != 53 || DBL_MAX_EXP != 1024)
@@ -470,8 +598,12 @@ int c89cbor_float64_get(const c89cbor_token *t, double *value) {
   memcpy(value, &t->argument, sizeof(*value));
   return C89CBOR_OK;
 }
-const char *c89cbor_version(void) { return C89CBOR_VERSION; }
-const char *c89cbor_status_string(int status) {
+const char *c89cbor_version(c89cbor *runtime) {
+  (void)runtime;
+  return C89CBOR_VERSION;
+}
+const char *c89cbor_status_string(c89cbor *runtime, int status) {
+  (void)runtime;
   switch (status) {
   case C89CBOR_OK:
     return "success";
@@ -491,9 +623,39 @@ const char *c89cbor_status_string(int status) {
     return "configured resource limit exceeded";
   case C89CBOR_NOMEM:
     return "allocation failed";
+  case C89CBOR_BUSY:
+    return "receiver is busy";
+  case C89CBOR_UNSUPPORTED:
+    return "unsupported conversion";
+  case C89CBOR_SCHEMA:
+    return "mapped schema violation";
   case C89CBOR_IO:
     return "I/O failed";
   default:
     return "unknown status";
   }
+}
+
+int c89cbor_decoder_finish(c89cbor_decoder *value) {
+  int status = decoder_finish_work(value);
+  if (value != NULL && value->lifetime.magic == C89_LIFETIME_MAGIC) {
+    c89_error(&value->lifetime, status, "decoder");
+  }
+  return status;
+}
+
+int c89cbor_encoder_put(c89cbor_encoder *value, const c89cbor_token *token) {
+  int status = encoder_put_work(value, token);
+  if (value != NULL && value->lifetime.magic == C89_LIFETIME_MAGIC) {
+    c89_error(&value->lifetime, status, "encoder");
+  }
+  return status;
+}
+
+int c89cbor_encoder_finish(c89cbor_encoder *value) {
+  int status = encoder_finish_work(value);
+  if (value != NULL && value->lifetime.magic == C89_LIFETIME_MAGIC) {
+    c89_error(&value->lifetime, status, "encoder");
+  }
+  return status;
 }

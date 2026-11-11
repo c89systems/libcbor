@@ -52,8 +52,8 @@ int main(int argc, char **argv) {
     repetitions = (size_t)strtoul(argv[2], NULL, 10);
   if (!repetitions)
     return 1;
-  if (c89cbor_decoder_init(&d, NULL, 0, 0) != 0 ||
-      c89cbor_encoder_init(&e, NULL, 0, 0) != 0)
+  if (c89cbor_decoder_init(NULL, &d, NULL, 0, 0) != 0 ||
+      c89cbor_encoder_init(NULL, &e, NULL, 0, 0) != 0)
     abort();
   for (round = -1; round < (int)rounds; ++round) {
     count = 0;

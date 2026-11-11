@@ -2,7 +2,7 @@
 
 The seven SDK targets are x86_64/aarch64/armhf Linux with glibc or musl, plus
 arm64-apple-darwin. Each libcbor-VERSION-TARGET.tar.gz contains public C headers,
-static and shared libc89cbor, relocatable CMake/pkg-config metadata, docs and MIT
+static and shared libcbor, relocatable CMake/pkg-config metadata, docs and MIT
 license. Shared ABI is 0, independent of repository release version.
 
 Additional products: libcbor-VERSION.tar.gz source;

@@ -5,7 +5,7 @@ version=$(scripts/version.sh "${1:-}")
 target=x86_64-linux-gnu
 sdk=$root/build/verify/$target-release/relocated/libcbor-$version-$target
 cpkt=$root/.cache/deps/cpkt-0.7.0-$target
-[[ -f "$sdk/lib/libc89cbor.so" ]] || { printf 'Verify the extracted native Release SDK first\n' >&2; exit 1; }
+[[ -f "$sdk/lib/libcbor.so" ]] || { printf 'Verify the extracted native Release SDK first\n' >&2; exit 1; }
 [[ -d "$cpkt" ]] || { printf 'Prepare the pinned cpkt Lua SDK first\n' >&2; exit 1; }
 name=libcbor-lua-$version
 scratch=$root/build/verify-lua
@@ -30,6 +30,7 @@ cc=$(sed -n 's/^cc=//p' <<< "$description")
 args=(-G Ninja "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake"
   "-DC89CBOR_TARGET=$target" "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DCMAKE_BUILD_TYPE=Release
   "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" "-DCpktCore_DIR=$cpkt/lib/cmake/CpktCore")
+args+=("-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-$target/lib/cmake/lonejson")
 cmake -S "$scratch/extracted/$name" -B "$scratch/facade" "${args[@]}"
 cmake --build "$scratch/facade" --parallel "${BUILD_JOBS:-2}"
 cmake -S lua -B "$scratch/runner" "${args[@]}"

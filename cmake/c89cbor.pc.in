@@ -4,5 +4,6 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: c89cbor
 Description: Bounded streaming RFC 8949 CBOR for C89
 Version: @PROJECT_VERSION@
-Libs: -L${libdir} -lc89cbor
+Requires: lonejson = 0.49.0
+Libs: -L${libdir} -lcbor
 Cflags: -I${includedir}

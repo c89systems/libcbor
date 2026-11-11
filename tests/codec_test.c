@@ -23,8 +23,8 @@ static int check(const unsigned char *bytes, size_t length, size_t fragment,
   size_t at = 0, used, take, written, output = 0;
   unsigned char encoded[512];
   int rc, wr;
-  assert(c89cbor_decoder_init(&d, NULL, 0, 3) == 0);
-  assert(c89cbor_encoder_init(&e, NULL, 0, 2) == 0);
+  assert(c89cbor_decoder_init(NULL, &d, NULL, 0, 3) == 0);
+  assert(c89cbor_encoder_init(NULL, &e, NULL, 0, 2) == 0);
   for (;;) {
     take = length - at;
     if (take > fragment)
@@ -139,13 +139,13 @@ static void bounds(void) {
   c89cbor_token t;
   size_t n;
   unsigned char bytes[2] = {0x81, 0x80}, out;
-  assert(c89cbor_decoder_init(&d, f, 1, 1) == 0);
+  assert(c89cbor_decoder_init(NULL, &d, f, 1, 1) == 0);
   assert(c89cbor_decoder_next(&d, bytes, 2, &n, &t) == C89CBOR_TOKEN);
   assert(n == 1);
   assert(c89cbor_decoder_next(&d, bytes + 1, 1, &n, &t) == C89CBOR_LIMIT);
   assert(c89cbor_decoder_next(&d, NULL, 0, &n, &t) == C89CBOR_LIMIT);
   assert(c89cbor_decoder_reset(&d) == C89CBOR_INVALID);
-  assert(c89cbor_encoder_init(&e, NULL, 0, 0) == 0);
+  assert(c89cbor_encoder_init(NULL, &e, NULL, 0, 0) == 0);
   memset(&t, 0, sizeof(t));
   t.type = C89CBOR_UINT;
   t.argument = UINT64_MAX;
@@ -167,7 +167,7 @@ static void bounds(void) {
   t.argument = 2;
   assert(c89cbor_encoder_put(&e, &t) == C89CBOR_MALFORMED);
   assert(c89cbor_encoder_finish(&e) == C89CBOR_MALFORMED);
-  assert(c89cbor_decoder_init(&d, NULL, 1, 0) == C89CBOR_INVALID);
+  assert(c89cbor_decoder_init(NULL, &d, NULL, 1, 0) == C89CBOR_INVALID);
   assert(c89cbor_decoder_next(&d, NULL, 1, &n, &t) == C89CBOR_INVALID);
 }
 static void *no_alloc(void *unused) {
@@ -179,8 +179,8 @@ static void *no_alloc(void *unused) {
   size_t at, got, wrote, i;
   int rc, wr;
   (void)unused;
-  assert(c89cbor_decoder_init(&d, NULL, 0, 0) == 0);
-  assert(c89cbor_encoder_init(&e, NULL, 0, 0) == 0);
+  assert(c89cbor_decoder_init(NULL, &d, NULL, 0, 0) == 0);
+  assert(c89cbor_encoder_init(NULL, &e, NULL, 0, 0) == 0);
   memset(input, 'a', sizeof(input));
   memset(&t, 0, sizeof(t));
   t.type = C89CBOR_TEXT;
@@ -237,17 +237,17 @@ static void ownership(void) {
   memset(&a, 0, sizeof(a));
   a.alloc = refuse_alloc;
   a.free = free_alloc;
-  assert(c89cbor_decoder_create(&a, &d) == C89CBOR_NOMEM && d == NULL);
-  assert(c89cbor_encoder_create(&a, &e) == C89CBOR_NOMEM && e == NULL);
-  assert(c89cbor_decoder_create(NULL, &d) == 0);
-  assert(c89cbor_encoder_create(NULL, &e) == 0);
-  c89cbor_decoder_destroy(d, NULL);
-  c89cbor_encoder_destroy(e, NULL);
-  assert(c89cbor_float64_set(&t, -0.0) == 0);
+  assert(c89cbor_decoder_create(NULL, &a, &d) == C89CBOR_NOMEM && d == NULL);
+  assert(c89cbor_encoder_create(NULL, &a, &e) == C89CBOR_NOMEM && e == NULL);
+  assert(c89cbor_decoder_create(NULL, NULL, &d) == 0);
+  assert(c89cbor_encoder_create(NULL, NULL, &e) == 0);
+  c89cbor_decoder_destroy(d);
+  c89cbor_encoder_destroy(e);
+  assert(c89cbor_float64_set(NULL, &t, -0.0) == 0);
   assert(t.argument == (UINT64_C(1) << 63));
-  assert(c89cbor_float64_get(&t, &value) == 0 && value == 0.0);
-  assert(strchr(c89cbor_version(), '.') != NULL);
-  assert(c89cbor_status_string(-100) != NULL);
+  assert(c89cbor_float64_get(NULL, &t, &value) == 0 && value == 0.0);
+  assert(strchr(c89cbor_version(NULL), '.') != NULL);
+  assert(c89cbor_status_string(NULL, -100) != NULL);
 }
 static void incomplete_text(void) {
   static const unsigned char bytes[] = {0x61, 0xf1};
@@ -256,8 +256,8 @@ static void incomplete_text(void) {
   c89cbor_token token;
   unsigned char out;
   size_t n;
-  assert(c89cbor_decoder_init(&decoder, NULL, 0, 0) == 0);
-  assert(c89cbor_encoder_init(&encoder, NULL, 0, 0) == 0);
+  assert(c89cbor_decoder_init(NULL, &decoder, NULL, 0, 0) == 0);
+  assert(c89cbor_encoder_init(NULL, &encoder, NULL, 0, 0) == 0);
   assert(c89cbor_decoder_next(&decoder, bytes, sizeof(bytes), &n, &token) ==
          C89CBOR_TOKEN);
   assert(n == 1 && token.type == C89CBOR_TEXT);

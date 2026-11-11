@@ -1,6 +1,14 @@
 # C API
 
 Include `<c89cbor/cbor.h>` for the codec and `<c89cbor/io.h>` for framing/adapters.
+Include `<c89cbor/lonejson.h>` for the root runtime receiver and required
+lonejson 0.49.0 types. Initialize a caller-owned root with `c89cbor_init`, or
+allocate it with `c89cbor_create`. Its factories construct native children.
+Every child exposes receiver-first operation, cleanup, destruction and
+diagnostic methods. Free-function twins share the same implementation.
+Native initializers and constructors take the optional runtime first.
+NULL selects native defaults. Keep a configured root alive until its
+children have been cleaned up.
 All declarations have editor documentation, ownership rules and status semantics.
 Initialize contexts; never memcpy an active context. NULL frames with capacity 0
 uses embedded storage. A separate frame array and chunk bound are optional.
@@ -25,9 +33,18 @@ UINT64_MAX therefore represents -18446744073709551616 without signed overflow.
 All nonapplicable token fields must be zero. A text scalar can span DATA events,
 but each separate encoded indefinite text chunk must end at a Unicode boundary.
 
-Heap constructors accept NULL for libc malloc/free or an explicit pair of native
-allocator callbacks. No realloc is needed. Destroy only constructor-owned objects,
-with the same allocator. Error text is static and never allocated.
+Heap constructors accept an optional allocator override. The runtime's
+allocator, or malloc/free for native defaults, otherwise owns the shell.
+No realloc is needed. Destruction uses the allocator recorded at construction.
+Cleanup preserves shell storage and is idempotent. Destruction rejects
+caller-owned shells. A parent with live children reports BUSY. Fixed diagnostics
+are copied into caller storage and remain queryable after failure.
+
+`encoder->peek(encoder,&bytes,&length)` borrows a validated bounded output
+span. A repeated peek returns its unconsumed suffix. Accept bytes through
+`encoder->advance(encoder,count)` after a partial write. The copying read
+method drains this same state. Output readiness from put means the new token
+is still unaccepted. Drain output before retrying it.
 
 ## Custom C types
 
@@ -48,8 +65,10 @@ target_link_libraries(app PRIVATE C89Cbor::static) # or C89Cbor::shared
 
 `pkg-config --cflags --libs c89cbor` is relocatable. Linux consumers select their
 own pinned compiler/runtime; the SDK never exports workstation loader or cache
-paths. The static core needs no extra libraries; the native transfer includes
-POSIX descriptor functions only when its translation unit is linked.
+paths. Both link modes declare lonejson 0.49.0 as a required SDK prerequisite.
+Supply its CMake prefix or pkg-config directory alongside libcbor's prefix.
+The native transfer includes POSIX descriptor functions only when its
+translation unit is linked.
 
 The installed example `examples/copy.c` shows the complete blocking descriptor
 workflow. Its input and output need no size pass. Use caller-controlled polling

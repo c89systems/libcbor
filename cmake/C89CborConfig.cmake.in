@@ -1,3 +1,5 @@
 @PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(lonejson 0.49.0 EXACT CONFIG)
 include("${CMAKE_CURRENT_LIST_DIR}/C89CborTargets.cmake")
 check_required_components(C89Cbor)

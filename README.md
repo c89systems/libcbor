@@ -16,8 +16,9 @@ target_link_libraries(app PRIVATE C89Cbor::static) # or C89Cbor::shared
 ```
 
 Include `<c89cbor/cbor.h>` for tokens and codec state, `<c89cbor/io.h>` for framing
-and I/O, or load `require('cbor')` from Lua 5.5.1. The `libc89cbor` filename and
-`c89cbor_*` symbols coexist with the unrelated PJK/libcbor implementation.
+and I/O, or `<c89cbor/lonejson.h>` for the runtime receiver. Load
+`require('cbor')` from Lua 5.5.1. The build acquires the required lonejson
+0.49.0 SDK. Install PJK/libcbor in its own prefix for comparisons.
 
 - [Implementation specification](docs/spec.md)
 - [Design and type ownership](docs/design.md)

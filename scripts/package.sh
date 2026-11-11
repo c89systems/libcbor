@@ -16,9 +16,9 @@ cmake --install "build/$target-${config,,}" --prefix "$PWD/$stage/$name"
 # Strip only installed copies, never the development build or prerequisite SDK.
 strip_tool=$(sed -n 's/^CMAKE_STRIP:FILEPATH=//p' "build/$target-${config,,}/CMakeCache.txt")
 if [[ $target == arm64-apple-darwin ]]; then
-  "$strip_tool" -S "$stage/$name/lib/libc89cbor.a" "$stage/$name/lib/libc89cbor.$version.dylib"
+  "$strip_tool" -S "$stage/$name/lib/libcbor.a" "$stage/$name/lib/libcbor.$version.dylib"
 else
-  "$strip_tool" -g -D "$stage/$name/lib/libc89cbor.a" "$stage/$name/lib/libc89cbor.so.$version"
+  "$strip_tool" -g -D "$stage/$name/lib/libcbor.a" "$stage/$name/lib/libcbor.so.$version"
 fi
 printf 'version=%s\ntarget=%s\nabi=0\n' "$version" "$target" > "$stage/$name/share/doc/C89Cbor/package.txt"
 epoch=${SOURCE_DATE_EPOCH:-0}

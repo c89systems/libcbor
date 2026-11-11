@@ -110,9 +110,9 @@ static int result(cpkt_lua_state *L, int status) {
 static void release_handle(handle *h) {
   if (h->ptr != NULL) {
     if (h->heap_kind == 1)
-      c89cbor_decoder_destroy(h->ptr, h->allocator);
+      c89cbor_decoder_destroy(h->ptr);
     if (h->heap_kind == 2)
-      c89cbor_encoder_destroy(h->ptr, h->allocator);
+      c89cbor_encoder_destroy(h->ptr);
     h->ptr = NULL;
   }
   unpin(h);
@@ -222,20 +222,20 @@ static int codec_init(cpkt_lua_state *L, int encoder, int create) {
   if (create) {
     if (encoder) {
       c89cbor_encoder *e = NULL;
-      rc = c89cbor_encoder_create(allocator, &e);
+      rc = c89cbor_encoder_create(NULL, allocator, &e);
       h->ptr = e;
     } else {
       c89cbor_decoder *d = NULL;
-      rc = c89cbor_decoder_create(allocator, &d);
+      rc = c89cbor_decoder_create(NULL, allocator, &d);
       h->ptr = d;
     }
     h->heap_kind = encoder ? 2 : 1;
     h->allocator = allocator;
   } else if (encoder)
-    rc = c89cbor_encoder_init(h->ptr, frames == NULL ? NULL : frames->ptr,
+    rc = c89cbor_encoder_init(NULL, h->ptr, frames == NULL ? NULL : frames->ptr,
                               frames == NULL ? 0 : frames->count, chunk);
   else
-    rc = c89cbor_decoder_init(h->ptr, frames == NULL ? NULL : frames->ptr,
+    rc = c89cbor_decoder_init(NULL, h->ptr, frames == NULL ? NULL : frames->ptr,
                               frames == NULL ? 0 : frames->count, chunk);
   if (frames != NULL || a != NULL)
     pin(L, h, 1, 1);
@@ -374,11 +374,11 @@ static int new_span(cpkt_lua_state *L) {
 }
 static int float_set(cpkt_lua_state *L) {
   c89cbor_token *t = checked(L, 1, TOKEN)->ptr;
-  return result(L, c89cbor_float64_set(t, cpkt_lua_l_checknumber(L, 2)));
+  return result(L, c89cbor_float64_set(NULL, t, cpkt_lua_l_checknumber(L, 2)));
 }
 static int float_get(cpkt_lua_state *L) {
   double value = 0;
-  int rc = c89cbor_float64_get(checked(L, 1, TOKEN)->ptr, &value);
+  int rc = c89cbor_float64_get(NULL, checked(L, 1, TOKEN)->ptr, &value);
   result(L, rc);
   if (rc == 0)
     cpkt_lua_pushnumber(L, value);
@@ -393,7 +393,7 @@ static int new_reader(cpkt_lua_state *L) {
   if (mode > 2)
     return cpkt_lua_l_argerror(L, 1, "invalid framing mode");
   h = new_handle(L, READER, sizeof(c89cbor_reader));
-  c89cbor_reader_init(h->ptr, (c89cbor_framing)mode, limit);
+  c89cbor_reader_init(NULL, h->ptr, (c89cbor_framing)mode, limit);
   return 1;
 }
 static int next_reader(cpkt_lua_state *L) {
@@ -429,7 +429,7 @@ static int length32(cpkt_lua_state *L) {
   uint64_t n = integer(L, 1);
   int rc = n > UINT32_MAX
                ? C89CBOR_LIMIT
-               : c89cbor_length32((uint32_t)n, limit_arg(L, 2), bytes);
+               : c89cbor_length32(NULL, (uint32_t)n, limit_arg(L, 2), bytes);
   result(L, rc);
   if (!rc)
     cpkt_lua_pushlstring(L, (const char *)bytes, 4);
@@ -445,7 +445,7 @@ static int new_fd(cpkt_lua_state *L) {
     return cpkt_lua_l_argerror(L, 1, "invalid descriptor");
   h = new_handle(L, FD, sizeof(*e));
   e = h->ptr;
-  c89cbor_fd_init(&e->fd, (int)fd, &e->source, &e->sink);
+  c89cbor_fd_init(NULL, &e->fd, (int)fd, &e->source, &e->sink);
   return 1;
 }
 static int fd_source(cpkt_lua_state *L) {
@@ -468,8 +468,8 @@ static int new_transfer(cpkt_lua_state *L) {
   if (mode > 2)
     return cpkt_lua_l_argerror(L, 3, "invalid framing mode");
   h = new_handle(L, TRANSFER, sizeof(c89cbor_transfer));
-  rc =
-      c89cbor_transfer_init(h->ptr, source, sink, (c89cbor_framing)mode, limit);
+  rc = c89cbor_transfer_init(NULL, h->ptr, source, sink, (c89cbor_framing)mode,
+                             limit);
   pin(L, h, 1, 1);
   pin(L, h, 2, 2);
   if (rc < 0) {
@@ -509,12 +509,12 @@ static int transfer_counts(cpkt_lua_state *L) {
   return 2;
 }
 static int version(cpkt_lua_state *L) {
-  cpkt_lua_pushstring(L, c89cbor_version());
+  cpkt_lua_pushstring(L, c89cbor_version(NULL));
   return 1;
 }
 static int status_string(cpkt_lua_state *L) {
   return cpkt_lua_pushstring(
-             L, c89cbor_status_string((int)(int64_t)integer(L, 1))),
+             L, c89cbor_status_string(NULL, (int)(int64_t)integer(L, 1))),
          1;
 }
 static void metatable(cpkt_lua_state *L, const char *name,

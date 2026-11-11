@@ -72,7 +72,7 @@ static void *run(void *ctx) {
   L = cpkt_lua_l_newstate();
   assert(L != NULL);
   cpkt_lua_l_openlibs(L);
-  cpkt_lua_pushstring(L, c89cbor_version());
+  cpkt_lua_pushstring(L, c89cbor_version(NULL));
   cpkt_lua_setglobal(L, "expected_version");
   cpkt_lua_l_requiref(L, "cbor", opener, 1);
   cpkt_lua_pop(L, 1);
@@ -92,8 +92,8 @@ static void *run(void *ctx) {
   assert(clock_gettime(CLOCK_MONOTONIC, &begin) == 0);
   if (strcmp(args->script, "--native") == 0) {
     c89cbor_transfer transfer;
-    assert(c89cbor_transfer_init(&transfer, &source, &sink, C89CBOR_SEQUENCE,
-                                 0) == 0);
+    assert(c89cbor_transfer_init(NULL, &transfer, &source, &sink,
+                                 C89CBOR_SEQUENCE, 0) == 0);
     do {
       rc = c89cbor_transfer_step(&transfer);
     } while (rc == C89CBOR_OK);

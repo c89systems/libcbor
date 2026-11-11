@@ -48,7 +48,7 @@ static void transfer_case(const unsigned char *bytes, size_t length,
   source.read = read_memory;
   sink.context = &m;
   sink.write = write_memory;
-  assert(c89cbor_transfer_init(&t, &source, &sink, mode, 32) == 0);
+  assert(c89cbor_transfer_init(NULL, &t, &source, &sink, mode, 32) == 0);
   do {
     rc = c89cbor_transfer_step(&t);
     assert(++calls < 256);
@@ -64,7 +64,9 @@ static int reenter(void *ctx, void *out, size_t cap, size_t *count) {
   (void)out;
   (void)cap;
   *count = 0;
-  return c89cbor_transfer_step(ctx);
+  assert(c89cbor_transfer_step(ctx) == C89CBOR_BUSY);
+  assert(c89cbor_transfer_cleanup(ctx) == C89CBOR_BUSY);
+  return C89CBOR_OK;
 }
 static void descriptors(void) {
   int in[2], out[2];
@@ -75,9 +77,10 @@ static void descriptors(void) {
   unsigned char actual[4];
   assert(pipe(in) == 0 && pipe(out) == 0);
   assert(fcntl(in[0], F_SETFL, O_NONBLOCK) == 0);
-  assert(c89cbor_fd_init(&input, in[0], &source, NULL) == 0);
-  assert(c89cbor_fd_init(&output, out[1], NULL, &sink) == 0);
-  assert(c89cbor_transfer_init(&t, &source, &sink, C89CBOR_SINGLE, 0) == 0);
+  assert(c89cbor_fd_init(NULL, &input, in[0], &source, NULL) == 0);
+  assert(c89cbor_fd_init(NULL, &output, out[1], NULL, &sink) == 0);
+  assert(c89cbor_transfer_init(NULL, &t, &source, &sink, C89CBOR_SINGLE, 0) ==
+         0);
   assert(c89cbor_transfer_step(&t) == C89CBOR_INPUT);
   assert(write(in[1], "cabc", 4) == 4);
   assert(close(in[1]) == 0);
@@ -113,16 +116,19 @@ int main(void) {
   transfer_case(seq, sizeof(seq), C89CBOR_SINGLE, C89CBOR_MALFORMED);
   for (i = 0; i < sizeof(single); ++i)
     transfer_case(single, i, C89CBOR_SINGLE, C89CBOR_MALFORMED);
-  assert(c89cbor_length32(0, 0, prefix) == C89CBOR_LIMIT && prefix[0] == 1);
-  assert(c89cbor_length32(128U * 1024U, 0, prefix) == 0);
+  assert(c89cbor_length32(NULL, 0, 0, prefix) == C89CBOR_LIMIT &&
+         prefix[0] == 1);
+  assert(c89cbor_length32(NULL, 128U * 1024U, 0, prefix) == 0);
   assert(prefix[0] == 0 && prefix[1] == 2 && prefix[2] == 0 && prefix[3] == 0);
   memset(&m, 0, sizeof(m));
   source.context = &t;
   source.read = reenter;
   sink.context = &m;
   sink.write = write_memory;
-  assert(c89cbor_transfer_init(&t, &source, &sink, C89CBOR_SEQUENCE, 0) == 0);
-  assert(c89cbor_transfer_step(&t) == C89CBOR_INVALID);
+  assert(c89cbor_transfer_init(NULL, &t, &source, &sink, C89CBOR_SEQUENCE, 0) ==
+         0);
+  assert(c89cbor_transfer_step(&t) == C89CBOR_DONE);
+  assert(c89cbor_transfer_step(&t) == C89CBOR_DONE);
   descriptors();
   puts("io: framing, backpressure, truncation, byte preservation, reentry "
        "passed");

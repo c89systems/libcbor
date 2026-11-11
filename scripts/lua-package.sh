@@ -40,7 +40,7 @@ source = {
 description = { summary = "Native streaming c89.systems CBOR facade", license = "MIT" }
 dependencies = { "lua >= 5.5, < 5.6" }
 external_dependencies = {
-  CBOR = { header = "c89cbor/cbor.h", library = "c89cbor" },
+  CBOR = { header = "c89cbor/cbor.h", library = "cbor" },
   CPKT = { header = "cpkt/lua.h", library = "cpkt_lua" }
 }
 build = {
@@ -48,7 +48,7 @@ build = {
   modules = {
     cbor = {
       sources = { "lua/cbor.c" },
-      libraries = { "c89cbor", "cpkt_lua" },
+      libraries = { "cbor", "cpkt_lua" },
       incdirs = { "include", "\$(CBOR_INCDIR)", "\$(CPKT_INCDIR)" },
       libdirs = { "\$(CBOR_LIBDIR)", "\$(CPKT_LIBDIR)" }
     }

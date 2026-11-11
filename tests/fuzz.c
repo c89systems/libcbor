@@ -23,9 +23,9 @@ int main(void) {
   size_t length, at, used, wrote, position, consumed;
   uint64_t expected = 0, actual = 0;
   int rc = C89CBOR_INPUT, wr, vr;
-  assert(c89cbor_decoder_init(&d, NULL, 0, 7) == 0);
-  assert(c89cbor_decoder_init(&verify, NULL, 0, 3) == 0);
-  assert(c89cbor_encoder_init(&e, NULL, 0, 5) == 0);
+  assert(c89cbor_decoder_init(NULL, &d, NULL, 0, 7) == 0);
+  assert(c89cbor_decoder_init(NULL, &verify, NULL, 0, 3) == 0);
+  assert(c89cbor_encoder_init(NULL, &e, NULL, 0, 5) == 0);
   while ((length = fread(input, 1, sizeof(input), stdin)) != 0) {
     at = 0;
     do {

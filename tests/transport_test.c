@@ -113,7 +113,7 @@ static void receive_stream(int fd, uint64_t total, int datagram, size_t message,
   struct sockaddr_storage peer;
   socklen_t peer_length;
   unsigned char ack = 0;
-  assert(c89cbor_reader_init(&reader, C89CBOR_SINGLE, 0) == 0);
+  assert(c89cbor_reader_init(NULL, &reader, C89CBOR_SINGLE, 0) == 0);
   while (count < total) {
     peer_length = sizeof(peer);
     n = datagram == 1 ? recvfrom(fd, bytes, sizeof(bytes), 0,
@@ -127,7 +127,7 @@ static void receive_stream(int fd, uint64_t total, int datagram, size_t message,
     }
     assert(n > 0);
     if (datagram)
-      assert(c89cbor_reader_init(&reader, C89CBOR_SINGLE, 0) == 0);
+      assert(c89cbor_reader_init(NULL, &reader, C89CBOR_SINGLE, 0) == 0);
     count += decode(&reader, bytes, (size_t)n);
     if (datagram) {
       assert(c89cbor_reader_finish(&reader) == 0);
@@ -152,7 +152,7 @@ static void stream(int fd, uint64_t total, size_t message, int datagram) {
   ssize_t received;
   memset(payload, 'x', sizeof(payload));
   if (datagram) {
-    assert(c89cbor_encoder_init(&e, NULL, 0, 0) == 0);
+    assert(c89cbor_encoder_init(NULL, &e, NULL, 0, 0) == 0);
     memset(&t, 0, sizeof(t));
     t.type = C89CBOR_BYTES;
     t.argument = message;
@@ -171,7 +171,7 @@ static void stream(int fd, uint64_t total, size_t message, int datagram) {
     }
     return;
   }
-  assert(c89cbor_encoder_init(&e, NULL, 0, 0) == 0);
+  assert(c89cbor_encoder_init(NULL, &e, NULL, 0, 0) == 0);
   memset(&t, 0, sizeof(t));
   t.type = C89CBOR_BYTES;
   t.argument = total;

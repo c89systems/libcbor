@@ -1,5 +1,5 @@
 -- Documentation for require('cbor'), the native Lua 5.5.1 module.
--- Every codec operation delegates to libc89cbor's public C API.
+-- Every codec operation delegates to libcbor's public C API.
 --
 -- version() -> string; status_string(status) -> diagnostic string.
 -- frames(capacity=32) -> caller-owned nesting storage, shared by one codec.
