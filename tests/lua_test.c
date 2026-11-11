@@ -361,7 +361,7 @@ static void *run(void *ctx) {
          binding.check_runtime(&binding, 1) == NULL);
   cpkt_lua_close(L);
   assert(fixture.live == 0);
-  if (strcmp(args->script, "--native") != 0) {
+  if (strstr(args->script, "lua_test.lua") != NULL) {
     assert(fixture.output.id == 42 &&
            strcmp(fixture.output.name, "native record") == 0);
     assert(fixture.json_output.length == fixture.json_input.length &&

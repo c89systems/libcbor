@@ -199,10 +199,10 @@ static int append_scalar(c89_map_state *state, c89_map_frame *array,
   const lonejson_field *field = array->field;
   unsigned char *slot =
       (unsigned char *)array->record.output + field->struct_offset;
-  lonejson_int64 signed_value;
-  lonejson_uint64 unsigned_value;
-  double number;
-  bool boolean;
+  lonejson_int64 signed_value = 0;
+  lonejson_uint64 unsigned_value = 0;
+  double number = 0;
+  bool boolean = 0;
   lonejson_status result;
   int status, store = array_room(field, slot);
   size_t before, after;

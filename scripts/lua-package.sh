@@ -9,7 +9,7 @@ c89_owned_path "$stage"; c89_owned_path "dist/$name.tar.gz"
 mkdir -p build/lua-source dist
 rm -rf -- "$stage"
 mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs
-cp lua/cbor.c lua/cbor.lua lua/CMakeLists.txt "$stage/lua/"
+cp lua/cbor.c lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
 cp include/c89cbor/lua.h "$stage/include/c89cbor/"
 cp cmake/Runtime.cmake "$stage/cmake/"
 cp LICENSE "$stage/"
