@@ -5,9 +5,12 @@ case ${1:?valgrind or fuzz} in
 valgrind)
   command -v valgrind >/dev/null
   scripts/build.sh core x86_64-linux-gnu Debug "${2:-}"
-  for test in codec io transport receiver_static receiver_shared conversion_static conversion_shared map_static map_shared api_static api_shared; do
+  for test in codec io transport receiver_static receiver_shared conversion_static conversion_shared map_static map_shared api_static api_shared concurrency_static concurrency_shared; do
     valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=all \
       "build/x86_64-linux-gnu-debug/${test}_test"
+  done
+  for kind in static shared; do
+    valgrind --tool=helgrind --error-exitcode=99 "build/x86_64-linux-gnu-debug/concurrency_${kind}_test"
   done
   scripts/build.sh lua x86_64-linux-gnu Debug
   valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=all \
