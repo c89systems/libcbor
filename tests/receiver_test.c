@@ -8,11 +8,21 @@ typedef struct allocations {
   size_t live;
   size_t calls;
   int fail;
+  c89cbor *probe;
+  int reentered;
 } allocations;
 static void *allocate(void *context, size_t size) {
   allocations *state = context;
   void *storage;
   ++state->calls;
+  if (state->probe != NULL) {
+    c89cbor_encoder *child = NULL;
+    assert(state->probe->cleanup(state->probe) == C89CBOR_BUSY);
+    assert(state->probe->encoder_create(state->probe, NULL, &child) ==
+           C89CBOR_BUSY);
+    assert(child == NULL);
+    ++state->reentered;
+  }
   if (state->fail)
     return NULL;
   storage = malloc(size);
@@ -53,7 +63,10 @@ static void lifetime(void) {
   assert(runtime->encoder_create(runtime, NULL, &encoder) == C89CBOR_NOMEM);
   assert(encoder == NULL && storage.live == 1);
   storage.fail = 0;
+  storage.probe = runtime;
   assert(runtime->encoder_create(runtime, NULL, &encoder) == 0);
+  assert(storage.reentered == 1);
+  storage.probe = NULL;
   assert(storage.live == 2);
   assert(runtime->cleanup(runtime) == C89CBOR_BUSY);
   assert(runtime->destroy(runtime) == C89CBOR_BUSY);

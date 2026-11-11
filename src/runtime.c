@@ -32,14 +32,20 @@ int c89_allocate(c89cbor *parent, const c89cbor_allocator *override,
   *out = NULL;
   if (!c89_allocator_valid(override))
     return C89CBOR_INVALID;
-  if (parent != NULL && (parent->lifetime.magic != C89_LIFETIME_MAGIC ||
-                         !parent->lifetime.live || parent->lifetime.busy))
+  if (parent != NULL &&
+      (parent->lifetime.magic != C89_LIFETIME_MAGIC || !parent->lifetime.live))
     return C89CBOR_INVALID;
+  if (parent != NULL && parent->lifetime.busy)
+    return C89CBOR_BUSY;
   *selected =
       parent == NULL ? c89cbor_default_allocator() : parent->lifetime.allocator;
   if (override != NULL && override->alloc != NULL)
     *selected = *override;
+  if (parent != NULL)
+    parent->lifetime.busy = 1;
   *out = selected->alloc(selected->context, size);
+  if (parent != NULL)
+    parent->lifetime.busy = 0;
   return *out == NULL ? C89CBOR_NOMEM : C89CBOR_OK;
 }
 int c89_lifetime_init(c89cbor_lifetime *life, c89cbor *parent,
