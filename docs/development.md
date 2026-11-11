@@ -17,6 +17,12 @@ make valgrind VERSION=0.1.0
 make fuzz-smoke VERSION=0.1.0
 ```
 
+The fuzz smoke runs separate codec, JSON, CBOR-to-JSON and mapped targets with
+short reads and backpressure. `FUZZ_SECONDS` sets seconds per target (default
+10); `FUZZ_CASES='cbor map'` selects a focused rerun. Corpus mutations, statistics
+and any findings stay under `build/fuzz/results-<case>/`. Valgrind covers native
+codec, receiver, bridge, mapped, API and Lua cases against the pinned runtime.
+
 VERSION is an explicit preparation override, not a checked-in version source.
 An untagged checkout without it builds as 0.0.0. Exact lightweight release tags
 supply Git release versions; extracted source carries VERSION/RELEASE_MANIFEST.
