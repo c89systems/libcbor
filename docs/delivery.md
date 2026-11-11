@@ -8,7 +8,7 @@ license. Shared ABI is 0, independent of repository release version.
 Additional products: libcbor-VERSION.tar.gz source;
 libcbor-lua-VERSION.tar.gz facade source; libcbor-VERSION-1.rockspec; and
 libcbor-VERSION-1.src.rock. libcbor-VERSION-CHECKSUMS is the complete upload
-inventory. PJK/libcbor and cpkt binaries are not bundled in these products.
+inventory. PJK/libcbor and upstream Lua binaries are not bundled in these products.
 
 `make package` stages one target/configuration via CMake install and writes a
 scoped binary checksum under build/package. `make package-verify` extracts that
@@ -33,7 +33,7 @@ iteration. Remote refs remain unchanged. No script pushes or publishes artifacts
 targets on this Linux host; Darwin native execution remains a separately declared
 runner requirement and must not be represented as completed here.
 
-The Darwin deployment baseline is macOS 15, matching the pinned cpkt Lua SDK.
+The Darwin deployment baseline is macOS 15.
 `make package-lua-verify` verifies the source rock's exact nested source and
 rockspec, rebuilds both entrypoints against the extracted native SDK and runs
 Lua API/interop tests. `make package-checksums` verifies the complete inventory.

@@ -1,6 +1,16 @@
 #include <c89cbor/lua.h>
+#include <lua.h>
+#include <lauxlib.h>
 #include <limits.h>
 #include <string.h>
+#if LUA_VERSION_NUM != 505
+#error "libcbor requires Lua 5.5"
+#endif
+typedef char
+    c89_lua_integer_requires_64_bits[sizeof(lua_Integer) == 8 ? 1 : -1];
+typedef char
+    c89_lua_number_requires_binary64[sizeof(lua_Number) == sizeof(double) ? 1
+                                                                          : -1];
 #define ROOT "c89cbor.runtime"
 #define CONVERSION "c89cbor.conversion"
 #define VIEW "c89cbor.record_view"
@@ -39,38 +49,37 @@ typedef struct endpoint {
   c89cbor_sink sink;
 } endpoint;
 
-static uint64_t integer(cpkt_lua_state *L, int index) {
-  cpkt_lua_integer n = cpkt_lua_l_checkinteger(L, index);
-  return ((uint64_t)n.high << 32U) | n.low;
+static uint64_t integer(lua_State *L, int index) {
+  return (uint64_t)luaL_checkinteger(L, index);
 }
-static void push_integer(cpkt_lua_state *L, uint64_t n) {
-  cpkt_lua_pushinteger(L,
-                       cpkt_lua_integer_make((unsigned int)(n >> 32U),
-                                             (unsigned int)(n & UINT32_MAX)));
+static void push_integer(lua_State *L, uint64_t n) {
+  lua_Integer value =
+      n <= INT64_MAX ? (lua_Integer)n : -1 - (lua_Integer)(UINT64_MAX - n);
+  lua_pushinteger(L, value);
 }
-static uint64_t optional(cpkt_lua_state *L, int index, uint64_t fallback) {
-  return cpkt_lua_isnoneornil(L, index) ? fallback : integer(L, index);
+static uint64_t optional(lua_State *L, int index, uint64_t fallback) {
+  return lua_isnoneornil(L, index) ? fallback : integer(L, index);
 }
-static size_t size_arg(cpkt_lua_state *L, int index, size_t fallback) {
+static size_t size_arg(lua_State *L, int index, size_t fallback) {
   uint64_t n = optional(L, index, (uint64_t)fallback);
   if (n > (uint64_t)(size_t)-1)
-    cpkt_lua_l_argerror(L, index, "size exceeds size_t");
+    luaL_argerror(L, index, "size exceeds size_t");
   return (size_t)n;
 }
-static uint32_t limit_arg(cpkt_lua_state *L, int index) {
+static uint32_t limit_arg(lua_State *L, int index) {
   uint64_t n = optional(L, index, 0);
   if (n > UINT32_MAX)
-    cpkt_lua_l_argerror(L, index, "limit exceeds uint32_t");
+    luaL_argerror(L, index, "limit exceeds uint32_t");
   return (uint32_t)n;
 }
-static handle *checked(cpkt_lua_state *L, int index, const char *kind) {
-  handle *h = cpkt_lua_l_checkudata(L, index, kind);
+static handle *checked(lua_State *L, int index, const char *kind) {
+  handle *h = luaL_checkudata(L, index, kind);
   if (h->ptr == NULL)
-    cpkt_lua_l_argerror(L, index, "handle is closed");
+    luaL_argerror(L, index, "handle is closed");
   return h;
 }
-static handle *new_handle(cpkt_lua_state *L, const char *kind, size_t bytes) {
-  handle *h = cpkt_lua_newuserdatauv(L, sizeof(*h) + bytes, 5);
+static handle *new_handle(lua_State *L, const char *kind, size_t bytes) {
+  handle *h = lua_newuserdatauv(L, sizeof(*h) + bytes, 5);
   memset(h, 0, sizeof(*h) + bytes);
   h->ptr = bytes ? h + 1 : NULL;
   if (bytes != 0) {
@@ -83,26 +92,26 @@ static handle *new_handle(cpkt_lua_state *L, const char *kind, size_t bytes) {
                    : strcmp(kind, CONVERSION) == 0 ? -7
                                                    : 0;
   }
-  cpkt_lua_l_setmetatable(L, kind);
+  luaL_setmetatable(L, kind);
   return h;
 }
-static handle *any_handle(cpkt_lua_state *L, int index) {
+static handle *any_handle(lua_State *L, int index) {
   static const char *const kinds[] = {
       DEC,  ENC,    READER, SOURCE, SINK,       TRANSFER, ALLOC,   TOKEN,
       SPAN, FRAMES, FD,     ROOT,   CONVERSION, VIEW,     OPTIONS, CONFIG};
   size_t i;
   for (i = 0; i < sizeof(kinds) / sizeof(kinds[0]); ++i) {
-    handle *h = cpkt_lua_l_testudata(L, index, kinds[i]);
+    handle *h = luaL_testudata(L, index, kinds[i]);
     if (h != NULL)
       return h;
   }
   return NULL;
 }
-static void pin(cpkt_lua_state *L, handle *h, int index, int slot) {
+static void pin(lua_State *L, handle *h, int index, int slot) {
   handle *parent;
-  if (index == 0 || cpkt_lua_isnoneornil(L, index))
+  if (index == 0 || lua_isnoneornil(L, index))
     return;
-  index = cpkt_lua_absindex(L, index);
+  index = lua_absindex(L, index);
   parent = any_handle(L, index);
   if (parent == h)
     return;
@@ -110,8 +119,8 @@ static void pin(cpkt_lua_state *L, handle *h, int index, int slot) {
     ++parent->borrowers;
     h->parent[slot - 1] = parent;
   }
-  cpkt_lua_pushvalue(L, index);
-  cpkt_lua_setiuservalue(L, -2, slot);
+  lua_pushvalue(L, index);
+  lua_setiuservalue(L, -2, slot);
 }
 static int release_handle(handle *h);
 static void drop_parent(handle *parent) {
@@ -128,7 +137,7 @@ static void unpin(handle *h) {
     }
   }
 }
-static int result(cpkt_lua_state *L, int status) {
+static int result(lua_State *L, int status) {
   push_integer(L, (uint64_t)(int64_t)status);
   return 1;
 }
@@ -188,13 +197,13 @@ static int release_handle(handle *h) {
   unpin(h);
   return C89CBOR_OK;
 }
-static int close_handle(cpkt_lua_state *L) {
+static int close_handle(lua_State *L) {
   handle *h = any_handle(L, 1);
   if (h == NULL || h->borrowers || h->active)
     return result(L, C89CBOR_INVALID);
   return result(L, release_handle(h));
 }
-static int gc_handle(cpkt_lua_state *L) {
+static int gc_handle(lua_State *L) {
   handle *h = any_handle(L, 1);
   if (h != NULL) {
     h->gc_pending = 1;
@@ -204,19 +213,19 @@ static int gc_handle(cpkt_lua_state *L) {
   return 0;
 }
 #define BRIDGE(name, ctype, kind)                                              \
-  static int push_##name(cpkt_lua_state *L, ctype *value, int owner) {         \
+  static int push_##name(lua_State *L, ctype *value, int owner) {              \
     handle *h;                                                                 \
     if (L == NULL || value == NULL)                                            \
       return C89CBOR_INVALID;                                                  \
     if (owner)                                                                 \
-      owner = cpkt_lua_absindex(L, owner);                                     \
+      owner = lua_absindex(L, owner);                                          \
     h = new_handle(L, kind, 0);                                                \
     h->ptr = value;                                                            \
     pin(L, h, owner, 1);                                                       \
     return 0;                                                                  \
   }                                                                            \
-  static ctype *check_##name(cpkt_lua_state *L, int index) {                   \
-    handle *h = cpkt_lua_l_testudata(L, index, kind);                          \
+  static ctype *check_##name(lua_State *L, int index) {                        \
+    handle *h = luaL_testudata(L, index, kind);                                \
     return h == NULL ? NULL : h->ptr;                                          \
   }
 BRIDGE(decoder, c89cbor_decoder, DEC)
@@ -240,30 +249,29 @@ static int valid_record_view(const lonejson_record_view *view) {
          view->schema.map != NULL && view->record != NULL &&
          view->schema.record_size >= view->schema.map->struct_size;
 }
-static int push_record_view(cpkt_lua_state *L, lonejson_record_view *view,
+static int push_record_view(lua_State *L, lonejson_record_view *view,
                             int owner) {
   handle *h;
   if (L == NULL || !valid_record_view(view))
     return C89CBOR_INVALID;
   if (owner != 0)
-    owner = cpkt_lua_absindex(L, owner);
+    owner = lua_absindex(L, owner);
   h = new_handle(L, VIEW, sizeof(*view));
   memcpy(h->ptr, view, sizeof(*view));
   pin(L, h, owner, 1);
   return C89CBOR_OK;
 }
-static lonejson_record_view *check_record_view(cpkt_lua_state *L, int index) {
-  handle *h = cpkt_lua_l_testudata(L, index, VIEW);
+static lonejson_record_view *check_record_view(lua_State *L, int index) {
+  handle *h = luaL_testudata(L, index, VIEW);
   return h != NULL && valid_record_view(h->ptr) ? h->ptr : NULL;
 }
-static int push_span(cpkt_lua_state *L, const void *bytes, size_t n,
-                     int owner) {
+static int push_span(lua_State *L, const void *bytes, size_t n, int owner) {
   handle *h;
   span *s;
   if (L == NULL || (bytes == NULL && n))
     return C89CBOR_INVALID;
   if (owner)
-    owner = cpkt_lua_absindex(L, owner);
+    owner = lua_absindex(L, owner);
   h = new_handle(L, SPAN, sizeof(*s));
   s = h->ptr;
   s->bytes = bytes;
@@ -271,9 +279,8 @@ static int push_span(cpkt_lua_state *L, const void *bytes, size_t n,
   pin(L, h, owner, 1);
   return 0;
 }
-static int check_span(cpkt_lua_state *L, int index, const void **bytes,
-                      size_t *n) {
-  handle *h = cpkt_lua_l_testudata(L, index, SPAN);
+static int check_span(lua_State *L, int index, const void **bytes, size_t *n) {
+  handle *h = luaL_testudata(L, index, SPAN);
   span *s;
   if (bytes != NULL)
     *bytes = NULL;
@@ -289,7 +296,7 @@ static int check_span(cpkt_lua_state *L, int index, const void **bytes,
 
 /* The binding itself owns no Lua references. Each pushed handle owns its pins.
  */
-int c89cbor_lua_init(c89cbor_lua *binding, cpkt_lua_state *state,
+int c89cbor_lua_init(c89cbor_lua *binding, lua_State *state,
                      const c89cbor_allocator *allocator, c89cbor_error *error) {
   if (error != NULL)
     memset(error, 0, sizeof(*error));
@@ -340,9 +347,8 @@ int c89cbor_lua_init(c89cbor_lua *binding, cpkt_lua_state *state,
   binding->active = 1;
   return C89CBOR_OK;
 }
-int c89cbor_lua_create(cpkt_lua_state *state,
-                       const c89cbor_allocator *allocator, c89cbor_lua **out,
-                       c89cbor_error *error) {
+int c89cbor_lua_create(lua_State *state, const c89cbor_allocator *allocator,
+                       c89cbor_lua **out, c89cbor_error *error) {
   c89cbor_lua *binding;
   c89cbor_allocator selected =
       allocator == NULL ? c89cbor_default_allocator() : *allocator;
@@ -402,11 +408,11 @@ int c89cbor_lua_diagnostic(const c89cbor_lua *binding, c89cbor_error *error) {
 static int binding_valid(const c89cbor_lua *binding) {
   return binding != NULL && binding->active && binding->state != NULL;
 }
-static int owner_valid(cpkt_lua_state *L, int owner) {
+static int owner_valid(lua_State *L, int owner) {
   handle *h;
   if (owner == 0)
     return 1;
-  if (cpkt_lua_isnoneornil(L, owner))
+  if (lua_isnoneornil(L, owner))
     return 0;
   h = any_handle(L, owner);
   return h == NULL || h->ptr != NULL;
@@ -451,26 +457,26 @@ int c89cbor_lua_check_span(c89cbor_lua *binding, int index, const void **bytes,
              ? check_span(binding->state, index, bytes, length)
              : C89CBOR_INVALID;
 }
-static const void *input(cpkt_lua_state *L, int index, size_t *n) {
+static const void *input(lua_State *L, int index, size_t *n) {
   const void *bytes;
-  if (cpkt_lua_isnoneornil(L, index)) {
+  if (lua_isnoneornil(L, index)) {
     *n = 0;
     return NULL;
   }
   if (check_span(L, index, &bytes, n) == 0)
     return bytes;
-  return cpkt_lua_l_checklstring(L, index, n);
+  return luaL_checklstring(L, index, n);
 }
-static int new_frames(cpkt_lua_state *L) {
+static int new_frames(lua_State *L) {
   size_t n = size_arg(L, 1, C89CBOR_DEPTH);
   handle *h;
   if (!n || n > ((size_t)-1 - sizeof(handle)) / sizeof(c89cbor_frame))
-    return cpkt_lua_l_argerror(L, 1, "invalid frame capacity");
+    return luaL_argerror(L, 1, "invalid frame capacity");
   h = new_handle(L, FRAMES, n * sizeof(c89cbor_frame));
   h->count = n;
   return 1;
 }
-static int codec_init(cpkt_lua_state *L, int encoder, int create) {
+static int codec_init(lua_State *L, int encoder, int create) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   handle *frames = NULL, *a = NULL, *h;
@@ -478,18 +484,18 @@ static int codec_init(cpkt_lua_state *L, int encoder, int create) {
   size_t chunk = size_arg(L, 2 + base, 0);
   int rc;
   if (base && checked(L, 1, ROOT)->active) {
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
     result(L, C89CBOR_BUSY);
     return 2;
   }
-  if (!cpkt_lua_isnoneornil(L, 1 + base)) {
+  if (!lua_isnoneornil(L, 1 + base)) {
     if (create) {
       a = checked(L, 1 + base, ALLOC);
       allocator = a->ptr;
     } else {
       frames = checked(L, 1 + base, FRAMES);
       if (frames->borrowers)
-        return cpkt_lua_l_argerror(L, 1, "frames already in use");
+        return luaL_argerror(L, 1, "frames already in use");
     }
   }
   h = new_handle(L, encoder ? ENC : DEC,
@@ -525,18 +531,18 @@ static int codec_init(cpkt_lua_state *L, int encoder, int create) {
   if (base)
     pin(L, h, 1, 3);
   if (rc < 0) {
-    cpkt_lua_pop(L, 1);
-    cpkt_lua_pushnil(L);
+    lua_pop(L, 1);
+    lua_pushnil(L);
     result(L, rc);
     return 2;
   }
   return 1;
 }
-static int new_decoder(cpkt_lua_state *L) { return codec_init(L, 0, 0); }
-static int new_encoder(cpkt_lua_state *L) { return codec_init(L, 1, 0); }
-static int create_decoder(cpkt_lua_state *L) { return codec_init(L, 0, 1); }
-static int create_encoder(cpkt_lua_state *L) { return codec_init(L, 1, 1); }
-static int next_decoder(cpkt_lua_state *L) {
+static int new_decoder(lua_State *L) { return codec_init(L, 0, 0); }
+static int new_encoder(lua_State *L) { return codec_init(L, 1, 0); }
+static int create_decoder(lua_State *L) { return codec_init(L, 0, 1); }
+static int create_encoder(lua_State *L) { return codec_init(L, 1, 1); }
+static int next_decoder(lua_State *L) {
   c89cbor_decoder *d = checked(L, 1, DEC)->ptr;
   c89cbor_token t;
   size_t n, used;
@@ -549,13 +555,13 @@ static int next_decoder(cpkt_lua_state *L) {
     memcpy(h->ptr, &t, sizeof(t));
     pin(L, h, 2, 1);
   } else
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
   return 3;
 }
-static int finish_decoder(cpkt_lua_state *L) {
+static int finish_decoder(lua_State *L) {
   return result(L, c89cbor_decoder_finish(checked(L, 1, DEC)->ptr));
 }
-static int next_tag(cpkt_lua_state *L) {
+static int next_tag(lua_State *L) {
   c89cbor_decoder *decoder = checked(L, 1, DEC)->ptr;
   uint64_t number;
   size_t length, consumed;
@@ -567,17 +573,17 @@ static int next_tag(cpkt_lua_state *L) {
   if (status == C89CBOR_TOKEN)
     push_integer(L, number);
   else
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
   return 3;
 }
-static int reset_decoder(cpkt_lua_state *L) {
+static int reset_decoder(lua_State *L) {
   return result(L, c89cbor_decoder_reset(checked(L, 1, DEC)->ptr));
 }
-static int finish_encoder(cpkt_lua_state *L) {
+static int finish_encoder(lua_State *L) {
   return result(L, c89cbor_encoder_finish(checked(L, 1, ENC)->ptr));
 }
-static void unpin_data(cpkt_lua_state *L, handle *h);
-static int reset_encoder(cpkt_lua_state *L) {
+static void unpin_data(lua_State *L, handle *h);
+static int reset_encoder(lua_State *L) {
   handle *h = checked(L, 1, ENC);
   int status;
   if (h->borrowers)
@@ -587,16 +593,16 @@ static int reset_encoder(cpkt_lua_state *L) {
     unpin_data(L, h);
   return result(L, status);
 }
-static int new_token(cpkt_lua_state *L) {
+static int new_token(lua_State *L) {
   uint64_t kind = integer(L, 1), argument = optional(L, 2, 0);
   size_t n = 0;
   const void *bytes = NULL;
   handle *h;
   c89cbor_token *t;
-  int indefinite = cpkt_lua_toboolean(L, 4);
+  int indefinite = lua_toboolean(L, 4);
   if (kind > C89CBOR_END)
-    return cpkt_lua_l_argerror(L, 1, "unknown token kind");
-  if (!cpkt_lua_isnoneornil(L, 3))
+    return luaL_argerror(L, 1, "unknown token kind");
+  if (!lua_isnoneornil(L, 3))
     bytes = input(L, 3, &n);
   h = new_handle(L, TOKEN, sizeof(*t));
   t = h->ptr;
@@ -608,15 +614,15 @@ static int new_token(cpkt_lua_state *L) {
   pin(L, h, 3, 1);
   return 1;
 }
-static void unpin_data(cpkt_lua_state *L, handle *h) {
+static void unpin_data(lua_State *L, handle *h) {
   if (h->parent[1] != NULL) {
     drop_parent(h->parent[1]);
     h->parent[1] = NULL;
   }
-  cpkt_lua_pushnil(L);
-  cpkt_lua_setiuservalue(L, 1, 2);
+  lua_pushnil(L);
+  lua_setiuservalue(L, 1, 2);
 }
-static int encoder_tag(cpkt_lua_state *L) {
+static int encoder_tag(lua_State *L) {
   handle *h = checked(L, 1, ENC);
   int status;
   if (h->borrowers)
@@ -626,7 +632,7 @@ static int encoder_tag(cpkt_lua_state *L) {
     unpin_data(L, h);
   return result(L, status);
 }
-static int encoder_end_tag(cpkt_lua_state *L) {
+static int encoder_end_tag(lua_State *L) {
   handle *h = checked(L, 1, ENC);
   int status;
   if (h->borrowers)
@@ -636,7 +642,7 @@ static int encoder_end_tag(cpkt_lua_state *L) {
     unpin_data(L, h);
   return result(L, status);
 }
-static int put_encoder(cpkt_lua_state *L) {
+static int put_encoder(lua_State *L) {
   handle *h = checked(L, 1, ENC);
   c89cbor_encoder *e = h->ptr;
   c89cbor_token *t = checked(L, 2, TOKEN)->ptr;
@@ -650,12 +656,12 @@ static int put_encoder(cpkt_lua_state *L) {
     /* Pin DATA until drained, including when its token is collected by Lua. */
     h->parent[1] = checked(L, 2, TOKEN);
     ++h->parent[1]->borrowers;
-    cpkt_lua_pushvalue(L, 2);
-    cpkt_lua_setiuservalue(L, 1, 2);
+    lua_pushvalue(L, 2);
+    lua_setiuservalue(L, 1, 2);
   }
   return result(L, rc);
 }
-static int read_encoder(cpkt_lua_state *L) {
+static int read_encoder(lua_State *L) {
   handle *h = checked(L, 1, ENC);
   c89cbor_encoder *e = h->ptr;
   unsigned char bytes[C89CBOR_CHUNK];
@@ -665,52 +671,51 @@ static int read_encoder(cpkt_lua_state *L) {
     capacity = sizeof(bytes);
   rc = c89cbor_encoder_read(e, bytes, capacity, &n);
   result(L, rc);
-  cpkt_lua_pushlstring(L, (const char *)bytes, n);
+  lua_pushlstring(L, (const char *)bytes, n);
   if (rc != C89CBOR_OUTPUT)
     unpin_data(L, h);
   return 2;
 }
-static int token_kind(cpkt_lua_state *L) {
+static int token_kind(lua_State *L) {
   return result(L, ((c89cbor_token *)checked(L, 1, TOKEN)->ptr)->type);
 }
-static int token_argument(cpkt_lua_state *L) {
+static int token_argument(lua_State *L) {
   push_integer(L, ((c89cbor_token *)checked(L, 1, TOKEN)->ptr)->argument);
   return 1;
 }
-static int token_indefinite(cpkt_lua_state *L) {
-  cpkt_lua_pushboolean(
-      L, ((c89cbor_token *)checked(L, 1, TOKEN)->ptr)->indefinite);
+static int token_indefinite(lua_State *L) {
+  lua_pushboolean(L, ((c89cbor_token *)checked(L, 1, TOKEN)->ptr)->indefinite);
   return 1;
 }
-static int token_span(cpkt_lua_state *L) {
+static int token_span(lua_State *L) {
   c89cbor_token *t = checked(L, 1, TOKEN)->ptr;
   push_span(L, t->data, t->length, 1);
   return 1;
 }
-static int span_string(cpkt_lua_state *L) {
+static int span_string(lua_State *L) {
   span *s = checked(L, 1, SPAN)->ptr;
-  cpkt_lua_pushlstring(L, s->bytes == NULL ? "" : s->bytes, s->length);
+  lua_pushlstring(L, s->bytes == NULL ? "" : s->bytes, s->length);
   return 1;
 }
-static int span_length(cpkt_lua_state *L) {
+static int span_length(lua_State *L) {
   span *s = checked(L, 1, SPAN)->ptr;
   push_integer(L, s->length);
   return 1;
 }
-static int new_span(cpkt_lua_state *L) {
+static int new_span(lua_State *L) {
   size_t n;
   const void *bytes = input(L, 1, &n);
   push_span(L, bytes, n, 1);
   return 1;
 }
-static int float_set(cpkt_lua_state *L) {
+static int float_set(lua_State *L) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   c89cbor_token *t = checked(L, 1 + base, TOKEN)->ptr;
-  return result(
-      L, c89cbor_float64_set(runtime, t, cpkt_lua_l_checknumber(L, 2 + base)));
+  return result(L,
+                c89cbor_float64_set(runtime, t, luaL_checknumber(L, 2 + base)));
 }
-static int float_get(cpkt_lua_state *L) {
+static int float_get(lua_State *L) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   double value = 0;
@@ -718,12 +723,12 @@ static int float_get(cpkt_lua_state *L) {
       c89cbor_float64_get(runtime, checked(L, 1 + base, TOKEN)->ptr, &value);
   result(L, rc);
   if (rc == 0)
-    cpkt_lua_pushnumber(L, value);
+    lua_pushnumber(L, value);
   else
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
   return 2;
 }
-static int reader_factory(cpkt_lua_state *L, int create) {
+static int reader_factory(lua_State *L, int create) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   uint64_t mode = optional(L, 1 + base, 0);
@@ -732,9 +737,9 @@ static int reader_factory(cpkt_lua_state *L, int create) {
   c89cbor_reader *reader = NULL;
   int status;
   if (mode > 2)
-    return cpkt_lua_l_argerror(L, 1, "invalid framing mode");
+    return luaL_argerror(L, 1, "invalid framing mode");
   if (base && checked(L, 1, ROOT)->active) {
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
     result(L, C89CBOR_BUSY);
     return 2;
   }
@@ -751,8 +756,8 @@ static int reader_factory(cpkt_lua_state *L, int create) {
   if (base)
     checked(L, 1, ROOT)->active = 0;
   if (status != 0) {
-    cpkt_lua_pop(L, 1);
-    cpkt_lua_pushnil(L);
+    lua_pop(L, 1);
+    lua_pushnil(L);
     result(L, status);
     return 2;
   }
@@ -760,9 +765,9 @@ static int reader_factory(cpkt_lua_state *L, int create) {
     pin(L, h, 1, 3);
   return 1;
 }
-static int new_reader(cpkt_lua_state *L) { return reader_factory(L, 0); }
-static int create_reader(cpkt_lua_state *L) { return reader_factory(L, 1); }
-static int next_reader(cpkt_lua_state *L) {
+static int new_reader(lua_State *L) { return reader_factory(L, 0); }
+static int create_reader(lua_State *L) { return reader_factory(L, 1); }
+static int next_reader(lua_State *L) {
   c89cbor_reader *r = checked(L, 1, READER)->ptr;
   size_t n, used;
   const void *bytes = input(L, 2, &n);
@@ -772,25 +777,25 @@ static int next_reader(cpkt_lua_state *L) {
   push_integer(L, used);
   if (rc == C89CBOR_TOKEN) {
     handle *h;
-    cpkt_lua_newtable(L);
+    lua_newtable(L);
     result(L, event.type);
-    cpkt_lua_setfield(L, -2, "type");
+    lua_setfield(L, -2, "type");
     push_integer(L, event.length);
-    cpkt_lua_setfield(L, -2, "length");
+    lua_setfield(L, -2, "length");
     if (event.type == C89CBOR_RECORD_TOKEN) {
       h = new_handle(L, TOKEN, sizeof(event.token));
       memcpy(h->ptr, &event.token, sizeof(event.token));
       pin(L, h, 2, 1);
-      cpkt_lua_setfield(L, -2, "token");
+      lua_setfield(L, -2, "token");
     }
   } else
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
   return 3;
 }
-static int finish_reader(cpkt_lua_state *L) {
+static int finish_reader(lua_State *L) {
   return result(L, c89cbor_reader_finish(checked(L, 1, READER)->ptr));
 }
-static int length32(cpkt_lua_state *L) {
+static int length32(lua_State *L) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   unsigned char bytes[4];
@@ -800,12 +805,12 @@ static int length32(cpkt_lua_state *L) {
                                              limit_arg(L, 2 + base), bytes);
   result(L, rc);
   if (!rc)
-    cpkt_lua_pushlstring(L, (const char *)bytes, 4);
+    lua_pushlstring(L, (const char *)bytes, 4);
   else
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
   return 2;
 }
-static int fd_factory(cpkt_lua_state *L, int create) {
+static int fd_factory(lua_State *L, int create) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   uint64_t fd = integer(L, 1 + base);
@@ -814,9 +819,9 @@ static int fd_factory(cpkt_lua_state *L, int create) {
   c89cbor_fd *descriptor = NULL;
   int status;
   if (fd > INT_MAX)
-    return cpkt_lua_l_argerror(L, 1, "invalid descriptor");
+    return luaL_argerror(L, 1, "invalid descriptor");
   if (base && checked(L, 1, ROOT)->active) {
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
     result(L, C89CBOR_BUSY);
     return 2;
   }
@@ -834,8 +839,8 @@ static int fd_factory(cpkt_lua_state *L, int create) {
   if (base)
     checked(L, 1, ROOT)->active = 0;
   if (status != 0) {
-    cpkt_lua_pop(L, 1);
-    cpkt_lua_pushnil(L);
+    lua_pop(L, 1);
+    lua_pushnil(L);
     result(L, status);
     return 2;
   }
@@ -843,23 +848,23 @@ static int fd_factory(cpkt_lua_state *L, int create) {
     pin(L, h, 1, 3);
   return 1;
 }
-static int new_fd(cpkt_lua_state *L) { return fd_factory(L, 0); }
-static int create_fd(cpkt_lua_state *L) { return fd_factory(L, 1); }
-static int fd_source(cpkt_lua_state *L) {
+static int new_fd(lua_State *L) { return fd_factory(L, 0); }
+static int create_fd(lua_State *L) { return fd_factory(L, 1); }
+static int fd_source(lua_State *L) {
   c89cbor_fd *fd = checked(L, 1, FD)->ptr;
   handle *h = new_handle(L, SOURCE, sizeof(c89cbor_source));
   (void)c89cbor_fd_source(fd, h->ptr);
   pin(L, h, 1, 1);
   return 1;
 }
-static int fd_sink(cpkt_lua_state *L) {
+static int fd_sink(lua_State *L) {
   c89cbor_fd *fd = checked(L, 1, FD)->ptr;
   handle *h = new_handle(L, SINK, sizeof(c89cbor_sink));
   (void)c89cbor_fd_sink(fd, h->ptr);
   pin(L, h, 1, 1);
   return 1;
 }
-static int transfer_factory(cpkt_lua_state *L, int create) {
+static int transfer_factory(lua_State *L, int create) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
   c89cbor_source *source = checked(L, 1 + base, SOURCE)->ptr;
@@ -870,9 +875,9 @@ static int transfer_factory(cpkt_lua_state *L, int create) {
   c89cbor_transfer *transfer = NULL;
   int rc;
   if (mode > 2)
-    return cpkt_lua_l_argerror(L, 3, "invalid framing mode");
+    return luaL_argerror(L, 3, "invalid framing mode");
   if (base && checked(L, 1, ROOT)->active) {
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
     result(L, C89CBOR_BUSY);
     return 2;
   }
@@ -894,16 +899,16 @@ static int transfer_factory(cpkt_lua_state *L, int create) {
   if (base)
     pin(L, h, 1, 3);
   if (rc < 0) {
-    cpkt_lua_pop(L, 1);
-    cpkt_lua_pushnil(L);
+    lua_pop(L, 1);
+    lua_pushnil(L);
     result(L, rc);
     return 2;
   }
   return 1;
 }
-static int new_transfer(cpkt_lua_state *L) { return transfer_factory(L, 0); }
-static int create_transfer(cpkt_lua_state *L) { return transfer_factory(L, 1); }
-static int transfer_step(cpkt_lua_state *L) {
+static int new_transfer(lua_State *L) { return transfer_factory(L, 0); }
+static int create_transfer(lua_State *L) { return transfer_factory(L, 1); }
+static int transfer_step(lua_State *L) {
   handle *h = checked(L, 1, TRANSFER);
   int rc;
   if (h->active)
@@ -913,7 +918,7 @@ static int transfer_step(cpkt_lua_state *L) {
   h->active = 0;
   return result(L, rc);
 }
-static int transfer_run(cpkt_lua_state *L) {
+static int transfer_run(lua_State *L) {
   handle *h = checked(L, 1, TRANSFER);
   int rc;
   if (h->active)
@@ -925,31 +930,31 @@ static int transfer_run(cpkt_lua_state *L) {
   h->active = 0;
   return result(L, rc);
 }
-static int transfer_counts(cpkt_lua_state *L) {
+static int transfer_counts(lua_State *L) {
   c89cbor_transfer *t = checked(L, 1, TRANSFER)->ptr;
   push_integer(L, t->read_bytes);
   push_integer(L, t->written_bytes);
   return 2;
 }
-static int version(cpkt_lua_state *L) {
-  cpkt_lua_pushstring(L, c89cbor_version(NULL));
+static int version(lua_State *L) {
+  lua_pushstring(L, c89cbor_version(NULL));
   return 1;
 }
-static int status_string(cpkt_lua_state *L) {
+static int status_string(lua_State *L) {
   int base = check_runtime(L, 1) != NULL ? 1 : 0;
-  return cpkt_lua_pushstring(L, c89cbor_status_string(
-                                    NULL, (int)(int64_t)integer(L, 1 + base))),
+  return lua_pushstring(L, c89cbor_status_string(
+                               NULL, (int)(int64_t)integer(L, 1 + base))),
          1;
 }
 
-static void diagnostic_table(cpkt_lua_state *L, const c89cbor_error *error) {
-  cpkt_lua_newtable(L);
+static void diagnostic_table(lua_State *L, const c89cbor_error *error) {
+  lua_newtable(L);
 #define ERROR_INTEGER(field)                                                   \
   push_integer(L, (uint64_t)(int64_t)error->field);                            \
-  cpkt_lua_setfield(L, -2, #field)
+  lua_setfield(L, -2, #field)
 #define ERROR_STRING(field)                                                    \
-  cpkt_lua_pushstring(L, error->field);                                        \
-  cpkt_lua_setfield(L, -2, #field)
+  lua_pushstring(L, error->field);                                             \
+  lua_setfield(L, -2, #field)
   ERROR_INTEGER(status);
   ERROR_INTEGER(cause);
   ERROR_INTEGER(system_errno);
@@ -962,14 +967,14 @@ static void diagnostic_table(cpkt_lua_state *L, const c89cbor_error *error) {
 #undef ERROR_INTEGER
 #undef ERROR_STRING
 }
-static int diagnostic_handle(cpkt_lua_state *L) {
+static int diagnostic_handle(lua_State *L) {
   handle *h = any_handle(L, 1);
   c89cbor_error error;
   int status = C89CBOR_INVALID;
   memset(&error, 0, sizeof(error));
   if (h != NULL && h->ptr != NULL) {
 #define DIAGNOSTIC(kind, type, function)                                       \
-  if (cpkt_lua_l_testudata(L, 1, kind) != NULL)                                \
+  if (luaL_testudata(L, 1, kind) != NULL)                                      \
   status = function((type *)h->ptr, &error)
     DIAGNOSTIC(ROOT, c89cbor, c89cbor_diagnostic);
     DIAGNOSTIC(CONVERSION, c89cbor_conversion, c89cbor_conversion_diagnostic);
@@ -984,15 +989,15 @@ static int diagnostic_handle(cpkt_lua_state *L) {
   diagnostic_table(L, &error);
   return 2;
 }
-static size_t table_size(cpkt_lua_state *L, int index, const char *key,
+static size_t table_size(lua_State *L, int index, const char *key,
                          size_t fallback) {
   size_t value;
-  cpkt_lua_getfield(L, index, key);
+  lua_getfield(L, index, key);
   value = size_arg(L, -1, fallback);
-  cpkt_lua_pop(L, 1);
+  lua_pop(L, 1);
   return value;
 }
-static void options_from_lua(cpkt_lua_state *L, int index,
+static void options_from_lua(lua_State *L, int index,
                              c89cbor_options *options) {
   c89cbor_options *native = check_options(L, index);
   *options = c89cbor_default_options();
@@ -1000,9 +1005,9 @@ static void options_from_lua(cpkt_lua_state *L, int index,
     *options = *native;
     return;
   }
-  if (cpkt_lua_isnoneornil(L, index))
+  if (lua_isnoneornil(L, index))
     return;
-  cpkt_lua_l_checktype(L, index, CPKT_LUA_TTABLE);
+  luaL_checktype(L, index, LUA_TTABLE);
   options->depth = table_size(L, index, "depth", options->depth);
   options->chunk = table_size(L, index, "chunk", options->chunk);
   options->key_bytes = table_size(L, index, "key_bytes", options->key_bytes);
@@ -1023,54 +1028,52 @@ static void options_from_lua(cpkt_lua_state *L, int index,
       table_size(L, index, "step_output", options->step_output);
   options->step_events =
       table_size(L, index, "step_events", options->step_events);
-  cpkt_lua_getfield(L, index, "allow_unknown_fields");
-  options->allow_unknown_fields = cpkt_lua_toboolean(L, -1);
-  cpkt_lua_pop(L, 1);
-  cpkt_lua_getfield(L, index, "field_sinks");
-  if (!cpkt_lua_isnil(L, -1))
-    cpkt_lua_l_argerror(L, index,
-                        "native field sinks require typed options from C");
-  cpkt_lua_pop(L, 1);
+  lua_getfield(L, index, "allow_unknown_fields");
+  options->allow_unknown_fields = lua_toboolean(L, -1);
+  lua_pop(L, 1);
+  lua_getfield(L, index, "field_sinks");
+  if (!lua_isnil(L, -1))
+    luaL_argerror(L, index, "native field sinks require typed options from C");
+  lua_pop(L, 1);
 }
-static int default_options(cpkt_lua_state *L) {
+static int default_options(lua_State *L) {
   c89cbor_options options = c89cbor_default_options();
-  cpkt_lua_newtable(L);
+  lua_newtable(L);
   push_integer(L, options.depth);
-  cpkt_lua_setfield(L, -2, "depth");
+  lua_setfield(L, -2, "depth");
   push_integer(L, options.chunk);
-  cpkt_lua_setfield(L, -2, "chunk");
+  lua_setfield(L, -2, "chunk");
   push_integer(L, options.key_bytes);
-  cpkt_lua_setfield(L, -2, "key_bytes");
+  lua_setfield(L, -2, "key_bytes");
   push_integer(L, options.active_keys);
-  cpkt_lua_setfield(L, -2, "active_keys");
+  lua_setfield(L, -2, "active_keys");
   push_integer(L, options.active_key_bytes);
-  cpkt_lua_setfield(L, -2, "active_key_bytes");
+  lua_setfield(L, -2, "active_key_bytes");
   push_integer(L, options.number_bytes);
-  cpkt_lua_setfield(L, -2, "number_bytes");
+  lua_setfield(L, -2, "number_bytes");
   push_integer(L, options.field_bytes);
-  cpkt_lua_setfield(L, -2, "field_bytes");
+  lua_setfield(L, -2, "field_bytes");
   push_integer(L, options.array_elements);
-  cpkt_lua_setfield(L, -2, "array_elements");
+  lua_setfield(L, -2, "array_elements");
   push_integer(L, options.record_bytes);
-  cpkt_lua_setfield(L, -2, "record_bytes");
+  lua_setfield(L, -2, "record_bytes");
   push_integer(L, options.step_input);
-  cpkt_lua_setfield(L, -2, "step_input");
+  lua_setfield(L, -2, "step_input");
   push_integer(L, options.step_output);
-  cpkt_lua_setfield(L, -2, "step_output");
+  lua_setfield(L, -2, "step_output");
   push_integer(L, options.step_events);
-  cpkt_lua_setfield(L, -2, "step_events");
-  cpkt_lua_pushboolean(L, 0);
-  cpkt_lua_setfield(L, -2, "allow_unknown_fields");
+  lua_setfield(L, -2, "step_events");
+  lua_pushboolean(L, 0);
+  lua_setfield(L, -2, "allow_unknown_fields");
   return 1;
 }
-static int default_allocator(cpkt_lua_state *L) {
+static int default_allocator(lua_State *L) {
   handle *h = new_handle(L, ALLOC, sizeof(c89cbor_allocator));
   c89cbor_allocator allocator = c89cbor_default_allocator();
   memcpy(h->ptr, &allocator, sizeof(allocator));
   return 1;
 }
-static void config_from_lua(cpkt_lua_state *L, int index,
-                            c89cbor_config *config) {
+static void config_from_lua(lua_State *L, int index, c89cbor_config *config) {
   c89cbor_config *native = check_config(L, index);
   c89cbor_allocator *allocator;
   int child;
@@ -1079,25 +1082,24 @@ static void config_from_lua(cpkt_lua_state *L, int index,
     *config = *native;
     return;
   }
-  if (cpkt_lua_isnoneornil(L, index))
+  if (lua_isnoneornil(L, index))
     return;
-  cpkt_lua_l_checktype(L, index, CPKT_LUA_TTABLE);
+  luaL_checktype(L, index, LUA_TTABLE);
   config->step_input = table_size(L, index, "step_input", 0);
   config->step_output = table_size(L, index, "step_output", 0);
   config->step_events = table_size(L, index, "step_events", 0);
-  cpkt_lua_getfield(L, index, "allocator");
-  if (!cpkt_lua_isnil(L, -1)) {
+  lua_getfield(L, index, "allocator");
+  if (!lua_isnil(L, -1)) {
     allocator = check_allocator(L, -1);
     if (allocator == NULL)
-      cpkt_lua_l_argerror(L, index,
-                          "allocator must be a live native allocator");
+      luaL_argerror(L, index, "allocator must be a live native allocator");
     config->allocator = *allocator;
   }
-  cpkt_lua_pop(L, 1);
-  cpkt_lua_getfield(L, index, "json_config");
-  if (!cpkt_lua_isnil(L, -1)) {
-    cpkt_lua_l_checktype(L, -1, CPKT_LUA_TTABLE);
-    child = cpkt_lua_absindex(L, -1);
+  lua_pop(L, 1);
+  lua_getfield(L, index, "json_config");
+  if (!lua_isnil(L, -1)) {
+    luaL_checktype(L, -1, LUA_TTABLE);
+    child = lua_absindex(L, -1);
     config->json_config.max_depth =
         table_size(L, child, "max_depth", config->json_config.max_depth);
     config->json_config.max_dynamic_string_bytes =
@@ -1121,19 +1123,19 @@ static void config_from_lua(cpkt_lua_state *L, int index,
         table_size(L, child, "write_max_output_bytes",
                    config->json_config.write_max_output_bytes);
   }
-  cpkt_lua_pop(L, 1);
+  lua_pop(L, 1);
 }
-static int default_config(cpkt_lua_state *L) {
-  cpkt_lua_newtable(L);
+static int default_config(lua_State *L) {
+  lua_newtable(L);
   push_integer(L, 0);
-  cpkt_lua_setfield(L, -2, "step_input");
+  lua_setfield(L, -2, "step_input");
   push_integer(L, 0);
-  cpkt_lua_setfield(L, -2, "step_output");
+  lua_setfield(L, -2, "step_output");
   push_integer(L, 0);
-  cpkt_lua_setfield(L, -2, "step_events");
+  lua_setfield(L, -2, "step_events");
   return 1;
 }
-static int runtime_factory(cpkt_lua_state *L, int create) {
+static int runtime_factory(lua_State *L, int create) {
   c89cbor_config config;
   c89cbor_error error;
   c89cbor *runtime = NULL;
@@ -1150,30 +1152,30 @@ static int runtime_factory(cpkt_lua_state *L, int create) {
   h->ptr = runtime;
   h->heap_kind = create ? 6 : -6;
   if (status != 0) {
-    cpkt_lua_pop(L, 1);
-    cpkt_lua_pushnil(L);
+    lua_pop(L, 1);
+    lua_pushnil(L);
     result(L, status);
     diagnostic_table(L, &error);
     return 3;
   }
   pin(L, h, 1, 1);
-  if (cpkt_lua_type(L, 1) == CPKT_LUA_TTABLE) {
-    cpkt_lua_getfield(L, 1, "allocator");
-    if (!cpkt_lua_isnil(L, -1)) {
-      cpkt_lua_pushvalue(L, -1);
-      cpkt_lua_setiuservalue(L, -3, 2);
+  if (lua_type(L, 1) == LUA_TTABLE) {
+    lua_getfield(L, 1, "allocator");
+    if (!lua_isnil(L, -1)) {
+      lua_pushvalue(L, -1);
+      lua_setiuservalue(L, -3, 2);
       if (any_handle(L, -1) != NULL) {
         h->parent[1] = any_handle(L, -1);
         ++h->parent[1]->borrowers;
       }
     }
-    cpkt_lua_pop(L, 1);
+    lua_pop(L, 1);
   }
   return 1;
 }
-static int new_runtime(cpkt_lua_state *L) { return runtime_factory(L, 1); }
-static int init_runtime(cpkt_lua_state *L) { return runtime_factory(L, 0); }
-static int peek_encoder(cpkt_lua_state *L) {
+static int new_runtime(lua_State *L) { return runtime_factory(L, 1); }
+static int init_runtime(lua_State *L) { return runtime_factory(L, 0); }
+static int peek_encoder(lua_State *L) {
   c89cbor_encoder *encoder = checked(L, 1, ENC)->ptr;
   const void *bytes;
   size_t length;
@@ -1182,10 +1184,10 @@ static int peek_encoder(cpkt_lua_state *L) {
   if (status == C89CBOR_OUTPUT)
     (void)push_span(L, bytes, length, 1);
   else
-    cpkt_lua_pushnil(L);
+    lua_pushnil(L);
   return 2;
 }
-static int advance_encoder(cpkt_lua_state *L) {
+static int advance_encoder(lua_State *L) {
   handle *h = checked(L, 1, ENC);
   c89cbor_encoder *encoder = h->ptr;
   const void *bytes;
@@ -1196,10 +1198,10 @@ static int advance_encoder(cpkt_lua_state *L) {
     unpin_data(L, h);
   return result(L, status);
 }
-static int reset_reader(cpkt_lua_state *L) {
+static int reset_reader(lua_State *L) {
   return result(L, c89cbor_reader_reset(checked(L, 1, READER)->ptr));
 }
-static int conversion_step(cpkt_lua_state *L) {
+static int conversion_step(lua_State *L) {
   handle *h = checked(L, 1, CONVERSION);
   c89cbor_error error;
   int status;
@@ -1212,7 +1214,7 @@ static int conversion_step(cpkt_lua_state *L) {
   diagnostic_table(L, &error);
   return 2;
 }
-static int conversion_run(cpkt_lua_state *L) {
+static int conversion_run(lua_State *L) {
   handle *h = checked(L, 1, CONVERSION);
   c89cbor_error error;
   int status;
@@ -1227,22 +1229,22 @@ static int conversion_run(cpkt_lua_state *L) {
   diagnostic_table(L, &error);
   return 2;
 }
-static int progress_handle(cpkt_lua_state *L) {
+static int progress_handle(lua_State *L) {
   handle *h = any_handle(L, 1);
   c89cbor_progress progress;
   int status = C89CBOR_INVALID;
   memset(&progress, 0, sizeof(progress));
   if (h != NULL && h->ptr != NULL) {
-    if (cpkt_lua_l_testudata(L, 1, CONVERSION) != NULL)
+    if (luaL_testudata(L, 1, CONVERSION) != NULL)
       status = c89cbor_conversion_progress(h->ptr, &progress);
-    if (cpkt_lua_l_testudata(L, 1, TRANSFER) != NULL)
+    if (luaL_testudata(L, 1, TRANSFER) != NULL)
       status = c89cbor_transfer_progress(h->ptr, &progress);
   }
   result(L, status);
-  cpkt_lua_newtable(L);
+  lua_newtable(L);
 #define PROGRESS(field)                                                        \
   push_integer(L, progress.field);                                             \
-  cpkt_lua_setfield(L, -2, #field)
+  lua_setfield(L, -2, #field)
   PROGRESS(input);
   PROGRESS(output);
   PROGRESS(records);
@@ -1250,7 +1252,7 @@ static int progress_handle(cpkt_lua_state *L) {
   return 2;
 }
 enum conversion_kind { JSON_CBOR, CBOR_JSON, ENCODE_MAP, DECODE_MAP };
-static int runtime_conversion(cpkt_lua_state *L, enum conversion_kind kind,
+static int runtime_conversion(lua_State *L, enum conversion_kind kind,
                               int synchronous) {
   handle *root = checked(L, 1, ROOT), *h;
   c89cbor *runtime = root->ptr;
@@ -1332,8 +1334,8 @@ static int runtime_conversion(cpkt_lua_state *L, enum conversion_kind kind,
   h->heap_kind = synchronous == 2 ? -7 : 7;
   root->active = 0;
   if (status != 0) {
-    cpkt_lua_pop(L, 1);
-    cpkt_lua_pushnil(L);
+    lua_pop(L, 1);
+    lua_pushnil(L);
     result(L, status);
     diagnostic_table(L, &error);
     return 3;
@@ -1344,172 +1346,171 @@ static int runtime_conversion(cpkt_lua_state *L, enum conversion_kind kind,
   pin(L, h, 4, 4);
   return 1;
 }
-static int json_to_cbor(cpkt_lua_state *L) {
+static int json_to_cbor(lua_State *L) {
   return runtime_conversion(L, JSON_CBOR, 1);
 }
-static int json_to_cbor_open(cpkt_lua_state *L) {
+static int json_to_cbor_open(lua_State *L) {
   return runtime_conversion(L, JSON_CBOR, 0);
 }
-static int cbor_to_json(cpkt_lua_state *L) {
+static int cbor_to_json(lua_State *L) {
   return runtime_conversion(L, CBOR_JSON, 1);
 }
-static int cbor_to_json_open(cpkt_lua_state *L) {
+static int cbor_to_json_open(lua_State *L) {
   return runtime_conversion(L, CBOR_JSON, 0);
 }
-static int encode_map(cpkt_lua_state *L) {
+static int encode_map(lua_State *L) {
   return runtime_conversion(L, ENCODE_MAP, 1);
 }
-static int encode_map_open(cpkt_lua_state *L) {
+static int encode_map_open(lua_State *L) {
   return runtime_conversion(L, ENCODE_MAP, 0);
 }
-static int decode_map(cpkt_lua_state *L) {
+static int decode_map(lua_State *L) {
   return runtime_conversion(L, DECODE_MAP, 1);
 }
-static int decode_map_open(cpkt_lua_state *L) {
+static int decode_map_open(lua_State *L) {
   return runtime_conversion(L, DECODE_MAP, 0);
 }
-static int json_to_cbor_init(cpkt_lua_state *L) {
+static int json_to_cbor_init(lua_State *L) {
   return runtime_conversion(L, JSON_CBOR, 2);
 }
-static int cbor_to_json_init(cpkt_lua_state *L) {
+static int cbor_to_json_init(lua_State *L) {
   return runtime_conversion(L, CBOR_JSON, 2);
 }
-static int encode_map_init(cpkt_lua_state *L) {
+static int encode_map_init(lua_State *L) {
   return runtime_conversion(L, ENCODE_MAP, 2);
 }
-static int decode_map_init(cpkt_lua_state *L) {
+static int decode_map_init(lua_State *L) {
   return runtime_conversion(L, DECODE_MAP, 2);
 }
-static void metatable(cpkt_lua_state *L, const char *name,
-                      const cpkt_lua_reg *methods) {
-  cpkt_lua_l_newmetatable(L, name);
-  cpkt_lua_pushvalue(L, -1);
-  cpkt_lua_setfield(L, -2, "__index");
-  cpkt_lua_pushcfunction(L, gc_handle);
-  cpkt_lua_setfield(L, -2, "__gc");
-  cpkt_lua_pushcfunction(L, close_handle);
-  cpkt_lua_setfield(L, -2, "close");
-  cpkt_lua_pushcfunction(L, close_handle);
-  cpkt_lua_setfield(L, -2, "cleanup");
-  cpkt_lua_pushcfunction(L, close_handle);
-  cpkt_lua_setfield(L, -2, "destroy");
-  cpkt_lua_pushcfunction(L, diagnostic_handle);
-  cpkt_lua_setfield(L, -2, "diagnostic");
-  cpkt_lua_pushstring(L, name);
-  cpkt_lua_setfield(L, -2, "__metatable");
+static void metatable(lua_State *L, const char *name, const luaL_Reg *methods) {
+  luaL_newmetatable(L, name);
+  lua_pushvalue(L, -1);
+  lua_setfield(L, -2, "__index");
+  lua_pushcfunction(L, gc_handle);
+  lua_setfield(L, -2, "__gc");
+  lua_pushcfunction(L, close_handle);
+  lua_setfield(L, -2, "close");
+  lua_pushcfunction(L, close_handle);
+  lua_setfield(L, -2, "cleanup");
+  lua_pushcfunction(L, close_handle);
+  lua_setfield(L, -2, "destroy");
+  lua_pushcfunction(L, diagnostic_handle);
+  lua_setfield(L, -2, "diagnostic");
+  lua_pushstring(L, name);
+  lua_setfield(L, -2, "__metatable");
   if (methods != NULL)
-    cpkt_lua_l_setfuncs(L, methods, 0);
-  cpkt_lua_pop(L, 1);
+    luaL_setfuncs(L, methods, 0);
+  lua_pop(L, 1);
 }
-int luaopen_cbor(cpkt_lua_state *L) {
-  static const cpkt_lua_reg dec[] = {{"next", next_decoder},
-                                     {"next_tag", next_tag},
-                                     {"finish", finish_decoder},
-                                     {"reset", reset_decoder},
-                                     {NULL, NULL}};
-  static const cpkt_lua_reg enc[] = {{"put", put_encoder},
-                                     {"tag", encoder_tag},
-                                     {"end_tag", encoder_end_tag},
-                                     {"peek", peek_encoder},
-                                     {"advance", advance_encoder},
-                                     {"read", read_encoder},
-                                     {"finish", finish_encoder},
-                                     {"reset", reset_encoder},
-                                     {NULL, NULL}};
-  static const cpkt_lua_reg tok[] = {{"kind", token_kind},
-                                     {"argument", token_argument},
-                                     {"indefinite", token_indefinite},
-                                     {"span", token_span},
-                                     {"float64_set", float_set},
-                                     {"float64_get", float_get},
-                                     {NULL, NULL}};
-  static const cpkt_lua_reg sp[] = {
+int luaopen_cbor(lua_State *L) {
+  static const luaL_Reg dec[] = {{"next", next_decoder},
+                                 {"next_tag", next_tag},
+                                 {"finish", finish_decoder},
+                                 {"reset", reset_decoder},
+                                 {NULL, NULL}};
+  static const luaL_Reg enc[] = {{"put", put_encoder},
+                                 {"tag", encoder_tag},
+                                 {"end_tag", encoder_end_tag},
+                                 {"peek", peek_encoder},
+                                 {"advance", advance_encoder},
+                                 {"read", read_encoder},
+                                 {"finish", finish_encoder},
+                                 {"reset", reset_encoder},
+                                 {NULL, NULL}};
+  static const luaL_Reg tok[] = {{"kind", token_kind},
+                                 {"argument", token_argument},
+                                 {"indefinite", token_indefinite},
+                                 {"span", token_span},
+                                 {"float64_set", float_set},
+                                 {"float64_get", float_get},
+                                 {NULL, NULL}};
+  static const luaL_Reg sp[] = {
       {"string", span_string}, {"length", span_length}, {NULL, NULL}};
-  static const cpkt_lua_reg rd[] = {{"next", next_reader},
-                                    {"finish", finish_reader},
-                                    {"reset", reset_reader},
-                                    {NULL, NULL}};
-  static const cpkt_lua_reg fd[] = {
+  static const luaL_Reg rd[] = {{"next", next_reader},
+                                {"finish", finish_reader},
+                                {"reset", reset_reader},
+                                {NULL, NULL}};
+  static const luaL_Reg fd[] = {
       {"source", fd_source}, {"sink", fd_sink}, {NULL, NULL}};
-  static const cpkt_lua_reg tr[] = {{"step", transfer_step},
-                                    {"run", transfer_run},
-                                    {"counts", transfer_counts},
-                                    {"progress", progress_handle},
+  static const luaL_Reg tr[] = {{"step", transfer_step},
+                                {"run", transfer_run},
+                                {"counts", transfer_counts},
+                                {"progress", progress_handle},
+                                {NULL, NULL}};
+  static const luaL_Reg cv[] = {{"step", conversion_step},
+                                {"run", conversion_run},
+                                {"progress", progress_handle},
+                                {NULL, NULL}};
+  static const luaL_Reg root[] = {{"encoder", new_encoder},
+                                  {"decoder", new_decoder},
+                                  {"encoder_init", new_encoder},
+                                  {"decoder_init", new_decoder},
+                                  {"encoder_create", create_encoder},
+                                  {"decoder_create", create_decoder},
+                                  {"reader", new_reader},
+                                  {"reader_init", new_reader},
+                                  {"reader_create", create_reader},
+                                  {"fd", new_fd},
+                                  {"fd_init", new_fd},
+                                  {"fd_create", create_fd},
+                                  {"transfer", new_transfer},
+                                  {"transfer_init", new_transfer},
+                                  {"transfer_create", create_transfer},
+                                  {"json_to_cbor", json_to_cbor},
+                                  {"json_to_cbor_open", json_to_cbor_open},
+                                  {"json_to_cbor_init", json_to_cbor_init},
+                                  {"cbor_to_json", cbor_to_json},
+                                  {"cbor_to_json_open", cbor_to_json_open},
+                                  {"cbor_to_json_init", cbor_to_json_init},
+                                  {"encode_map", encode_map},
+                                  {"encode_map_open", encode_map_open},
+                                  {"encode_map_init", encode_map_init},
+                                  {"encode_map_view", encode_map},
+                                  {"encode_map_view_open", encode_map_open},
+                                  {"encode_map_view_init", encode_map_init},
+                                  {"decode_map", decode_map},
+                                  {"decode_map_open", decode_map_open},
+                                  {"decode_map_init", decode_map_init},
+                                  {"decode_map_view", decode_map},
+                                  {"decode_map_view_open", decode_map_open},
+                                  {"decode_map_view_init", decode_map_init},
+                                  {"default_options", default_options},
+                                  {"default_config", default_config},
+                                  {"default_allocator", default_allocator},
+                                  {"version", version},
+                                  {"status_string", status_string},
+                                  {"float64_set", float_set},
+                                  {"float64_get", float_get},
+                                  {"length32", length32},
+                                  {NULL, NULL}};
+  static const luaL_Reg module[] = {{"version", version},
+                                    {"create", new_runtime},
+                                    {"init", init_runtime},
+                                    {"default_options", default_options},
+                                    {"default_config", default_config},
+                                    {"default_allocator", default_allocator},
+                                    {"status_string", status_string},
+                                    {"decoder", new_decoder},
+                                    {"encoder", new_encoder},
+                                    {"decoder_create", create_decoder},
+                                    {"encoder_create", create_encoder},
+                                    {"frames", new_frames},
+                                    {"token", new_token},
+                                    {"span", new_span},
+                                    {"reader", new_reader},
+                                    {"reader_create", create_reader},
+                                    {"length32", length32},
+                                    {"fd", new_fd},
+                                    {"fd_create", create_fd},
+                                    {"transfer", new_transfer},
+                                    {"transfer_create", create_transfer},
                                     {NULL, NULL}};
-  static const cpkt_lua_reg cv[] = {{"step", conversion_step},
-                                    {"run", conversion_run},
-                                    {"progress", progress_handle},
-                                    {NULL, NULL}};
-  static const cpkt_lua_reg root[] = {{"encoder", new_encoder},
-                                      {"decoder", new_decoder},
-                                      {"encoder_init", new_encoder},
-                                      {"decoder_init", new_decoder},
-                                      {"encoder_create", create_encoder},
-                                      {"decoder_create", create_decoder},
-                                      {"reader", new_reader},
-                                      {"reader_init", new_reader},
-                                      {"reader_create", create_reader},
-                                      {"fd", new_fd},
-                                      {"fd_init", new_fd},
-                                      {"fd_create", create_fd},
-                                      {"transfer", new_transfer},
-                                      {"transfer_init", new_transfer},
-                                      {"transfer_create", create_transfer},
-                                      {"json_to_cbor", json_to_cbor},
-                                      {"json_to_cbor_open", json_to_cbor_open},
-                                      {"json_to_cbor_init", json_to_cbor_init},
-                                      {"cbor_to_json", cbor_to_json},
-                                      {"cbor_to_json_open", cbor_to_json_open},
-                                      {"cbor_to_json_init", cbor_to_json_init},
-                                      {"encode_map", encode_map},
-                                      {"encode_map_open", encode_map_open},
-                                      {"encode_map_init", encode_map_init},
-                                      {"encode_map_view", encode_map},
-                                      {"encode_map_view_open", encode_map_open},
-                                      {"encode_map_view_init", encode_map_init},
-                                      {"decode_map", decode_map},
-                                      {"decode_map_open", decode_map_open},
-                                      {"decode_map_init", decode_map_init},
-                                      {"decode_map_view", decode_map},
-                                      {"decode_map_view_open", decode_map_open},
-                                      {"decode_map_view_init", decode_map_init},
-                                      {"default_options", default_options},
-                                      {"default_config", default_config},
-                                      {"default_allocator", default_allocator},
-                                      {"version", version},
-                                      {"status_string", status_string},
-                                      {"float64_set", float_set},
-                                      {"float64_get", float_get},
-                                      {"length32", length32},
-                                      {NULL, NULL}};
-  static const cpkt_lua_reg module[] = {
-      {"version", version},
-      {"create", new_runtime},
-      {"init", init_runtime},
-      {"default_options", default_options},
-      {"default_config", default_config},
-      {"default_allocator", default_allocator},
-      {"status_string", status_string},
-      {"decoder", new_decoder},
-      {"encoder", new_encoder},
-      {"decoder_create", create_decoder},
-      {"encoder_create", create_encoder},
-      {"frames", new_frames},
-      {"token", new_token},
-      {"span", new_span},
-      {"reader", new_reader},
-      {"reader_create", create_reader},
-      {"length32", length32},
-      {"fd", new_fd},
-      {"fd_create", create_fd},
-      {"transfer", new_transfer},
-      {"transfer_create", create_transfer},
-      {NULL, NULL}};
   static const char *const types[] = {
       "UINT",    "NEGATIVE", "BYTES", "TEXT",      "ARRAY",  "MAP",
       "TAG",     "BOOL",     "NULL",  "UNDEFINED", "SIMPLE", "FLOAT16",
       "FLOAT32", "FLOAT64",  "DATA",  "END"};
   size_t i;
+  luaL_checkversion(L);
   metatable(L, DEC, dec);
   metatable(L, ROOT, root);
   metatable(L, CONVERSION, cv);
@@ -1526,15 +1527,15 @@ int luaopen_cbor(cpkt_lua_state *L) {
   metatable(L, SINK, NULL);
   metatable(L, ALLOC, NULL);
   metatable(L, FRAMES, NULL);
-  cpkt_lua_newtable(L);
-  cpkt_lua_l_setfuncs(L, module, 0);
+  lua_newtable(L);
+  luaL_setfuncs(L, module, 0);
   for (i = 0; i < sizeof(types) / sizeof(types[0]); ++i) {
     push_integer(L, i);
-    cpkt_lua_setfield(L, -2, types[i]);
+    lua_setfield(L, -2, types[i]);
   }
 #define CONSTANT(name)                                                         \
   result(L, C89CBOR_##name);                                                   \
-  cpkt_lua_setfield(L, -2, #name)
+  lua_setfield(L, -2, #name)
   CONSTANT(OK);
   CONSTANT(TOKEN);
   CONSTANT(INPUT);

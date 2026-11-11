@@ -11,14 +11,14 @@ rm -rf -- "$stage"
 mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs
 cp lua/cbor.c lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
 cp include/c89cbor/lua.h "$stage/include/c89cbor/"
-cp cmake/Runtime.cmake "$stage/cmake/"
+cp cmake/Runtime.cmake cmake/FindLua.cmake "$stage/cmake/"
 cp LICENSE "$stage/"
 cp docs/lua.md docs/delivery.md "$stage/docs/"
 cat > "$stage/README.md" <<'README'
 # libcbor Lua facade
 
-This source package builds against the installed c89.systems CBOR and cpkt Lua
-SDKs. See the [Lua API](docs/lua.md) and [delivery guide](docs/delivery.md).
+This source package builds against the installed c89.systems CBOR SDK and Lua
+5.5.1 public headers. See the [Lua API](docs/lua.md) and [delivery guide](docs/delivery.md).
 README
 printf '%s\n' "$version" > "$stage/VERSION"
 # Lua source package builds the facade only against installed SDKs.
@@ -41,17 +41,17 @@ description = { summary = "Native streaming c89.systems CBOR facade", license = 
 dependencies = { "lua >= 5.5, < 5.6" }
 external_dependencies = {
   CBOR = { header = "c89cbor/lonejson.h", library = "cbor" },
-  LONEJSON = { header = "lonejson.h", library = "lonejson" },
-  CPKT = { header = "cpkt/lua.h", library = "cpkt_lua" }
+  LONEJSON = { header = "lonejson.h", library = "lonejson" }
 }
 build = {
   type = "builtin",
   modules = {
     cbor = {
       sources = { "lua/cbor.c" },
-      libraries = { "cbor", "lonejson", "cpkt_lua" },
-      incdirs = { "include", "\$(CBOR_INCDIR)", "\$(LONEJSON_INCDIR)", "\$(CPKT_INCDIR)" },
-      libdirs = { "\$(CBOR_LIBDIR)", "\$(LONEJSON_LIBDIR)", "\$(CPKT_LIBDIR)" }
+      libraries = { "cbor", "lonejson" },
+      defines = { "_POSIX_C_SOURCE=200809L" },
+      incdirs = { "include", "\$(CBOR_INCDIR)", "\$(LONEJSON_INCDIR)" },
+      libdirs = { "\$(CBOR_LIBDIR)", "\$(LONEJSON_LIBDIR)" }
     }
   }
 }

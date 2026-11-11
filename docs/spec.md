@@ -18,7 +18,7 @@ schema, protocol negotiation, authorization and business logic.
 | Public C symbols and types | `c89cbor_*`, with `C89CBOR_*` constants and a `c89cbor` receiver type. |
 | Public headers | `<c89cbor/cbor.h>`, `<c89cbor/io.h>`, `<c89cbor/lonejson.h>` and `<c89cbor/lua.h>`. |
 | Package discovery | Retain `C89Cbor::static`, `C89Cbor::shared` and pkg-config `c89cbor` as discovery identifiers to distinguish the C89 Systems SDK. Both link modes expose the full receiver. |
-| Lua | `require('cbor')` on Lua 5.5.1. Native interop uses typed C pointers and owner references. |
+| Lua | `require('cbor')` on Lua 5.5.1 through its public C API, without cpkt. Native interop uses typed C pointers and owner references. |
 | Required dependency | [c89systems/lonejson 0.49.0](https://github.com/c89systems/lonejson/releases/tag/v0.49.0), shared ABI 29. |
 | Reference implementation | PJK/libcbor stays in a private benchmark prefix. Compare separate executables linked against their respective libraries. |
 

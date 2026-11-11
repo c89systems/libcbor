@@ -4,7 +4,7 @@ libcbor is the reusable binary serialization foundation for c89.systems. The
 codec is transport-independent and executes without creating a JSON runtime.
 The complete library requires the released lonejson 0.49.0 SDK for its mapped
 and JSON receiver methods. POSIX I/O is a separate translation unit. Lua is a separate facade linked
-to the installed public shared library and cpkt's Lua 5.5.1 facade.
+to the installed public shared library and using Lua 5.5.1's public C API.
 
 The implementation starts from cai's bounded grammar/UTF-8 approach, not its
 application types or heap-only API. See [provenance](provenance.md). Integration

@@ -96,6 +96,8 @@ semantics, without relaxing validation, streaming or memory bounds.
 
 Measured at `fa06c8d9f560cd11d521cc998e7131dcdf5cadce`, on Linux x86_64,
 AMD EPYC-Rome-v5, Bootlin GCC 15.3.0, `-O3`, with default 2 KiB chunks.
+This historical Lua measurement used the former cpkt facade. Current builds
+use Lua's public C API directly; rerun the Lua/C transfer cases for current data.
 The shared host is uncontrolled. These are medians of five round means in
 microseconds per record, with 10000 small or 626 large records per round.
 Each executable verifies its output. PJK is version 0.14.0; its record path

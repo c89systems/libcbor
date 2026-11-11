@@ -8,6 +8,11 @@ Missing toolchains fail with their preparation requirement; the build never
 falls back to host GCC or downloads an Apple SDK. Repository-local .cache owns
 extracted dependencies. Shared verified archives can be read from the declared
 cpkt global cache. No sibling checkout's sources or generated state are used.
+The cache and lifecycle helper names do not imply a cpkt library dependency.
+Lua builds prepare the pinned Lua.org 5.5.1 source into target/configuration-local
+`build/lua-runtime-*` and `build/lua-sdk-*` directories. Upstream Lua compiles
+with `-std=c89` and GNU inline spelling, retaining its normal 64-bit integer ABI
+on armhf. The facade itself uses the public Lua C API with strict C89 warnings.
 
 ```
 make build VERSION=0.1.0

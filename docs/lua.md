@@ -1,10 +1,18 @@
 # Lua 5.5.1 facade
 
 `require('cbor')` loads the native module linked to the installed libcbor
-shared library and cpkt 0.7.0's public Lua facade. No FFI declarations, duplicate
+shared library and calls Lua's public C API directly. No FFI declarations, duplicate
 codec or private libcbor symbols. [Commented Lua API](../lua/cbor.lua) documents
 all public Lua constructors and methods. C interoperability is documented in
-`<c89cbor/lua.h>`; that header additionally requires cpkt's installed Lua SDK.
+`<c89cbor/lua.h>`; its opaque `struct lua_State` pointer needs no Lua headers.
+Native embedders include `<lua.h>`, `<lauxlib.h>` and `<lualib.h>` when using
+Lua directly. The host owns the Lua runtime; the module resolves its Lua symbols
+there. There is no cpkt dependency. Lua uses 64-bit integers and binary64 numbers.
+
+The build prepares unmodified upstream Lua 5.5.1 from its verified source archive
+for local embedding tests on each target. It is a build prerequisite, not bundled
+in the C SDK or Lua source products. External CMake builds accept `LUA_INCLUDE_DIR`
+and `LUA_LIBRARY`; LuaRocks accepts its normal `LUA_INCDIR` and `LUA_LIBDIR`.
 
 The primary integration path is native source/sink handles:
 

@@ -27,13 +27,20 @@ test)
   ctest --test-dir "$build" --output-on-failure --stop-on-failure --no-tests=error
   ;;
 lua)
-  scripts/deps.sh "$target"
+  scripts/deps.sh "$target" lua
+  lua_sdk=$root/build/lua-sdk-$target-${config,,}
+  lua_build=build/lua-runtime-$target-${config,,}
+  cmake -S cmake/lua-runtime -B "$lua_build" "${args[@]}" \
+    "-DLUA_SOURCE_DIR=$root/.cache/deps/lua-5.5.1/src" "-DCMAKE_INSTALL_PREFIX=$lua_sdk"
+  cmake --build "$lua_build" --parallel "${BUILD_JOBS:-2}"
+  cmake --install "$lua_build"
+  if [[ $target == arm64-apple-darwin ]]; then lua_library=liblua.dylib; else lua_library=liblua.so; fi
   sdk=$root/build/sdk-$target-${config,,}
   cmake --install "$build" --prefix "$sdk"
   cmake -S lua -B "build/lua-$target-${config,,}" "${args[@]}" \
     "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" \
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-$target/lib/cmake/lonejson" \
-    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-$target/lib/cmake/CpktCore"
+    "-DLUA_INCLUDE_DIR=$lua_sdk/include" "-DLUA_LIBRARY=$lua_sdk/lib/$lua_library"
   cmake --build "build/lua-$target-${config,,}" --parallel "${BUILD_JOBS:-2}"
   ;;
 lua-test)

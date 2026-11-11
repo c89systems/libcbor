@@ -4,9 +4,9 @@ source "$(dirname -- "$0")/workspace.sh"
 version=$(scripts/version.sh "${1:-}")
 target=x86_64-linux-gnu
 sdk=$root/build/verify/$target-release/relocated/libcbor-$version-$target
-cpkt=$root/.cache/deps/cpkt-0.7.0-$target
+lua_sdk=$root/build/lua-sdk-$target-release
 [[ -f "$sdk/lib/libcbor.so" ]] || { printf 'Verify the extracted native Release SDK first\n' >&2; exit 1; }
-[[ -d "$cpkt" ]] || { printf 'Prepare the pinned cpkt Lua SDK first\n' >&2; exit 1; }
+[[ -f "$lua_sdk/lib/liblua.so" ]] || { printf 'Prepare the pinned Lua 5.5.1 runtime first\n' >&2; exit 1; }
 name=libcbor-lua-$version
 scratch=$root/build/verify-lua
 c89_owned_path build/verify-lua
@@ -29,18 +29,23 @@ cc=$(sed -n 's/^cc=//p' <<< "$description")
 [[ -x $cc ]]
 args=(-G Ninja "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake"
   "-DC89CBOR_TARGET=$target" "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DCMAKE_BUILD_TYPE=Release
-  "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" "-DCpktCore_DIR=$cpkt/lib/cmake/CpktCore")
+  "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" "-DLUA_INCLUDE_DIR=$lua_sdk/include" "-DLUA_LIBRARY=$lua_sdk/lib/liblua.so")
 args+=("-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-$target/lib/cmake/lonejson")
 cmake -S "$scratch/extracted/$name" -B "$scratch/facade" "${args[@]}"
 cmake --build "$scratch/facade" --parallel "${BUILD_JOBS:-2}"
 cmake -S lua -B "$scratch/runner" "${args[@]}"
 cmake --build "$scratch/runner" --target lua_test --parallel "${BUILD_JOBS:-2}"
 TMPDIR="$scratch/tmp" luarocks --tree "$scratch/tree" --lua-version=5.5 \
-  install --deps-mode=none "$rock" "CBOR_DIR=$sdk" "CPKT_DIR=$cpkt" "CC=$cc" "LD=$cc" \
+  install --deps-mode=none "$rock" "CBOR_DIR=$sdk" "CC=$cc" "LD=$cc" \
   "LONEJSON_DIR=$root/.cache/deps/liblonejson-0.49.0-$target" \
-  "LUA_INCDIR=$cpkt/include" "LUA_LIBDIR=$cpkt/lib" \
+  "LUA_INCDIR=$lua_sdk/include" "LUA_LIBDIR=$lua_sdk/lib" \
   'CFLAGS=-O2 -fPIC -std=c89 -Wall -Wextra -Werror -Wpedantic -Wno-long-long'
 runner=$scratch/runner/lua_test
-"$runner" "$scratch/facade/lua/cbor.so" "$root/tests/lua_test.lua"
-"$runner" "$scratch/tree/lib/lua/5.5/cbor.so" "$root/tests/lua_test.lua"
+nm_tool=$(sed -n 's/^nm=//p' <<< "$description")
+inspect=$(sed -n 's/^readelf=//p' <<< "$description")
+for module in "$scratch/facade/lua/cbor.so" "$scratch/tree/lib/lua/5.5/cbor.so"; do
+  "$runner" "$module" "$root/tests/lua_test.lua"
+  cmake "-DNM=$nm_tool" "-DINSPECT=$inspect" "-DMODULE=$module" \
+    "-DHEADER=$root/include/c89cbor/lua.h" -P "$root/tests/lua_exports.cmake"
+done
 printf 'Verified Lua source archive and source rock against the extracted SDK\n'

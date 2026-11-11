@@ -8,10 +8,11 @@
 #ifndef C89CBOR_LUA_H
 #define C89CBOR_LUA_H
 #include <c89cbor/lonejson.h>
-#include <cpkt/lua.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+/** Lua's opaque state; include <lua.h> when using the Lua C API directly. */
+struct lua_State;
 /** Per-state native binding receiver. State and allocator context are borrowed.
  * Cleanup leaves Lua and all pushed handles alive with their independent pins.
  */
@@ -75,21 +76,21 @@ struct c89cbor_lua {
   int (*destroy)(c89cbor_lua *); /**< Free allocated binding. */
   int (*diagnostic)(const c89cbor_lua *,
                     c89cbor_error *); /**< Copy diagnostic. */
-  cpkt_lua_state *state;              /**< Private borrowed state. */
+  struct lua_State *state;            /**< Private borrowed state. */
   c89cbor_allocator allocator;        /**< Private recorded allocator. */
   c89cbor_error error;                /**< Private retained diagnostic. */
   int active;                         /**< Private initialization flag. */
   int owned;                          /**< Private ownership flag. */
 };
 /** Standard Lua module opener; bootstrap exception to receiver parity. */
-C89CBOR_API int luaopen_cbor(cpkt_lua_state *state);
+C89CBOR_API int luaopen_cbor(struct lua_State *state);
 /** Initialize fresh storage; NULL allocator selects defaults. State is
  * borrowed. */
-C89CBOR_API int c89cbor_lua_init(c89cbor_lua *binding, cpkt_lua_state *state,
+C89CBOR_API int c89cbor_lua_init(c89cbor_lua *binding, struct lua_State *state,
                                  const c89cbor_allocator *allocator,
                                  c89cbor_error *error);
 /** Allocate binding; clear *out before allocation. State remains borrowed. */
-C89CBOR_API int c89cbor_lua_create(cpkt_lua_state *state,
+C89CBOR_API int c89cbor_lua_create(struct lua_State *state,
                                    const c89cbor_allocator *allocator,
                                    c89cbor_lua **out, c89cbor_error *error);
 /** Idempotent cleanup; never closes Lua or external pointers. */

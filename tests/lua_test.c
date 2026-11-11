@@ -1,4 +1,7 @@
 #include <c89cbor/lua.h>
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
 #include <assert.h>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -7,9 +10,9 @@
 #include <string.h>
 #include <time.h>
 
-typedef int (*binding_init_fn)(c89cbor_lua *, cpkt_lua_state *,
+typedef int (*binding_init_fn)(c89cbor_lua *, lua_State *,
                                const c89cbor_allocator *, c89cbor_error *);
-typedef int (*binding_create_fn)(cpkt_lua_state *, const c89cbor_allocator *,
+typedef int (*binding_create_fn)(lua_State *, const c89cbor_allocator *,
                                  c89cbor_lua **, c89cbor_error *);
 typedef struct native_stream {
   size_t offset;
@@ -82,11 +85,10 @@ static int buffer_write(void *context, const void *bytes, size_t length,
   *count = take;
   return buffer->pause ? C89CBOR_OUTPUT : C89CBOR_OK;
 }
-static int native_case(cpkt_lua_state *L) {
-  conversion_fixture *fixture =
-      cpkt_lua_touserdata(L, cpkt_lua_upvalueindex(1));
-  int mode = (int)cpkt_lua_l_checkinteger(L, 1).low;
-  int pause = cpkt_lua_isnoneornil(L, 2) ? 1 : cpkt_lua_toboolean(L, 2);
+static int native_case(lua_State *L) {
+  conversion_fixture *fixture = lua_touserdata(L, lua_upvalueindex(1));
+  int mode = (int)luaL_checkinteger(L, 1);
+  int pause = lua_isnoneornil(L, 2) ? 1 : lua_toboolean(L, 2);
   lonejson_error error;
   fixture->json_input.pause = fixture->wire.pause = fixture->json_output.pause =
       pause;
@@ -154,27 +156,27 @@ static void prepare_fixture(conversion_fixture *fixture, c89cbor_lua *binding) {
   fixture->json_input.length = sizeof(document) - 1u;
   fixture->json_input.pause = fixture->wire.pause = fixture->json_output.pause =
       1;
-  cpkt_lua_pushlightuserdata(binding->state, fixture);
-  cpkt_lua_pushcclosure(binding->state, native_case, 1);
-  cpkt_lua_setglobal(binding->state, "native_case");
+  lua_pushlightuserdata(binding->state, fixture);
+  lua_pushcclosure(binding->state, native_case, 1);
+  lua_setglobal(binding->state, "native_case");
   fixture->allocator.context = fixture;
   fixture->allocator.alloc = count_allocate;
   fixture->allocator.free = count_free;
   assert(binding->push_allocator(binding, &fixture->allocator, 0) == 0);
-  cpkt_lua_setglobal(binding->state, "counting_allocator");
+  lua_setglobal(binding->state, "counting_allocator");
 }
-static int close_at(cpkt_lua_state *L, int index) {
+static int close_at(lua_State *L, int index) {
   int status;
-  index = cpkt_lua_absindex(L, index);
-  cpkt_lua_getfield(L, index, "close");
-  cpkt_lua_pushvalue(L, index);
-  assert(cpkt_lua_pcall(L, 1, 1, 0) == CPKT_LUA_OK);
-  status = (int)(int32_t)cpkt_lua_l_checkinteger(L, -1).low;
-  cpkt_lua_pop(L, 1);
+  index = lua_absindex(L, index);
+  lua_getfield(L, index, "close");
+  lua_pushvalue(L, index);
+  assert(lua_pcall(L, 1, 1, 0) == LUA_OK);
+  status = (int)luaL_checkinteger(L, -1);
+  lua_pop(L, 1);
   return status;
 }
 static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
-  cpkt_lua_state *L = binding->state;
+  lua_State *L = binding->state;
   c89cbor runtime;
   c89cbor_encoder encoder;
   c89cbor_decoder decoder;
@@ -189,7 +191,7 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   c89cbor_sink sink;
   const void *bytes;
   size_t length;
-  int owner = cpkt_lua_gettop(L) + 1;
+  int owner = lua_gettop(L) + 1;
   source.context = &fixture->wire;
   source.read = buffer_read;
   sink.context = &fixture->json_output;
@@ -213,7 +215,7 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
     assert(binding->check_##name(binding, -1) == &(value));                    \
     assert(close_at(L, owner) == C89CBOR_INVALID);                             \
     assert(close_at(L, -1) == 0);                                              \
-    cpkt_lua_pop(L, 1);                                                        \
+    lua_pop(L, 1);                                                             \
   } while (0)
   CHECK_BRIDGE(encoder, encoder);
   CHECK_BRIDGE(decoder, decoder);
@@ -229,16 +231,16 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   assert(binding->push_record_view(binding, &fixture->input_view, owner) == 0);
   assert(binding->check_record_view(binding, -1)->record == &fixture->input);
   assert(close_at(L, -1) == 0);
-  cpkt_lua_pop(L, 1);
+  lua_pop(L, 1);
   assert(binding->push_span(binding, "abc", 3, owner) == 0);
   assert(binding->check_span(binding, -1, &bytes, &length) == 0 &&
          length == 3 && memcmp(bytes, "abc", 3) == 0);
   assert(close_at(L, -1) == 0);
   assert(binding->check_span(binding, -1, &bytes, &length) == C89CBOR_INVALID &&
          bytes == NULL && length == 0);
-  cpkt_lua_pop(L, 1);
+  lua_pop(L, 1);
   assert(close_at(L, owner) == 0);
-  cpkt_lua_pop(L, 1);
+  lua_pop(L, 1);
   assert(operation.cleanup(&operation) == 0 &&
          transfer.cleanup(&transfer) == 0);
   assert(descriptor.cleanup(&descriptor) == 0 && reader.cleanup(&reader) == 0);
@@ -285,7 +287,7 @@ typedef struct arguments {
 static void *run(void *ctx) {
   arguments *args = ctx;
   void *module = dlopen(args->module, RTLD_NOW | RTLD_LOCAL), *symbol;
-  cpkt_lua_c_function opener;
+  lua_CFunction opener;
   binding_init_fn binding_init;
   binding_create_fn binding_create;
   c89cbor_lua binding;
@@ -293,7 +295,7 @@ static void *run(void *ctx) {
   c89cbor_error error;
   conversion_fixture fixture;
   lonejson_error jerror;
-  cpkt_lua_state *L;
+  lua_State *L;
   native_stream stream;
   c89cbor_source source;
   c89cbor_sink sink;
@@ -311,13 +313,13 @@ static void *run(void *ctx) {
   symbol = dlsym(module, "c89cbor_lua_create");
   assert(symbol != NULL);
   memcpy(&binding_create, &symbol, sizeof(binding_create));
-  L = cpkt_lua_l_newstate();
+  L = luaL_newstate();
   assert(L != NULL);
-  cpkt_lua_l_openlibs(L);
-  cpkt_lua_pushstring(L, c89cbor_version(NULL));
-  cpkt_lua_setglobal(L, "expected_version");
-  cpkt_lua_l_requiref(L, "cbor", opener, 1);
-  cpkt_lua_pop(L, 1);
+  luaL_openlibs(L);
+  lua_pushstring(L, c89cbor_version(NULL));
+  lua_setglobal(L, "expected_version");
+  luaL_requiref(L, "cbor", opener, 1);
+  lua_pop(L, 1);
   assert(binding_init(&binding, L, NULL, &error) == 0);
   prepare_fixture(&fixture, &binding);
   typed_interop(&binding, &fixture);
@@ -336,9 +338,9 @@ static void *run(void *ctx) {
   assert(binding.push_source(&binding, &source, 0) == 0);
   assert(binding.check_source(&binding, -1) == &source);
   assert(binding.check_sink(&binding, -1) == NULL);
-  cpkt_lua_setglobal(L, "native_source");
+  lua_setglobal(L, "native_source");
   assert(binding.push_sink(&binding, &sink, 0) == 0);
-  cpkt_lua_setglobal(L, "native_sink");
+  lua_setglobal(L, "native_sink");
   assert(clock_gettime(CLOCK_MONOTONIC, &begin) == 0);
   assert(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu_begin) == 0);
   if (strcmp(args->script, "--native") == 0) {
@@ -352,9 +354,9 @@ static void *run(void *ctx) {
     assert(c89cbor_transfer_cleanup(&transfer) == 0);
     rc = 0;
   } else {
-    rc = cpkt_lua_l_dofile(L, args->script);
+    rc = luaL_dofile(L, args->script);
     if (rc != 0)
-      fprintf(stderr, "lua: %s\n", cpkt_lua_tostring(L, -1));
+      fprintf(stderr, "lua: %s\n", lua_tostring(L, -1));
   }
   assert(rc == 0 && stream.produced == stream.limit &&
          stream.consumed == stream.limit);
@@ -374,7 +376,7 @@ static void *run(void *ctx) {
   assert(binding.cleanup(&binding) == 0);
   assert(binding.cleanup(&binding) == 0 &&
          binding.check_runtime(&binding, 1) == NULL);
-  cpkt_lua_close(L);
+  lua_close(L);
   assert(fixture.live == 0);
   if (strstr(args->script, "lua_test.lua") != NULL) {
     assert(fixture.output.id == 42 &&

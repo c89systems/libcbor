@@ -1,6 +1,7 @@
 #include <c89cbor/cbor.h>
 #include <c89cbor/io.h>
 #include <c89cbor/lonejson.h>
+#include <c89cbor/lua.h>
 #include <assert.h>
 #include <string.h>
 typedef struct record {

@@ -14,5 +14,8 @@ values and framing, not preserving cai API names or importing application types.
 
 PJK/libcbor 0.14.0 is an optional benchmark-only upstream dependency, MIT:
 https://github.com/PJK/libcbor/tree/v0.14.0 . It is not shipped in C SDKs or linked
-into product code. cpkt 0.7.0 supplies the Lua 5.5.1 facade/runtime for optional
-Lua builds; per-target published SDK SHA-256 pins are in scripts/deps.sh.
+into product code. Optional Lua builds use the public Lua 5.5.1 API and an
+independently prepared upstream runtime for tests. Its source archive is pinned
+in scripts/deps.sh to SHA-256
+`1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce`, from
+[Lua.org](https://www.lua.org/download.html). No cpkt library is required.
