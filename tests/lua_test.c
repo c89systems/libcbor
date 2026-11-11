@@ -14,6 +14,7 @@ typedef int (*binding_create_fn)(cpkt_lua_state *, const c89cbor_allocator *,
 typedef struct native_stream {
   size_t offset;
   uint64_t produced, consumed, limit;
+  uint64_t reads, writes;
   unsigned char record[1027];
 } native_stream;
 typedef struct test_buffer {
@@ -248,6 +249,7 @@ static int produce(void *ctx, void *out, size_t capacity, size_t *count) {
   native_stream *s = ctx;
   unsigned char *p = out;
   size_t at = 0, take, n = capacity;
+  ++s->reads;
   if ((uint64_t)n > s->limit - s->produced)
     n = (size_t)(s->limit - s->produced);
   while (at < n) {
@@ -267,7 +269,11 @@ static int produce(void *ctx, void *out, size_t capacity, size_t *count) {
 }
 static int consume(void *ctx, const void *bytes, size_t n, size_t *count) {
   native_stream *s = ctx;
-  (void)bytes;
+  const unsigned char *p = bytes;
+  size_t i;
+  ++s->writes;
+  for (i = 0; i < n; ++i)
+    assert(p[i] == s->record[(size_t)((s->consumed + i) % sizeof(s->record))]);
   s->consumed += n;
   *count = n;
   return 0;
@@ -292,7 +298,7 @@ static void *run(void *ctx) {
   c89cbor_source source;
   c89cbor_sink sink;
   int rc;
-  struct timespec begin, end;
+  struct timespec begin, end, cpu_begin, cpu_end;
   if (module == NULL)
     fprintf(stderr, "dlopen: %s\n", dlerror());
   assert(module != NULL);
@@ -334,6 +340,7 @@ static void *run(void *ctx) {
   assert(binding.push_sink(&binding, &sink, 0) == 0);
   cpkt_lua_setglobal(L, "native_sink");
   assert(clock_gettime(CLOCK_MONOTONIC, &begin) == 0);
+  assert(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu_begin) == 0);
   if (strcmp(args->script, "--native") == 0) {
     c89cbor_transfer transfer;
     assert(c89cbor_transfer_init(NULL, &transfer, &source, &sink,
@@ -342,6 +349,7 @@ static void *run(void *ctx) {
       rc = c89cbor_transfer_step(&transfer);
     } while (rc == C89CBOR_OK);
     assert(rc == C89CBOR_DONE);
+    assert(c89cbor_transfer_cleanup(&transfer) == 0);
     rc = 0;
   } else {
     rc = cpkt_lua_l_dofile(L, args->script);
@@ -351,11 +359,18 @@ static void *run(void *ctx) {
   assert(rc == 0 && stream.produced == stream.limit &&
          stream.consumed == stream.limit);
   assert(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
-  printf("{\"case\":\"%s-native-transfer\",\"bytes\":%lu,\"seconds\":%.9f}\n",
+  assert(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu_end) == 0);
+  printf("{\"case\":\"%s-native-transfer\",\"bytes\":%lu,\"seconds\":%.9f,"
+         "\"cpu_seconds\":%.9f,\"source_calls\":%lu,\"sink_calls\":%lu,"
+         "\"endpoint_copied_bytes\":%lu,\"verified\":true}\n",
          strcmp(args->script, "--native") == 0 ? "c" : "lua",
          (unsigned long)stream.limit,
          (double)(end.tv_sec - begin.tv_sec) +
-             (double)(end.tv_nsec - begin.tv_nsec) / 1e9);
+             (double)(end.tv_nsec - begin.tv_nsec) / 1e9,
+         (double)(cpu_end.tv_sec - cpu_begin.tv_sec) +
+             (double)(cpu_end.tv_nsec - cpu_begin.tv_nsec) / 1e9,
+         (unsigned long)stream.reads, (unsigned long)stream.writes,
+         (unsigned long)stream.produced);
   assert(binding.cleanup(&binding) == 0);
   assert(binding.cleanup(&binding) == 0 &&
          binding.check_runtime(&binding, 1) == NULL);

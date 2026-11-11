@@ -1,9 +1,8 @@
 # libcbor specification
 
-This specification describes the target product. The current checkout
-provides the native CBOR foundation, transport fixtures and Lua facade.
-The receiver API, library filename change and lonejson integration
-described here require implementation and verification.
+This specification defines the implemented product's contracts and verification
+requirements. Build and execution evidence is recorded by the local lifecycle;
+cross-compilation alone does not establish target runtime behavior.
 
 ## Product and package identity
 

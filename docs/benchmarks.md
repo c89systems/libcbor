@@ -26,6 +26,9 @@ A single native call moves them through C source/sink pointers and a 2 KiB buffe
 The timed interval includes Lua chunk loading and the short wrapper call, but no
 VM creation, module load or endpoint setup. The explicit token-processing API is
 covered separately by tests; token traffic through Lua is an opt-in cost.
+The sink verifies every byte in both the C and Lua runs. Reports include process
+CPU time, native endpoint callback counts and source-copy bytes. Verification is
+timed equally; the sink compares bytes without making another payload copy.
 
 ## Records and JSON
 
@@ -70,12 +73,18 @@ that the complete path copies nothing. Timing includes instrumentation on both
 implementations. Keep the individual JSONL rounds when assessing shared-host
 variance.
 
-Transport results verify every payload byte. Streams carry one large definite
-item and small bounded producer chunks. Datagram cases use independent 512-byte
+Transport results verify every payload byte and finish the parser after stream
+EOF. Streams cover a large definite item and an unknown-length indefinite item
+generated as bounded 1024-byte chunks. Datagram cases use independent 512-byte
 items, one outstanding at a time with fixture acknowledgments, and therefore
 measure paced request/ack throughput, not unreliable maximum packet flooding.
 Socket setup is excluded; scheduling/startup and endpoint completion remain in
 the elapsed interval. Socket buffers are deliberately small to exercise pressure.
+Transport CPU time sums sender and receiver process times. I/O and poll syscall
+counts include retries but exclude setup, teardown and the separate measurement
+pipe. Wire counts include both endpoints and fixture acknowledgments; each
+transmitted byte is counted twice. Datagram latency quantiles cover the first
+1024 request/ack exchanges, with their sample count reported.
 
 These are reproducible workloads, not a universal fastest claim. Improve against
 measured profiles, retaining differences in validation and representation.

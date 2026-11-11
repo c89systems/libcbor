@@ -1,8 +1,9 @@
 # Architecture and commitments
 
 libcbor is the reusable binary serialization foundation for c89.systems. The
-codec is transport-independent and has no mandatory runtime dependencies beyond
-libc. POSIX I/O is a separate translation unit. Lua is a separate facade linked
+codec is transport-independent and executes without creating a JSON runtime.
+The complete library requires the released lonejson 0.49.0 SDK for its mapped
+and JSON receiver methods. POSIX I/O is a separate translation unit. Lua is a separate facade linked
 to the installed public shared library and cpkt's Lua 5.5.1 facade.
 
 The implementation starts from cai's bounded grammar/UTF-8 approach, not its
@@ -80,5 +81,6 @@ floating assumptions; binary64 helpers check native representation parameters.
 The project is pre-1.0. Clean API cutovers are expected; no implicit migrations,
 negotiation or protocol marker increments. Shared library ABI starts at 0 and is
 versioned independently. Public struct layouts and Lua interop functions are ABI.
-The library filename, symbols and CMake/pkg-config identifiers deliberately avoid
-collision with PJK/libcbor. There is no public stability promise before release.
+Symbols, headers and CMake/pkg-config identifiers distinguish this SDK from
+PJK/libcbor. Both products install a library named libcbor; use separate prefixes
+and verify discovery and link paths. There is no public stability promise before release.

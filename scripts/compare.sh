@@ -32,6 +32,18 @@ for executable in codec_benchmark profile_benchmark; do
   fi
 done
 ctest --test-dir build/x86_64-linux-gnu-release -R 'benchmark-.*-smoke|interop-reference' --output-on-failure --stop-on-failure
+{
+  uname -srm
+  git rev-parse HEAD
+  git status --short
+  sha256sum "$archive"
+  for executable in codec_benchmark profile_benchmark reference_benchmark reference_mapped_benchmark; do
+    sha256sum "build/x86_64-linux-gnu-release/$executable"
+  done
+  sed -n '/^CMAKE_C_COMPILER:FILEPATH=/p; /^CMAKE_C_FLAGS_RELEASE:STRING=/p' build/x86_64-linux-gnu-release/CMakeCache.txt
+  awk -F: '/model name/ {print; exit}' /proc/cpuinfo
+  printf 'profile_repetitions=%s chunk=2048\n' "${BENCH_REPETITIONS:-10000}"
+} > build/bench/comparison-context.txt
 for mode in decode encode; do
   build/x86_64-linux-gnu-release/codec_benchmark "$mode" | tee "build/bench/$mode.jsonl"
   build/x86_64-linux-gnu-release/reference_benchmark "$mode" | tee "build/bench/reference-$mode.jsonl"
