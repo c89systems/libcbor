@@ -9,6 +9,8 @@ for target in x86_64-linux-gnu x86_64-linux-musl aarch64-linux-gnu aarch64-linux
   scripts/build.sh lua "$target" Release
   if [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]]; then
     scripts/build.sh lua-test "$target" Release
+  else
+    ctest --test-dir "build/lua-$target-release" -R '^lua-exports$' --output-on-failure --stop-on-failure --no-tests=error
   fi
   scripts/package.sh "$target" Release "${1:-}"
   scripts/verify-package.sh "$target" Release "${1:-}"
