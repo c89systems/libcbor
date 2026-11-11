@@ -4,6 +4,9 @@ This specification defines the implemented product's contracts and verification
 requirements. Build and execution evidence is recorded by the local lifecycle;
 cross-compilation alone does not establish target runtime behavior.
 
+The next encryption milestone is specified separately in [COSE encryption](cose.md):
+both Encrypt0 and Encrypt, with standalone objects and authenticated record streams.
+
 ## Product and package identity
 
 libcbor is the C89 Systems CBOR library. It supplies a general streaming
