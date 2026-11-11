@@ -126,8 +126,10 @@ even on successful completion. The reporting truncation policy fails with LIMIT.
 `c89cbor_options.field_sinks` binds JSON Pointer paths to TEXT, BYTES or JSON
 payloads. Its begin/end callbacks return OK after acceptance, OUTPUT to retry an
 unaccepted boundary, or a negative failure. Payload writes use exact partial
-byte counts. Pointers are borrowed only for the callback duration. Source fields
-require a sink when used as incoming destinations. A lonejson array-stream
+byte counts. Pointers are borrowed only for the callback duration. Mapped payload
+fields deliver a null through begin(NULL-token)/end with no payload chunks,
+preserving boundary retry semantics and the declared text/bytes representation.
+Source fields require a sink when used as incoming destinations. A lonejson array-stream
 callback returning PAUSED accepts that event once, then yields OUTPUT without
 replay. Mapped array streams reuse and reset the caller-initialized item record
 after each item callback, so callbacks must copy anything they retain.

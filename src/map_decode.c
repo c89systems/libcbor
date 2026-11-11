@@ -819,6 +819,68 @@ static int drive_json(c89_map_state *state) {
   --state->depth;
   return complete_value(state);
 }
+static int null_value(c89_map_state *state, c89_map_frame *parent) {
+  c89_map_frame *frame;
+  const lonejson_field *field = parent->field;
+  c89cbor_payload payload;
+  size_t index = state->depth - 1u;
+  int status;
+  if (state->pending_phase == 0) {
+    status = c89_map_dependency(
+        state, lonejson_record_assign_null(state->json, parent->map,
+                                           parent->record.output, field,
+                                           &state->json_error));
+    if (status != 0)
+      return status;
+    if (state->options.field_sink_count == 0 ||
+        field->kind > LONEJSON_FIELD_KIND_BASE64_SOURCE) {
+      state->pending_valid = 0;
+      return complete_value(state);
+    }
+    status = c89_map_push(state, C89_MAP_NULL, index, field, 0);
+    if (status != 0)
+      return status;
+    frame = &state->frames[state->depth - 1u];
+    frame->binding = c89_map_binding(state, state->depth - 1u);
+    if (frame->binding == NULL) {
+      --state->depth;
+      state->pending_valid = 0;
+      return complete_value(state);
+    }
+    payload = field->kind == LONEJSON_FIELD_KIND_BASE64_STREAM ||
+                      field->kind == LONEJSON_FIELD_KIND_BASE64_SOURCE
+                  ? C89CBOR_PAYLOAD_BYTES
+                  : C89CBOR_PAYLOAD_TEXT;
+    if (frame->binding->payload != payload)
+      return c89_map_fail(
+          state, C89CBOR_SCHEMA,
+          "null field sink has the wrong payload representation");
+    state->pending_phase = 1;
+  }
+  frame = &state->frames[state->depth - 1u];
+  if (frame->phase == 0) {
+    if (frame->binding->begin != NULL) {
+      status =
+          frame->binding->begin(frame->binding->sink.context, &state->pending);
+      if (status == C89CBOR_OUTPUT)
+        return status;
+      if (status != 0)
+        return c89_map_fail(state, C89CBOR_IO,
+                            "field sink rejected null begin");
+    }
+    frame->phase = 1;
+  }
+  if (frame->binding->end != NULL) {
+    status = frame->binding->end(frame->binding->sink.context);
+    if (status == C89CBOR_OUTPUT)
+      return status;
+    if (status != 0)
+      return c89_map_fail(state, C89CBOR_IO, "field sink rejected null end");
+  }
+  --state->depth;
+  state->pending_phase = state->pending_valid = 0;
+  return complete_value(state);
+}
 static int typed_value(c89_map_state *state, c89_map_frame *parent) {
   const c89cbor_token *token = &state->pending;
   const lonejson_field *field = parent->field;
@@ -857,16 +919,8 @@ static int typed_value(c89_map_state *state, c89_map_frame *parent) {
       return c89_map_fail(state, C89CBOR_SCHEMA, "expected a text array item");
     return start_text(state, token, parent);
   }
-  if (token->type == C89CBOR_NULL) {
-    status = c89_map_dependency(
-        state, lonejson_record_assign_null(state->json, parent->map,
-                                           parent->record.output, field,
-                                           &state->json_error));
-    if (status != 0)
-      return status;
-    state->pending_valid = 0;
-    return complete_value(state);
-  }
+  if (token->type == C89CBOR_NULL)
+    return null_value(state, parent);
   if (field->kind >= LONEJSON_FIELD_KIND_I64 &&
       field->kind <= LONEJSON_FIELD_KIND_BOOL) {
     status = scalar_value(state, token, field->kind, slot);
@@ -938,6 +992,8 @@ static int dispatch_token(c89_map_state *state) {
   state->error_key = 0;
   if (state->pending_phase != 0) {
     target = &state->frames[frame->parent];
+    if (frame->kind == C89_MAP_NULL)
+      return null_value(state, target);
     return frame->kind == C89_MAP_JSON ? start_json(state, target)
                                        : start_text(state, token, target);
   }

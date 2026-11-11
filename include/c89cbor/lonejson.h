@@ -20,6 +20,7 @@ typedef enum c89cbor_payload {
  * begin/end return OK when accepted, OUTPUT to retry the unaccepted event, or
  * a negative error. The sink's write callback uses normal partial-write rules.
  * Callbacks are provisional until the enclosing record completes.
+ * A mapped null calls begin with C89CBOR_NULL and then end, with no chunks.
  */
 typedef struct c89cbor_field_sink {
   const char *path;        /**< UTF-8 JSON Pointer, such as /payload. */

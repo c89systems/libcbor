@@ -47,6 +47,8 @@ const c89cbor_field_sink *c89_map_binding(c89_map_state *state, size_t frame) {
   char number[64];
   size_t i, j, count, length;
   int matches;
+  if (state->options.field_sink_count == 0)
+    return NULL;
   count = path_chain(state, frame);
   for (i = 0; i < state->options.field_sink_count; ++i) {
     binding = &state->options.field_sinks[i];

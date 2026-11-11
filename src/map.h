@@ -9,7 +9,8 @@ typedef enum c89_map_kind {
   C89_MAP_TEXT,
   C89_MAP_KEY,
   C89_MAP_CHUNK,
-  C89_MAP_JSON
+  C89_MAP_JSON,
+  C89_MAP_NULL
 } c89_map_kind;
 typedef enum c89_path_kind {
   C89_PATH_ROOT,

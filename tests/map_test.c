@@ -464,6 +464,95 @@ typedef struct source_record {
 static const lonejson_field source_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_record, text, "text")};
 LONEJSON_MAP_DEFINE(source_map, source_record, source_fields);
+static const lonejson_field bytes_source_fields[] = {
+    LONEJSON_FIELD_BASE64_SOURCE_REQ(source_record, text, "text")};
+LONEJSON_MAP_DEFINE(bytes_source_map, source_record, bytes_source_fields);
+typedef struct null_probe {
+  endpoint *wire;
+  size_t begins, ends, accepted_begin, accepted_end, offset;
+} null_probe;
+static int null_begin(void *context, const c89cbor_token *token) {
+  null_probe *probe = context;
+  assert(token->type == C89CBOR_NULL && token->argument == 0 &&
+         token->length == 0 && token->data == NULL);
+  if (++probe->begins == 1) {
+    probe->offset = probe->wire->offset;
+    return C89CBOR_OUTPUT;
+  }
+  assert(probe->wire->offset == probe->offset && probe->accepted_begin == 0);
+  ++probe->accepted_begin;
+  return C89CBOR_OK;
+}
+static int null_end(void *context) {
+  null_probe *probe = context;
+  assert(probe->accepted_begin == 1 && probe->accepted_end == 0 &&
+         probe->wire->offset == probe->offset);
+  if (++probe->ends == 1)
+    return C89CBOR_OUTPUT;
+  ++probe->accepted_end;
+  return C89CBOR_OK;
+}
+static int no_payload(void *context, const void *bytes, size_t length,
+                      size_t *count) {
+  (void)context;
+  (void)bytes;
+  (void)length;
+  *count = 0;
+  assert(0);
+  return C89CBOR_IO;
+}
+static void bound_null(void) {
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_error error;
+  lonejson_error json_error;
+  lonejson *json = lonejson_new(NULL, &json_error);
+  source_record value;
+  c89cbor_field_sink binding;
+  endpoint wire;
+  null_probe probe;
+  const lonejson_map *schema;
+  size_t variant;
+  assert(json != NULL);
+  config.json = json;
+  assert(c89cbor_init(&runtime, &config, &error) == 0);
+  memset(&binding, 0, sizeof(binding));
+  binding.path = "/text";
+  binding.begin = null_begin;
+  binding.end = null_end;
+  binding.sink.context = &probe;
+  binding.sink.write = no_payload;
+  options.field_sinks = &binding;
+  options.field_sink_count = 1;
+  options.step_events = 1;
+  for (variant = 0; variant < 3; ++variant) {
+    schema = variant == 1 ? &bytes_source_map : &source_map;
+    binding.payload =
+        variant == 0 ? C89CBOR_PAYLOAD_TEXT : C89CBOR_PAYLOAD_BYTES;
+    assert(lonejson_init(json, schema, &value, &json_error) ==
+           LONEJSON_STATUS_OK);
+    assert(json_wire(&runtime, "{\"text\":null}", &wire) == 0);
+    wire.fragment = 1;
+    memset(&probe, 0, sizeof(probe));
+    probe.wire = &wire;
+    if (variant == 2) {
+      assert(decode_record(&runtime, &wire, schema, &value, &options, &error) ==
+             C89CBOR_SCHEMA);
+      assert(probe.begins == 0 && probe.ends == 0);
+    } else {
+      assert(decode_record(&runtime, &wire, schema, &value, &options, &error) ==
+             C89CBOR_DONE);
+      assert(probe.begins == 2 && probe.ends == 2 &&
+             probe.accepted_begin == 1 && probe.accepted_end == 1);
+    }
+    assert(value.text.kind == LONEJSON_SOURCE_NONE);
+    assert(json->cleanup(json, schema, &value, &json_error) ==
+           LONEJSON_STATUS_OK);
+  }
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+}
 typedef struct allocation_count {
   size_t calls, live, fail;
 } allocation_count;
@@ -911,6 +1000,7 @@ static void *run_tests(void *unused) {
   json_fields();
   streamed_arrays();
   bound_payload();
+  bound_null();
   allocation_failures();
   source_payload();
   policies_and_views();
