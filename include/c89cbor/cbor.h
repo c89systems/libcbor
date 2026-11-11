@@ -87,12 +87,13 @@ typedef struct c89cbor_allocator {
 
 /** Fixed diagnostic copied into caller storage; no allocation is required. */
 typedef struct c89cbor_error {
-  int status;        /**< libcbor status, zero on success. */
-  int cause;         /**< Preserved dependency status when applicable. */
-  int system_errno;  /**< Endpoint errno when available. */
-  uint64_t offset;   /**< Accepted input offset. */
-  int shortened;     /**< Field path was shortened to fit path. */
-  char layer[24];    /**< Failed codec or adapter layer. */
+  int status;       /**< libcbor status, zero on success. */
+  int cause;        /**< Preserved dependency status when applicable. */
+  int system_errno; /**< Endpoint errno when available. */
+  uint64_t offset;  /**< Accepted input offset. */
+  int shortened;    /**< Field path was shortened to fit path. */
+  int truncated;  /**< A mapped overflow policy retained only a value prefix. */
+  char layer[24]; /**< Failed codec or adapter layer. */
   char message[160]; /**< Human-readable error text. */
   char path[160];    /**< Mapped field path when available. */
 } c89cbor_error;

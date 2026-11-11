@@ -117,6 +117,12 @@ c89cbor_config c89cbor_default_config(void) {
   c89cbor_config config;
   memset(&config, 0, sizeof(config));
   config.allocator = c89cbor_default_allocator();
+  config.json_config = lonejson_default_config();
+  config.json_config.json_value_max_string_bytes = (size_t)-1;
+  config.json_config.json_value_max_key_bytes = (size_t)-1;
+  config.json_config.json_value_max_depth = C89CBOR_DEPTH;
+  config.json_config.max_depth = C89CBOR_DEPTH;
+  config.json_config.write_max_output_bytes = (size_t)-1;
   return config;
 }
 c89cbor_config c89cbor_runtime_default_config(c89cbor *runtime) {
@@ -136,6 +142,18 @@ int c89cbor_init(c89cbor *runtime, const c89cbor_config *config,
     return C89CBOR_INVALID;
   memset(runtime, 0, sizeof(*runtime));
   runtime->cleanup = c89cbor_cleanup;
+  runtime->encode_map = c89cbor_encode_map;
+  runtime->encode_map_init = c89cbor_encode_map_init;
+  runtime->encode_map_open = c89cbor_encode_map_open;
+  runtime->encode_map_view = c89cbor_encode_map_view;
+  runtime->encode_map_view_init = c89cbor_encode_map_view_init;
+  runtime->encode_map_view_open = c89cbor_encode_map_view_open;
+  runtime->decode_map = c89cbor_decode_map;
+  runtime->decode_map_init = c89cbor_decode_map_init;
+  runtime->decode_map_open = c89cbor_decode_map_open;
+  runtime->decode_map_view = c89cbor_decode_map_view;
+  runtime->decode_map_view_init = c89cbor_decode_map_view_init;
+  runtime->decode_map_view_open = c89cbor_decode_map_view_open;
   runtime->destroy = c89cbor_destroy;
   runtime->diagnostic = c89cbor_diagnostic;
   runtime->default_config = c89cbor_runtime_default_config;
@@ -155,10 +173,19 @@ int c89cbor_init(c89cbor *runtime, const c89cbor_config *config,
   runtime->transfer_create = c89cbor_transfer_create;
   runtime->fd_init = c89cbor_fd_init;
   runtime->fd_create = c89cbor_fd_create;
+  runtime->default_options = c89cbor_runtime_default_options;
+  runtime->json_to_cbor = c89cbor_json_to_cbor;
+  runtime->json_to_cbor_init = c89cbor_json_to_cbor_init;
+  runtime->json_to_cbor_open = c89cbor_json_to_cbor_open;
+  runtime->cbor_to_json = c89cbor_cbor_to_json;
+  runtime->cbor_to_json_init = c89cbor_cbor_to_json_init;
+  runtime->cbor_to_json_open = c89cbor_cbor_to_json_open;
   status = c89_lifetime_init(&runtime->lifetime, NULL,
                              config == NULL ? NULL : &config->allocator);
   if (config != NULL)
     runtime->json = config->json;
+  runtime->json_config = config == NULL ? c89cbor_default_config().json_config
+                                        : config->json_config;
   runtime->step_input = config == NULL || config->step_input == 0
                             ? C89CBOR_CHUNK
                             : config->step_input;
@@ -227,4 +254,33 @@ int c89cbor_destroy(c89cbor *runtime) {
 int c89cbor_diagnostic(const c89cbor *runtime, c89cbor_error *error) {
   return c89_lifetime_diagnostic(runtime == NULL ? NULL : &runtime->lifetime,
                                  error);
+}
+
+void c89_options_resolve(const c89cbor *runtime, const c89cbor_options *options,
+                         c89cbor_options *resolved) {
+  *resolved = options == NULL ? c89cbor_default_options() : *options;
+  if (resolved->depth == 0)
+    resolved->depth = C89CBOR_DEPTH;
+  if (resolved->chunk == 0)
+    resolved->chunk = C89CBOR_CHUNK;
+  if (resolved->key_bytes == 0)
+    resolved->key_bytes = C89CBOR_CHUNK;
+  if (resolved->active_keys == 0)
+    resolved->active_keys = 256;
+  if (resolved->active_key_bytes == 0)
+    resolved->active_key_bytes = 16384;
+  if (resolved->number_bytes == 0)
+    resolved->number_bytes = 256;
+  if (resolved->field_bytes == 0)
+    resolved->field_bytes = 65536;
+  if (resolved->array_elements == 0)
+    resolved->array_elements = 16384;
+  if (resolved->record_bytes == 0)
+    resolved->record_bytes = 1048576;
+  if (resolved->step_input == 0)
+    resolved->step_input = runtime->step_input;
+  if (resolved->step_output == 0)
+    resolved->step_output = runtime->step_output;
+  if (resolved->step_events == 0)
+    resolved->step_events = runtime->step_events;
 }

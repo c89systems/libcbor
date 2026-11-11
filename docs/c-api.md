@@ -56,6 +56,82 @@ Never represent an unbounded string as an owned char* merely to fit a schema API
 provide a source/sink or fragment callback for that field. Native endpoints can
 be handed to Lua using `<c89cbor/lua.h>` without serializing through Lua values.
 
+## JSON conversion
+
+The runtime exposes `json_to_cbor` and `cbor_to_json` for blocking endpoints.
+Their `_open` factories allocate a resumable conversion receiver. The matching
+`_init` methods initialize a caller-owned shell. Opening or initializing an
+operation performs no endpoint I/O. Its bounded working buffers and lonejson
+workspace use their configured allocators.
+
+Call `operation->step(operation,&error)` until DONE. INPUT and OUTPUT return
+control to the application's event loop. OK reports progress within the step
+budgets. Pending output drains before another input fragment is accepted.
+Query cumulative byte counts and completed records with the progress method.
+Completion includes EOF validation and draining output. Cleanup cancels an
+operation, and destroy frees an allocated shell after cleanup.
+
+The [plain JSON profile](spec.md#json-conversion-profile) preserves the full
+CBOR integer range and finite binary64 values, validates UTF-8, and rejects
+duplicate keys and unsupported CBOR representations. Keys and number tokens
+have explicit bounds. Payload strings flow through bounded fragments.
+Numeric operations use the C locale and preserve the caller's floating-point
+environment. Configure per-operation limits with `c89cbor_options` and the
+owned lonejson runtime policy with `c89cbor_config.json_config`. A borrowed
+lonejson runtime applies its own limits and allocator.
+
+## Mapped records
+
+`runtime->encode_map(runtime,map,record,sizeof(*record),sink,options,error)`
+reads native fields directly. `decode_map` takes a source followed by the map,
+initialized destination and its extent. Both have `_init` and `_open` variants
+returning the same conversion receiver used for JSON. The `_view` variants
+borrow a `lonejson_record_view`, including its owning lonejson runtime. Views
+must have the published sizes and ABI version, zero flags, and sufficient
+record extent. Keep the view's runtime, schema and record alive and unchanged
+until the operation has been cleaned up.
+
+Initialize or reset destination records through lonejson before decoding.
+Configure fixed array backing and stream handlers before opening the operation.
+The adapter uses public lonejson setters and appenders for owned fields. Partial
+records remain caller-owned and cleanup-safe after errors or cancellation.
+Required fields and duplicate keys are checked per object. Unknown fields fail
+unless `allow_unknown_fields` is set; skipped values still undergo CBOR and
+UTF-8 validation. Single-record completion requires EOF and rejects trailing
+bytes. Record changes and callbacks are provisional until completion.
+
+Native scalar, string, object and array fields never cross a JSON representation.
+Text sources become CBOR text and Base64 sources become raw CBOR byte strings.
+Unknown-length sources produce indefinite chunks with valid UTF-8 boundaries.
+Encoding a spool uses a borrowed cursor copy and preserves its read position.
+Files and descriptors supplied by callers remain borrowed. Paths are opened by
+the operation and closed on completion or cancellation. Opening performs no I/O.
+
+Allocated strings use a borrowed complete input span when available, otherwise
+one bounded field scratch buffer. Defaults bound materialized strings to 64 KiB,
+new logical record storage to 1 MiB, and materialized array items to 16384.
+Use source fields, configured stream fields, or explicit field sinks for larger
+payloads. A spool is an explicit destination storage choice and follows its
+lonejson spool policy. Silent fixed-capacity truncation sets `error.truncated`
+even on successful completion. The reporting truncation policy fails with LIMIT.
+
+`c89cbor_options.field_sinks` binds JSON Pointer paths to TEXT, BYTES or JSON
+payloads. Its begin/end callbacks return OK after acceptance, OUTPUT to retry an
+unaccepted boundary, or a negative failure. Payload writes use exact partial
+byte counts. Pointers are borrowed only for the callback duration. Source fields
+require a sink when used as incoming destinations. A lonejson array-stream
+callback returning PAUSED accepts that event once, then yields OUTPUT without
+replay. Mapped array streams reuse and reset the caller-initialized item record
+after each item callback, so callbacks must copy anything they retain.
+
+JSON_VALUE fields alone use the JSON visitor/writer bridge. Outbound buffer,
+reader, file, fd and path modes are supported. Incoming JSON sinks stream through
+bounded buffers. Explicit capture materializes one field within `field_bytes`
+and `record_bytes` through the public owned-buffer setter. Visitor and path
+visitor delivery modes return UNSUPPORTED; they lack a public token-delivery API
+that preserves their limits. A JSON_VALUE null with no delivery mode uses its
+normal mapped null semantics.
+
 ## Linking
 
 ```cmake
