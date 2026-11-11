@@ -1,0 +1,62 @@
+#include <c89cbor/lonejson.h>
+#include <assert.h>
+#include <pthread.h>
+
+static int no_read(void *context, void *buffer, size_t capacity,
+                   size_t *count) {
+  (void)context;
+  (void)buffer;
+  (void)capacity;
+  (void)count;
+  assert(0);
+  return C89CBOR_IO;
+}
+static int no_write(void *context, const void *bytes, size_t length,
+                    size_t *count) {
+  (void)context;
+  (void)bytes;
+  (void)length;
+  (void)count;
+  assert(0);
+  return C89CBOR_IO;
+}
+static void *verify_surface(void *unused) {
+  c89cbor runtime;
+  c89cbor_encoder encoder;
+  c89cbor_decoder decoder;
+  c89cbor_reader reader;
+  c89cbor_transfer transfer;
+  c89cbor_fd fd;
+  c89cbor_conversion conversion;
+  c89cbor_error error;
+  c89cbor_source source;
+  c89cbor_sink sink;
+  (void)unused;
+  source.context = NULL;
+  source.read = no_read;
+  sink.context = NULL;
+  sink.write = no_write;
+  assert(c89cbor_init(&runtime, NULL, &error) == 0);
+  assert(runtime.encoder_init(&runtime, &encoder, NULL, 0, 0) == 0);
+  assert(runtime.decoder_init(&runtime, &decoder, NULL, 0, 0) == 0);
+  assert(runtime.reader_init(&runtime, &reader, C89CBOR_SINGLE, 0) == 0);
+  assert(runtime.transfer_init(&runtime, &transfer, &source, &sink,
+                               C89CBOR_SINGLE, 0) == 0);
+  assert(runtime.fd_init(&runtime, &fd, 0, NULL, &sink) == 0);
+  sink.write = no_write;
+  sink.context = NULL;
+  assert(runtime.json_to_cbor_init(&runtime, &conversion, &source, &sink, NULL,
+                                   &error) == 0);
+@C89_API_ASSERTIONS@
+  assert(conversion.cleanup(&conversion) == 0);
+  assert(fd.cleanup(&fd) == 0 && transfer.cleanup(&transfer) == 0);
+  assert(reader.cleanup(&reader) == 0 && decoder.cleanup(&decoder) == 0);
+  assert(encoder.cleanup(&encoder) == 0 && runtime.cleanup(&runtime) == 0);
+  return NULL;
+}
+int main(void) {
+  pthread_t worker;
+  assert(pthread_create(&worker, NULL, verify_surface, NULL) == 0);
+  assert(pthread_join(worker, NULL) == 0);
+  return 0;
+}

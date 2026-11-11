@@ -10,6 +10,8 @@ Native initializers and constructors take the optional runtime first.
 NULL selects native defaults. Keep a configured root alive until its
 children have been cleaned up.
 All declarations have editor documentation, ownership rules and status semantics.
+The [API inventory](api-inventory.md) maps each export to its receiver and Lua
+surface. Compiled parity assertions and export checks guard that inventory.
 Initialize contexts; never memcpy an active context. NULL frames with capacity 0
 uses embedded storage. A separate frame array and chunk bound are optional.
 No init, next, put, read, framing or transfer operation allocates.

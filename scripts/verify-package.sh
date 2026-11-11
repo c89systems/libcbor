@@ -48,7 +48,9 @@ cmake -S tests/consumer -B "$stage/consumer" -G Ninja \
   "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake" "-DC89CBOR_TARGET=$target" \
   "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" \
   "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-$target/lib/cmake/lonejson" \
-  "-DSDK_PREFIX=$sdk" "-DEXPECTED_VERSION=$version" "-DRUNTIME_HELPER=$root/cmake/Runtime.cmake"
+  "-DSDK_PREFIX=$sdk" "-DEXPECTED_VERSION=$version" "-DRUNTIME_HELPER=$root/cmake/Runtime.cmake" \
+  "-DAPI_SURFACE_SOURCE=$root/build/$target-${config,,}/api_surface.c" \
+  "-DAPI_SURFACE_STACK=$root/tests/stack.c"
 cmake --build "$stage/consumer" --parallel "${BUILD_JOBS:-2}"
 if [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]]; then
   ctest --test-dir "$stage/consumer" --output-on-failure --stop-on-failure --no-tests=error
