@@ -48,6 +48,12 @@ is still unaccepted. Drain output before retrying it.
 
 ## Custom C types
 
+`encoder->tag(encoder,number)` and `encoder->end_tag(encoder)` submit the ordinary
+TAG and END(TAG) events with put's acceptance rules. `decoder->next_tag` consumes
+one tag header with normal fragmented-input progress, returning TOKEN and the
+full tag number. Read its child and closing END through next. A different event
+is a sticky SCHEMA error. No tag registry or payload interpretation is implied.
+
 Keep application structs in the application. Encode a schema map/array through
 ordinary tokens; stream variable-length fields directly from their producer.
 Decode with a small schema state machine and bounded field tracking. Publish the

@@ -555,6 +555,21 @@ static int next_decoder(cpkt_lua_state *L) {
 static int finish_decoder(cpkt_lua_state *L) {
   return result(L, c89cbor_decoder_finish(checked(L, 1, DEC)->ptr));
 }
+static int next_tag(cpkt_lua_state *L) {
+  c89cbor_decoder *decoder = checked(L, 1, DEC)->ptr;
+  uint64_t number;
+  size_t length, consumed;
+  const void *bytes = input(L, 2, &length);
+  int status =
+      c89cbor_decoder_next_tag(decoder, bytes, length, &consumed, &number);
+  result(L, status);
+  push_integer(L, consumed);
+  if (status == C89CBOR_TOKEN)
+    push_integer(L, number);
+  else
+    cpkt_lua_pushnil(L);
+  return 3;
+}
 static int reset_decoder(cpkt_lua_state *L) {
   return result(L, c89cbor_decoder_reset(checked(L, 1, DEC)->ptr));
 }
@@ -600,6 +615,26 @@ static void unpin_data(cpkt_lua_state *L, handle *h) {
   }
   cpkt_lua_pushnil(L);
   cpkt_lua_setiuservalue(L, 1, 2);
+}
+static int encoder_tag(cpkt_lua_state *L) {
+  handle *h = checked(L, 1, ENC);
+  int status;
+  if (h->borrowers)
+    return result(L, C89CBOR_BUSY);
+  status = c89cbor_encoder_tag(h->ptr, integer(L, 2));
+  if (status == 0)
+    unpin_data(L, h);
+  return result(L, status);
+}
+static int encoder_end_tag(cpkt_lua_state *L) {
+  handle *h = checked(L, 1, ENC);
+  int status;
+  if (h->borrowers)
+    return result(L, C89CBOR_BUSY);
+  status = c89cbor_encoder_end_tag(h->ptr);
+  if (status == 0)
+    unpin_data(L, h);
+  return result(L, status);
 }
 static int put_encoder(cpkt_lua_state *L) {
   handle *h = checked(L, 1, ENC);
@@ -1368,10 +1403,13 @@ static void metatable(cpkt_lua_state *L, const char *name,
 }
 int luaopen_cbor(cpkt_lua_state *L) {
   static const cpkt_lua_reg dec[] = {{"next", next_decoder},
+                                     {"next_tag", next_tag},
                                      {"finish", finish_decoder},
                                      {"reset", reset_decoder},
                                      {NULL, NULL}};
   static const cpkt_lua_reg enc[] = {{"put", put_encoder},
+                                     {"tag", encoder_tag},
+                                     {"end_tag", encoder_end_tag},
                                      {"peek", peek_encoder},
                                      {"advance", advance_encoder},
                                      {"read", read_encoder},

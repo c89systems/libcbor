@@ -139,6 +139,8 @@ typedef struct c89cbor_state {
 /** Caller-owned decoder; initialize before use. Never copy an active context.
  */
 typedef struct c89cbor_decoder {
+  int (*next_tag)(struct c89cbor_decoder *, const void *, size_t, size_t *,
+                  uint64_t *); /**< Consume the next tag header. */
   int (*next)(struct c89cbor_decoder *, const void *, size_t, size_t *,
               c89cbor_token *); /**< Decode one borrowed event. */
   int (*finish)(
@@ -160,6 +162,9 @@ typedef struct c89cbor_decoder {
 /** Caller-owned encoder; initialize before use. Never copy an active context.
  */
 typedef struct c89cbor_encoder {
+  int (*tag)(struct c89cbor_encoder *,
+             uint64_t);                     /**< Begin an application tag. */
+  int (*end_tag)(struct c89cbor_encoder *); /**< End its completed payload. */
   int (*put)(struct c89cbor_encoder *,
              const c89cbor_token *); /**< Submit one token. */
   int (*read)(struct c89cbor_encoder *, void *, size_t,
@@ -192,6 +197,22 @@ C89CBOR_API const char *c89cbor_status_string(c89cbor *runtime, int status);
 /** Static library release version. Independent of wire formats and shared ABI.
  */
 C89CBOR_API const char *c89cbor_version(c89cbor *runtime);
+/** Submit a tag begin using ordinary put acceptance and drain rules.
+ * Emit exactly one child through put, then close it with end_tag. No registry
+ * or tag interpretation is applied; the application validates its payload.
+ */
+C89CBOR_API int c89cbor_encoder_tag(c89cbor_encoder *encoder, uint64_t number);
+/** Submit END(TAG); OUTPUT leaves the request unaccepted until output drains.
+ */
+C89CBOR_API int c89cbor_encoder_end_tag(c89cbor_encoder *encoder);
+/** Decode the next event as a tag header. TOKEN writes its full 64-bit number.
+ * INPUT preserves partial header state. Consume the child and END(TAG) with
+ * ordinary next. A different event is a terminal SCHEMA error. All counts
+ * remain valid on errors; outputs are cleared before argument validation.
+ */
+C89CBOR_API int c89cbor_decoder_next_tag(c89cbor_decoder *decoder,
+                                         const void *input, size_t length,
+                                         size_t *consumed, uint64_t *number);
 /** Initialize without allocation. frames == NULL selects embedded storage and
  * requires capacity == 0. Otherwise capacity must be positive. chunk == 0
  * selects 2 KiB. Caller frames outlive context and must not overlap it.

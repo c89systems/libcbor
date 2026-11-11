@@ -34,6 +34,8 @@
 -- decoder_create(allocator=nil), encoder_create(allocator=nil) -> heap handles,
 -- or nil,status on allocation failure. Allocator handles come from native C.
 -- decoder:next(string_or_span=nil) -> status, consumed, token_or_nil.
+-- decoder:next_tag(string_or_span=nil) -> status,consumed,tag_number_or_nil.
+-- It consumes a tag header; use next for the child and END(TAG).
 -- Decoder input is borrowed and pinned by returned token handles.
 -- decoder:finish(), decoder:reset(), encoder:finish(), encoder:reset() -> status.
 -- token(kind, argument=0, data=nil, indefinite=false) -> token handle.
@@ -43,6 +45,7 @@
 -- token:span() -> borrowed DATA span, pinned to the token/input owner.
 -- token:float64_set(number) -> status; token:float64_get() -> status,number.
 -- encoder:put(token) -> status. OUTPUT means drain the previous token first.
+-- encoder:tag(number), encoder:end_tag() use the same acceptance/drain state.
 -- encoder:read(capacity=2048) -> status,string (explicit copying Lua path).
 -- encoder:peek() -> status,span_or_nil; encoder:advance(count) -> status.
 -- Close a peek span before put/reset/close can reuse or release its encoder.

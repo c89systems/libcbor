@@ -147,6 +147,7 @@ int c89cbor_decoder_init(c89cbor *runtime, c89cbor_decoder *d, c89cbor_frame *f,
     return C89CBOR_INVALID;
   memset(d, 0, sizeof(*d));
   d->next = c89cbor_decoder_next;
+  d->next_tag = c89cbor_decoder_next_tag;
   d->finish = c89cbor_decoder_finish;
   d->reset = c89cbor_decoder_reset;
   d->cleanup = c89cbor_decoder_cleanup;
@@ -169,6 +170,8 @@ int c89cbor_encoder_init(c89cbor *runtime, c89cbor_encoder *e, c89cbor_frame *f,
     return C89CBOR_INVALID;
   memset(e, 0, sizeof(*e));
   e->put = c89cbor_encoder_put;
+  e->tag = c89cbor_encoder_tag;
+  e->end_tag = c89cbor_encoder_end_tag;
   e->read = c89cbor_encoder_read;
   e->peek = c89cbor_encoder_peek;
   e->advance = c89cbor_encoder_advance;
@@ -317,6 +320,27 @@ static int decoder_finish_work(c89cbor_decoder *d) {
   if (!d->state.complete || d->state.depth || d->have)
     return fail(&d->state, C89CBOR_MALFORMED);
   return C89CBOR_OK;
+}
+int c89cbor_decoder_next_tag(c89cbor_decoder *d, const void *input,
+                             size_t length, size_t *consumed,
+                             uint64_t *number) {
+  c89cbor_token token;
+  int status;
+  if (consumed != NULL)
+    *consumed = 0;
+  if (number != NULL)
+    *number = 0;
+  if (consumed == NULL || number == NULL)
+    return C89CBOR_INVALID;
+  status = c89cbor_decoder_next(d, input, length, consumed, &token);
+  if (status != C89CBOR_TOKEN)
+    return status;
+  if (token.type != C89CBOR_TAG) {
+    (void)fail(&d->state, C89CBOR_SCHEMA);
+    return c89_error(&d->lifetime, C89CBOR_SCHEMA, "tag");
+  }
+  *number = token.argument;
+  return C89CBOR_TOKEN;
 }
 int c89cbor_decoder_reset(c89cbor_decoder *d) {
   if (d == NULL || d->state.failed || !d->state.complete || d->state.depth)
@@ -650,6 +674,20 @@ int c89cbor_encoder_put(c89cbor_encoder *value, const c89cbor_token *token) {
     c89_error(&value->lifetime, status, "encoder");
   }
   return status;
+}
+int c89cbor_encoder_tag(c89cbor_encoder *encoder, uint64_t number) {
+  c89cbor_token token;
+  memset(&token, 0, sizeof(token));
+  token.type = C89CBOR_TAG;
+  token.argument = number;
+  return c89cbor_encoder_put(encoder, &token);
+}
+int c89cbor_encoder_end_tag(c89cbor_encoder *encoder) {
+  c89cbor_token token;
+  memset(&token, 0, sizeof(token));
+  token.type = C89CBOR_END;
+  token.argument = C89CBOR_TAG;
+  return c89cbor_encoder_put(encoder, &token);
 }
 
 int c89cbor_encoder_finish(c89cbor_encoder *value) {

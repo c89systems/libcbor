@@ -209,10 +209,71 @@ static void descriptor_ownership(void) {
   assert(runtime.cleanup(&runtime) == 0);
   assert(close(descriptors[0]) == 0 && close(descriptors[1]) == 0);
 }
+static void application_tags(void) {
+  static const unsigned char expected[] = {0xd9, 0xd9, 0xf7, 0xc0, 0x01};
+  c89cbor_encoder encoder;
+  c89cbor_decoder decoder;
+  c89cbor_token token;
+  c89cbor_error error;
+  unsigned char bytes[sizeof(expected)];
+  size_t used, total = 0, i;
+  uint64_t number;
+  int status;
+  assert(c89cbor_encoder_init(NULL, &encoder, NULL, 0, 0) == 0);
+  assert(encoder.tag(&encoder, 55799) == 0);
+  assert(encoder.tag(&encoder, 0) == C89CBOR_OUTPUT);
+  assert(encoder.read(&encoder, bytes, sizeof(bytes), &used) == 0);
+  total += used;
+  assert(c89cbor_encoder_tag(&encoder, 0) == 0);
+  assert(encoder.read(&encoder, bytes + total, sizeof(bytes) - total, &used) ==
+         0);
+  total += used;
+  memset(&token, 0, sizeof(token));
+  token.type = C89CBOR_UINT;
+  token.argument = 1;
+  assert(encoder.put(&encoder, &token) == 0);
+  assert(encoder.end_tag(&encoder) == C89CBOR_OUTPUT);
+  assert(encoder.read(&encoder, bytes + total, sizeof(bytes) - total, &used) ==
+         0);
+  total += used;
+  assert(encoder.end_tag(&encoder) == 0 &&
+         c89cbor_encoder_end_tag(&encoder) == 0);
+  assert(encoder.finish(&encoder) == 0 && total == sizeof(expected) &&
+         memcmp(bytes, expected, total) == 0);
+  assert(c89cbor_decoder_init(NULL, &decoder, NULL, 0, 0) == 0);
+  for (i = 0; i < 3; ++i) {
+    status = decoder.next_tag(&decoder, bytes + i, 1, &used, &number);
+    assert(used == 1 && status == (i == 2 ? C89CBOR_TOKEN : C89CBOR_INPUT));
+  }
+  assert(number == 55799);
+  assert(c89cbor_decoder_next_tag(&decoder, bytes + 3, total - 3, &used,
+                                  &number) == C89CBOR_TOKEN);
+  assert(used == 1 && number == 0);
+  assert(decoder.next(&decoder, bytes + 4, 1, &used, &token) == C89CBOR_TOKEN &&
+         token.argument == 1);
+  assert(decoder.next(&decoder, NULL, 0, &used, &token) == C89CBOR_TOKEN &&
+         token.type == C89CBOR_END);
+  assert(decoder.next(&decoder, NULL, 0, &used, &token) == C89CBOR_TOKEN &&
+         token.type == C89CBOR_END);
+  assert(decoder.finish(&decoder) == 0 && decoder.reset(&decoder) == 0);
+  number = 99;
+  used = 99;
+  assert(decoder.next_tag(&decoder, bytes + 4, 1, &used, NULL) ==
+             C89CBOR_INVALID &&
+         used == 0);
+  assert(decoder.next_tag(&decoder, bytes + 4, 1, &used, &number) ==
+             C89CBOR_SCHEMA &&
+         used == 1 && number == 0);
+  assert(decoder.next(&decoder, NULL, 0, &used, &token) == C89CBOR_SCHEMA);
+  assert(decoder.diagnostic(&decoder, &error) == 0 &&
+         error.status == C89CBOR_SCHEMA);
+  assert(decoder.cleanup(&decoder) == 0 && encoder.cleanup(&encoder) == 0);
+}
 int main(void) {
   lifetime();
   borrowed_output();
   failed_initialization();
   descriptor_ownership();
+  application_tags();
   return 0;
 }
