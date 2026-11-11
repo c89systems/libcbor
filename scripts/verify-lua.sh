@@ -37,6 +37,7 @@ cmake -S lua -B "$scratch/runner" "${args[@]}"
 cmake --build "$scratch/runner" --target lua_test --parallel "${BUILD_JOBS:-2}"
 TMPDIR="$scratch/tmp" luarocks --tree "$scratch/tree" --lua-version=5.5 \
   install --deps-mode=none "$rock" "CBOR_DIR=$sdk" "CPKT_DIR=$cpkt" "CC=$cc" "LD=$cc" \
+  "LONEJSON_DIR=$root/.cache/deps/liblonejson-0.49.0-$target" \
   "LUA_INCDIR=$cpkt/include" "LUA_LIBDIR=$cpkt/lib" \
   'CFLAGS=-O2 -fPIC -std=c89 -Wall -Wextra -Werror -Wpedantic -Wno-long-long'
 runner=$scratch/runner/lua_test

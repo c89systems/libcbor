@@ -29,5 +29,7 @@ if(BUILD_TESTING)
   c89_runtime(lua_test)
   set_property(TARGET lua_test APPEND PROPERTY BUILD_RPATH "${CpktCore_PREFIX}/lib")
   add_test(NAME lua-api COMMAND lua_test "${CMAKE_CURRENT_BINARY_DIR}/cbor${CMAKE_SHARED_MODULE_SUFFIX}" "${source_root}/tests/lua_test.lua")
+  add_test(NAME lua-exports COMMAND ${CMAKE_COMMAND} "-DNM=${CMAKE_NM}" "-DMODULE=$<TARGET_FILE:cbor>"
+    "-DHEADER=${source_root}/include/c89cbor/lua.h" "-DDARWIN=${APPLE}" -P "${source_root}/tests/lua_exports.cmake")
   set_tests_properties(lua-api PROPERTIES TIMEOUT 30 LABELS "lua;integration" ENVIRONMENT "GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0")
 endif()

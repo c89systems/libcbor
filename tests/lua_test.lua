@@ -1,4 +1,76 @@
 local c = require('cbor')
+local runtime = c.create({step_input=3, step_output=5, step_events=2})
+assert(runtime:version() == expected_version)
+assert(runtime:default_options().chunk == 0) -- zero selects the C default
+local allocator = runtime:default_allocator()
+local child_runtime = c.create({allocator=allocator})
+assert(allocator:close() == c.INVALID)
+local child_decoder = child_runtime:decoder_create()
+local child_reader = child_runtime:reader_create()
+local child_fd = child_runtime:fd_create(0)
+assert(child_runtime:close() == c.INVALID)
+assert(child_decoder:close() == c.OK and child_reader:close() == c.OK and child_fd:close() == c.OK)
+assert(child_runtime:close() == c.OK and allocator:close() == c.OK)
+local in_place = c.init()
+assert(in_place:close() == c.OK)
+local function complete(operation)
+  for step=1,10000 do
+    local status, diagnostic = operation:step()
+    if status == c.DONE then
+      local rc, progress = operation:progress()
+      assert(rc == c.OK and progress.records == 1)
+      assert(operation:diagnostic() == c.OK)
+      return
+    end
+    assert(status == c.OK or status == c.INPUT or status == c.OUTPUT, diagnostic.message)
+  end
+  error('conversion stalled')
+end
+for _, name in ipairs({'json_to_cbor', 'cbor_to_json', 'encode_map', 'decode_map'}) do
+  local mode = name == 'json_to_cbor' and 1 or name == 'cbor_to_json' and 2 or name == 'encode_map' and 3 or 4
+  local first, second = native_case(mode)
+  local operation, status, diagnostic = runtime[name .. '_init'](runtime, first, second, {chunk=1, step_events=2})
+  assert(operation, diagnostic and diagnostic.message)
+  assert(first:close() == c.INVALID and second:close() == c.INVALID and runtime:close() == c.INVALID)
+  complete(operation)
+  assert(operation:close() == c.OK)
+  assert(first:close() == c.OK and second:close() == c.OK)
+  first, second = native_case(mode)
+  operation = assert(runtime[name .. '_open'](runtime, first, second))
+  repeat
+    status, diagnostic = operation:run()
+    assert(status == c.INPUT or status == c.OUTPUT or status == c.DONE, diagnostic.message)
+  until status == c.DONE
+  assert(operation:close() == c.OK and first:close() == c.OK and second:close() == c.OK)
+  first, second = native_case(mode, false)
+  status, diagnostic = runtime[name](runtime, first, second)
+  assert(status == c.OK, diagnostic.message)
+  assert(first:close() == c.OK and second:close() == c.OK)
+end
+assert(runtime:close() == c.OK)
+do
+  local owner = c.create({allocator=counting_allocator})
+  local first, second = native_case(1)
+  local operation = owner:json_to_cbor_open(first, second)
+  -- Finalization must release the child before destroying its native root.
+  assert(operation:step() >= c.OK)
+end
+collectgarbage('collect')
+do
+  local owner = c.create({allocator=counting_allocator})
+  local heap = owner:encoder_create()
+  assert(heap:put(c.token(c.BYTES, 3)) == c.OK)
+  local status, borrowed = heap:peek()
+  assert(status == c.OUTPUT and borrowed:length() == 1)
+  assert(heap:reset() == c.BUSY and heap:close() == c.INVALID)
+  assert(borrowed:close() == c.OK)
+  assert(heap:advance(1) == c.OK)
+  assert(heap:put(c.token(c.DATA, 0, 'abc')) == c.OK)
+  local rc, span = heap:peek()
+  assert(rc == c.OUTPUT and span:string() == 'abc')
+  -- Leave root, heap encoder, token and borrowed span to finalization.
+end
+collectgarbage('collect')
 assert(c.version() == expected_version)
 assert(c.status_string(c.MALFORMED):find('CBOR'))
 local frames = c.frames(4)

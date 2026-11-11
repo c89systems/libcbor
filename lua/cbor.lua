@@ -1,6 +1,33 @@
 -- Documentation for require('cbor'), the native Lua 5.5.1 module.
 -- Every codec operation delegates to libcbor's public C API.
 --
+-- create(config=nil), init(config=nil) -> runtime or nil,status,error.
+-- create allocates the native root; init keeps its shell in Lua userdata.
+-- config accepts step_input, step_output, step_events, a native allocator,
+-- and json_config limit fields. A typed native config exposes every C option.
+-- default_config(), default_options(), default_allocator() prepare defaults.
+-- Zero bounds select C defaults; false is the default flag.
+-- runtime factories: encoder[_init|_create], decoder[_init|_create],
+-- reader[_init|_create], fd[_init|_create], transfer[_init|_create].
+-- Init factories keep shells in userdata; create factories allocate in C.
+-- Children pin their runtime, endpoints, allocator and input owners.
+-- runtime:json_to_cbor(source,sink,options=nil) -> status,error.
+-- runtime:cbor_to_json(source,sink,options=nil) -> status,error.
+-- runtime:encode_map(record_view,sink,options=nil) -> status,error.
+-- runtime:decode_map(source,record_view,options=nil) -> status,error.
+-- These methods have _open and _init factories returning a conversion,
+-- or nil,status,error. Opening performs no endpoint I/O. Map methods have
+-- encode_map_view/decode_map_view aliases and matching factories.
+-- options accepts conversion limits and allow_unknown_fields; typed native
+-- options carry native field sinks. No whole record becomes a Lua table.
+-- View descriptors are copied; records and their owners remain borrowed.
+-- conversion:step() -> status,error; conversion:run() stays in C until a wait,
+-- completion or failure. INPUT/OUTPUT return scheduling to the caller.
+-- conversion:progress(), transfer:progress() -> status,{input,output,records}.
+-- receiver:diagnostic() -> status,error (status,cause,system_errno,offset,
+-- layer,message,path,shortened,truncated). C diagnostic storage is bounded.
+-- runtime also exposes version, status_string, default_config, default_options,
+-- default_allocator, float64_set(token,number), float64_get(token), length32.
 -- version() -> string; status_string(status) -> diagnostic string.
 -- frames(capacity=32) -> caller-owned nesting storage, shared by one codec.
 -- decoder(frames=nil, chunk=2048), encoder(frames=nil, chunk=2048) -> handles.
@@ -17,13 +44,16 @@
 -- token:float64_set(number) -> status; token:float64_get() -> status,number.
 -- encoder:put(token) -> status. OUTPUT means drain the previous token first.
 -- encoder:read(capacity=2048) -> status,string (explicit copying Lua path).
+-- encoder:peek() -> status,span_or_nil; encoder:advance(count) -> status.
+-- Close a peek span before put/reset/close can reuse or release its encoder.
 -- Pending DATA keeps its token and data owner alive until drained.
 -- span(string_or_span) -> borrowed view; span:length() -> byte count;
 -- span:string() explicitly materializes the view as a Lua string.
 -- reader(mode=SINGLE, limit=131072) -> framed reader handle.
 -- reader:next(string_or_span=nil) -> status, consumed, event_or_nil.
 -- Events contain type, length and (for RECORD_TOKEN) a token handle.
--- reader:finish() -> status; length32(length,limit=131072) -> status,prefix.
+-- reader:finish(), reader:reset() -> status;
+-- length32(length,limit=131072) -> status,prefix.
 -- fd(descriptor) -> borrowed POSIX descriptor (never closes it).
 -- fd:source(), fd:sink() -> native endpoints pinned to the descriptor view.
 -- transfer(source,sink,mode=SINGLE,limit=131072) -> bounded native transfer.
@@ -32,6 +62,8 @@
 -- transfer:counts() -> read_bytes,written_bytes; no logical-message buffering.
 -- All handles:close() -> status, idempotently. Owners with live borrowed child
 -- handles cannot close (INVALID). GC closes unreferenced owned handles.
+-- cleanup() and destroy() share Lua close semantics and respect C ownership.
+-- Module reader_create, fd_create and transfer_create allocate native shells.
 -- C endpoints and spans are attached through <c89cbor/lua.h>, with owner pins.
 -- Applications wanting Lua-side processing explicitly iterate next/put/read.
 -- See docs/lua.md for errors, lifetimes, numeric limits and API mapping.
