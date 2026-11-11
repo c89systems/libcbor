@@ -21,6 +21,13 @@ cmake -S .cache/reference/libcbor-0.14.0 -B build/reference -G Ninja \
 cmake --build build/reference --parallel "${BUILD_JOBS:-2}"
 cmake --install build/reference
 scripts/build.sh core x86_64-linux-gnu Release "${1:-}" -DC89CBOR_BENCHMARKS=ON "-DC89CBOR_REFERENCE_PREFIX=$root/.cache/reference/sdk"
-for mode in decode encode reference-decode; do
+if nm build/x86_64-linux-gnu-release/reference_benchmark | rg 'c89cbor_'; then
+  printf 'Native libcbor symbols leaked into independent reference executable\n' >&2; exit 1
+fi
+if nm build/x86_64-linux-gnu-release/codec_benchmark | rg ' cbor_stream_decode$'; then
+  printf 'Reference symbols leaked into native executable\n' >&2; exit 1
+fi
+for mode in decode encode; do
   build/x86_64-linux-gnu-release/codec_benchmark "$mode" | tee "build/bench/$mode.jsonl"
+  build/x86_64-linux-gnu-release/reference_benchmark "$mode" | tee "build/bench/reference-$mode.jsonl"
 done

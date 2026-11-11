@@ -4,9 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#ifdef C89CBOR_REFERENCE
-#include <cbor/streaming.h>
-#endif
 static volatile uint64_t observed;
 static double now(void) {
   struct timespec t;
@@ -15,13 +12,6 @@ static double now(void) {
     abort();
   return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
 }
-#ifdef C89CBOR_REFERENCE
-static void reference_bytes(void *ctx, cbor_data bytes, size_t n) {
-  uint64_t *count = ctx;
-  (void)bytes;
-  *count += n;
-}
-#endif
 int main(int argc, char **argv) {
   c89cbor_decoder d;
   c89cbor_encoder e;
@@ -32,18 +22,11 @@ int main(int argc, char **argv) {
   double start, seconds;
   int round, rc;
   const char *mode = argc > 1 ? argv[1] : "decode";
-  int reference = strcmp(mode, "reference-decode") == 0;
   int encode = strcmp(mode, "encode") == 0;
-#ifdef C89CBOR_REFERENCE
-  struct cbor_callbacks callbacks = cbor_empty_callbacks;
-  struct cbor_decoder_result decoded;
-  callbacks.byte_string = reference_bytes;
-#else
-  if (reference) {
-    fputs("Configure C89CBOR_REFERENCE_PREFIX first\n", stderr);
+  if (!encode && strcmp(mode, "decode") != 0) {
+    fputs("Use decode or encode\n", stderr);
     return 1;
   }
-#endif
   input[0] = 0x59;
   input[1] = 4;
   input[2] = 0;
@@ -59,15 +42,7 @@ int main(int argc, char **argv) {
     count = 0;
     start = now();
     for (i = 0; i < repetitions; ++i) {
-#ifdef C89CBOR_REFERENCE
-      if (reference) {
-        decoded = cbor_stream_decode(input, sizeof(input), &callbacks, &count);
-        if (decoded.status != CBOR_DECODER_FINISHED ||
-            decoded.read != sizeof(input))
-          abort();
-      } else
-#endif
-          if (encode) {
+      if (encode) {
         memset(&t, 0, sizeof(t));
         t.type = C89CBOR_BYTES;
         t.argument = 1024;
@@ -75,6 +50,8 @@ int main(int argc, char **argv) {
           abort();
         if (c89cbor_encoder_read(&e, output, sizeof(output), &written) != 0 ||
             written != 3)
+          abort();
+        if (memcmp(output, input, written) != 0)
           abort();
         memset(&t, 0, sizeof(t));
         t.type = C89CBOR_DATA;

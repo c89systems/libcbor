@@ -7,9 +7,11 @@ context live under build/bench. No other build/test command is launched during
 measurement. The shared host's unrelated workloads remain uncontrolled.
 
 Run `make benchmark-compare VERSION=0.1.0` for PJK/libcbor 0.14.0's allocation-free
-stateless decoder using the same Bootlin compiler, Release configuration, fixture
-and payload accounting. Its source archive has a pinned SHA-256 in compare.sh,
-with tests/examples/sanitizers disabled. This dependency is never shipped.
+stateless decoder and header-plus-payload encoder using the same Bootlin compiler,
+Release configuration, fixture and payload accounting. Each implementation has
+its own executable, linked exclusively against its own library prefix. Symbol
+checks reject accidental cross-linking. The reference source archive has a pinned
+SHA-256 in compare.sh, with tests/examples/sanitizers disabled. It is never shipped.
 
 The initial codec fixture is repeated definite 1024-byte strings. Decode measures
 borrowed byte access, not payload memory bandwidth; consumers count spans. Encode
