@@ -9,9 +9,16 @@ mkdir -p build/bench
   git rev-parse HEAD
   git status --short
   sha256sum build/x86_64-linux-gnu-release/codec_benchmark build/lua-x86_64-linux-gnu-release/cbor.so
+  sha256sum build/x86_64-linux-gnu-release/profile_benchmark
+  sed -n '/^CMAKE_C_COMPILER:FILEPATH=/p; /^CMAKE_C_FLAGS_RELEASE:STRING=/p' build/x86_64-linux-gnu-release/CMakeCache.txt
+  awk -F: '/model name/ {print; exit}' /proc/cpuinfo
+  printf 'profile_repetitions=%s chunk=%s\n' "${BENCH_REPETITIONS:-10000}" "${BENCH_CHUNK:-0}"
 } > build/bench/context.txt
 for mode in decode encode; do
   build/x86_64-linux-gnu-release/codec_benchmark "$mode" | tee "build/bench/$mode.jsonl"
+done
+for mode in mapped-encode mapped-decode json-control-encode json-control-decode json-to-cbor cbor-to-json; do
+  build/x86_64-linux-gnu-release/profile_benchmark "$mode" "${BENCH_REPETITIONS:-10000}" "${BENCH_CHUNK:-0}" | tee "build/bench/$mode.jsonl"
 done
 for transport in unix tcp udp pipe unix-dgram; do
   report=build/bench/$transport.jsonl
