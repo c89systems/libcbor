@@ -91,3 +91,47 @@ measured profiles, retaining differences in validation and representation.
 Do not turn noisy shared-host throughput into a correctness threshold. Performance
 objective: exceed established implementations on the declared workload with equal
 semantics, without relaxing validation, streaming or memory bounds.
+
+## Measured development baseline
+
+Measured at `fa06c8d9f560cd11d521cc998e7131dcdf5cadce`, on Linux x86_64,
+AMD EPYC-Rome-v5, Bootlin GCC 15.3.0, `-O3`, with default 2 KiB chunks.
+The shared host is uncontrolled. These are medians of five round means in
+microseconds per record, with 10000 small or 626 large records per round.
+Each executable verifies its output. PJK is version 0.14.0; its record path
+uses the DOM described above. Workspace preparation per operation is included.
+
+| Fixture | Native encode | PJK DOM encode | Native decode | PJK DOM decode |
+| --- | ---: | ---: | ---: | ---: |
+| Scalars | 3.26 | 0.77 | 3.79 | 1.15 |
+| Nested | 6.58 | 2.32 | 7.26 | 2.69 |
+| Short ASCII | 2.13 | 0.41 | 2.29 | 0.47 |
+| Short UTF-8 | 2.25 | 0.40 | 2.44 | 0.48 |
+| Large ASCII | 12.32 | 155.11 | 18.99 | 158.29 |
+| Large UTF-8 | 97.89 | 151.81 | 106.77 | 150.26 |
+
+Large ASCII maps outperform this DOM workload by about 12.6 times on encode
+and 8.3 times on decode. Small records are slower; per-operation schema
+validation and workspace setup remain optimization targets. The native profile
+makes 12 allocations and peaks at 44168 owned bytes for these small fixtures.
+Fragmented large materialized text adds a bounded 65536-byte scratch allocation.
+PJK's small fixtures peak between 351 and 2011 owned bytes. These memory figures
+exclude the caller's fixtures and the bookkeeping described above.
+
+The raw 1024-byte fixture measured 11938 MiB/s copying encode and 16462 MiB/s
+borrowed decode, versus 22293 and 147531 respectively for the PJK low-level
+helpers. The decode validation difference described above prevents treating
+this as equivalent whole-message parsing work. It still identifies dispatch
+cost worth reducing; this implementation does not yet win every measured path.
+
+Verified native pointer transfer measured 1153 MiB/s through Lua and 1203 MiB/s
+through C, including the same byte comparisons. Both made 32865 source calls
+and 32864 sink calls for 67305472 wire bytes, with no per-token VM traffic.
+Stream transport medians for 8 MiB were Unix 67.7 MiB/s, TCP 114.5 MiB/s and
+pipe 1104.7 MiB/s; indefinite variants were 70.0, 158.8 and 1030.8 MiB/s.
+Scheduling and tiny socket buffers affect these figures. Paced UDP and Unix
+datagrams measured 12.4 and 15.0 MiB/s and must be assessed as request/ack runs.
+
+The reproducible raw rounds, latency distributions, CPU/allocation/copy counters,
+transport syscalls and binary hashes are under `build/bench/*.jsonl`,
+`context.txt` and `comparison-context.txt` after running both benchmark targets.
