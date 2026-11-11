@@ -184,6 +184,10 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   c89cbor_fd descriptor;
   c89cbor_transfer transfer;
   c89cbor_conversion operation;
+  c89cbor_cose_key cose_key;
+  c89cbor_cose_operation cose_operation;
+  c89cbor_cose_options cose_options = c89cbor_default_cose_options();
+  unsigned char key[32] = {0};
   c89cbor_config config = c89cbor_default_config();
   c89cbor_options options = c89cbor_default_options();
   c89cbor_error error;
@@ -209,6 +213,10 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
                                C89CBOR_SINGLE, 0) == 0);
   assert(runtime.cbor_to_json_init(&runtime, &operation, &source, &sink, NULL,
                                    &error) == 0);
+  assert(runtime.cose_key_init(&runtime, &cose_key, C89CBOR_COSE_A256GCM, key,
+                               sizeof(key), NULL, 0, &error) == 0);
+  assert(runtime.cose_encrypt0_init(&runtime, &cose_operation, &source, &sink,
+                                    &cose_key, NULL, &error) == 0);
 #define CHECK_BRIDGE(name, value)                                              \
   do {                                                                         \
     assert(binding->push_##name(binding, &(value), owner) == 0);               \
@@ -227,6 +235,9 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   CHECK_BRIDGE(sink, sink);
   CHECK_BRIDGE(options, options);
   CHECK_BRIDGE(config, config);
+  CHECK_BRIDGE(cose_key, cose_key);
+  CHECK_BRIDGE(cose_operation, cose_operation);
+  CHECK_BRIDGE(cose_options, cose_options);
 #undef CHECK_BRIDGE
   assert(binding->push_record_view(binding, &fixture->input_view, owner) == 0);
   assert(binding->check_record_view(binding, -1)->record == &fixture->input);
@@ -243,6 +254,8 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   lua_pop(L, 1);
   assert(operation.cleanup(&operation) == 0 &&
          transfer.cleanup(&transfer) == 0);
+  assert(cose_operation.cleanup(&cose_operation) == 0);
+  assert(cose_key.cleanup(&cose_key) == 0);
   assert(descriptor.cleanup(&descriptor) == 0 && reader.cleanup(&reader) == 0);
   assert(decoder.cleanup(&decoder) == 0 && encoder.cleanup(&encoder) == 0 &&
          runtime.cleanup(&runtime) == 0);

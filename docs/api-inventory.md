@@ -18,6 +18,35 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_conversion_diagnostic` | conversion.diagnostic | conversion:diagnostic |
 | `c89cbor_conversion_progress` | conversion.progress | conversion:progress |
 | `c89cbor_conversion_step` | conversion.step | conversion:step |
+| `c89cbor_cose_decrypt` | runtime.cose_decrypt | runtime:cose_decrypt |
+| `c89cbor_cose_decrypt_init` | runtime.cose_decrypt_init | runtime:cose_decrypt_init |
+| `c89cbor_cose_decrypt_open` | runtime.cose_decrypt_open | runtime:cose_decrypt_open |
+| `c89cbor_cose_decrypt_stream` | runtime.cose_decrypt_stream | runtime:cose_decrypt_stream |
+| `c89cbor_cose_decrypt_stream_init` | runtime.cose_decrypt_stream_init | runtime:cose_decrypt_stream_init |
+| `c89cbor_cose_decrypt_stream_open` | runtime.cose_decrypt_stream_open | runtime:cose_decrypt_stream_open |
+| `c89cbor_cose_encrypt` | runtime.cose_encrypt | runtime:cose_encrypt |
+| `c89cbor_cose_encrypt0` | runtime.cose_encrypt0 | runtime:cose_encrypt0 |
+| `c89cbor_cose_encrypt0_init` | runtime.cose_encrypt0_init | runtime:cose_encrypt0_init |
+| `c89cbor_cose_encrypt0_open` | runtime.cose_encrypt0_open | runtime:cose_encrypt0_open |
+| `c89cbor_cose_encrypt_init` | runtime.cose_encrypt_init | runtime:cose_encrypt_init |
+| `c89cbor_cose_encrypt_open` | runtime.cose_encrypt_open | runtime:cose_encrypt_open |
+| `c89cbor_cose_encrypt_stream` | runtime.cose_encrypt_stream | runtime:cose_encrypt_stream |
+| `c89cbor_cose_encrypt_stream_init` | runtime.cose_encrypt_stream_init | runtime:cose_encrypt_stream_init |
+| `c89cbor_cose_encrypt_stream_open` | runtime.cose_encrypt_stream_open | runtime:cose_encrypt_stream_open |
+| `c89cbor_cose_key_cleanup` | cose_key.cleanup | cose_key:cleanup |
+| `c89cbor_cose_key_create` | runtime.cose_key_create | runtime:cose_key_create |
+| `c89cbor_cose_key_destroy` | cose_key.destroy | cose_key:destroy |
+| `c89cbor_cose_key_diagnostic` | cose_key.diagnostic | cose_key:diagnostic |
+| `c89cbor_cose_key_init` | runtime.cose_key_init | runtime:cose_key_init |
+| `c89cbor_cose_key_metadata` | cose_key.metadata | cose_key:metadata |
+| `c89cbor_cose_key_public_key` | cose_key.public_key | cose_key:public_key |
+| `c89cbor_cose_operation_cleanup` | cose_operation.cleanup | cose_operation:cleanup |
+| `c89cbor_cose_operation_destroy` | cose_operation.destroy | cose_operation:destroy |
+| `c89cbor_cose_operation_diagnostic` | cose_operation.diagnostic | cose_operation:diagnostic |
+| `c89cbor_cose_operation_next` | cose_operation.next | cose_operation:next |
+| `c89cbor_cose_operation_progress` | cose_operation.progress | cose_operation:progress |
+| `c89cbor_cose_operation_step` | cose_operation.step | cose_operation:step |
+| `c89cbor_cose_operation_stream_info` | cose_operation.stream_info | cose_operation:stream_info |
 | `c89cbor_create` | Runtime bootstrap | cbor.create |
 | `c89cbor_decode_map` | runtime.decode_map | runtime:decode_map |
 | `c89cbor_decode_map_init` | runtime.decode_map_init | runtime:decode_map_init |
@@ -36,6 +65,7 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_decoder_reset` | decoder.reset | decoder:reset |
 | `c89cbor_default_allocator` | Value helper; runtime.default_allocator twin | cbor.default_allocator |
 | `c89cbor_default_config` | Value helper; runtime.default_config twin | cbor.default_config |
+| `c89cbor_default_cose_options` | Value helper; runtime.default_cose_options twin | cbor.default_cose_options |
 | `c89cbor_default_options` | Value helper; runtime.default_options twin | cbor.default_options |
 | `c89cbor_destroy` | runtime.destroy | runtime:destroy |
 | `c89cbor_diagnostic` | runtime.diagnostic | runtime:diagnostic |
@@ -75,6 +105,9 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_lua_check_allocator` | binding.check_allocator | Native binding.check_allocator |
 | `c89cbor_lua_check_config` | binding.check_config | Native binding.check_config |
 | `c89cbor_lua_check_conversion` | binding.check_conversion | Native binding.check_conversion |
+| `c89cbor_lua_check_cose_key` | binding.check_cose_key | Native binding.check_cose_key |
+| `c89cbor_lua_check_cose_operation` | binding.check_cose_operation | Native binding.check_cose_operation |
+| `c89cbor_lua_check_cose_options` | binding.check_cose_options | Native binding.check_cose_options |
 | `c89cbor_lua_check_decoder` | binding.check_decoder | Native binding.check_decoder |
 | `c89cbor_lua_check_encoder` | binding.check_encoder | Native binding.check_encoder |
 | `c89cbor_lua_check_fd` | binding.check_fd | Native binding.check_fd |
@@ -94,6 +127,9 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_lua_push_allocator` | binding.push_allocator | Native binding.push_allocator |
 | `c89cbor_lua_push_config` | binding.push_config | Native binding.push_config |
 | `c89cbor_lua_push_conversion` | binding.push_conversion | Native binding.push_conversion |
+| `c89cbor_lua_push_cose_key` | binding.push_cose_key | Native binding.push_cose_key |
+| `c89cbor_lua_push_cose_operation` | binding.push_cose_operation | Native binding.push_cose_operation |
+| `c89cbor_lua_push_cose_options` | binding.push_cose_options | Native binding.push_cose_options |
 | `c89cbor_lua_push_decoder` | binding.push_decoder | Native binding.push_decoder |
 | `c89cbor_lua_push_encoder` | binding.push_encoder | Native binding.push_encoder |
 | `c89cbor_lua_push_fd` | binding.push_fd | Native binding.push_fd |
@@ -115,6 +151,7 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_reader_reset` | reader.reset | reader:reset |
 | `c89cbor_runtime_default_allocator` | runtime.default_allocator | runtime:default_allocator |
 | `c89cbor_runtime_default_config` | runtime.default_config | runtime:default_config |
+| `c89cbor_runtime_default_cose_options` | runtime.default_cose_options | runtime:default_cose_options |
 | `c89cbor_runtime_default_options` | runtime.default_options | runtime:default_options |
 | `c89cbor_status_string` | runtime.status_string | runtime:status_string |
 | `c89cbor_transfer_cleanup` | transfer.cleanup | transfer:cleanup |

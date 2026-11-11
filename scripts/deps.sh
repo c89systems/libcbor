@@ -16,6 +16,19 @@ if [[ $component == lonejson ]]; then
   esac
   name=liblonejson-0.49.0-$target
   url=https://github.com/c89systems/lonejson/releases/download/v0.49.0/$name.tar.gz
+elif [[ $component == cpkt ]]; then
+  case "$target" in
+  x86_64-linux-gnu) digest=e898960071bc5f30a00f5308d559b60c7495fce442f9d9e1fce54d112a959d84 ;;
+  x86_64-linux-musl) digest=8c5de2f414c1c99147e22d9651de600b047299c7d547c53830c3c8fe15d34dbc ;;
+  aarch64-linux-gnu) digest=0ba48a8ca621ec9a1045bb2081ec440970695bfcc34aa75683dec8bdaff64e1c ;;
+  aarch64-linux-musl) digest=7146f274e3fbff74b7e1e4c3b3b8276c1c62843f2517f1940a65a17683a17230 ;;
+  armhf-linux-gnu) digest=8eb105e3d19328619c8274a64dcfe39df8d00861d0d31ca3dd3b692f21b25734 ;;
+  armhf-linux-musl) digest=7dbdeaa6b4c8180e14fbd3cc9388c81b88015a306ae268cc12468eb775969f15 ;;
+  arm64-apple-darwin) digest=b1c0d9eee975a1e30f7395db0bcc42fddcca45cbae6919a2d49b4e42ebbb88d3 ;;
+  *) printf 'Unsupported target: %s\n' "$target" >&2; exit 1 ;;
+  esac
+  name=cpkt-0.7.0-$target
+  url=https://github.com/c89systems/cpkt/releases/download/v0.7.0/$name.tar.gz
 elif [[ $component == lua ]]; then
   digest=1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
   name=lua-5.5.1

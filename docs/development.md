@@ -8,7 +8,9 @@ Missing toolchains fail with their preparation requirement; the build never
 falls back to host GCC or downloads an Apple SDK. Repository-local .cache owns
 extracted dependencies. Shared verified archives can be read from the declared
 cpkt global cache. No sibling checkout's sources or generated state are used.
-The cache and lifecycle helper names do not imply a cpkt library dependency.
+COSE uses OpenSSL 3.6.5 from the pinned cpkt 0.7.0 SDK on every target. The core
+links libcrypto directly through the provider targets; it needs neither libssl
+nor a cpkt facade library. CMake consumers supply CpktCore_DIR alongside lonejson_DIR.
 Lua builds prepare the pinned Lua.org 5.5.1 source into target/configuration-local
 `build/lua-runtime-*` and `build/lua-sdk-*` directories. Upstream Lua compiles
 with `-std=c89` and GNU inline spelling, retaining its normal 64-bit integer ABI
@@ -22,11 +24,11 @@ make valgrind VERSION=0.1.0
 make fuzz-smoke VERSION=0.1.0
 ```
 
-The fuzz smoke runs separate codec, JSON, CBOR-to-JSON and mapped targets with
+The fuzz smoke runs separate codec, JSON, CBOR-to-JSON, mapped and COSE object/stream targets with
 short reads and backpressure. `FUZZ_SECONDS` sets seconds per target (default
 10); `FUZZ_CASES='cbor map'` selects a focused rerun. Corpus mutations, statistics
 and any findings stay under `build/fuzz/results-<case>/`. Valgrind covers native
-codec, receiver, bridge, mapped, API and Lua cases against the pinned runtime.
+codec, receiver, bridge, mapped, COSE, API and Lua cases against the pinned runtime.
 Concurrent operation tests share one prepared runtime across four workers and
 check callback reentry and distinct outputs. Memcheck and Helgrind cover both
 link modes. Runtime factories and lifecycle calls remain serialized by callers.

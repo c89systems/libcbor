@@ -18,6 +18,18 @@ struct lua_State;
  */
 typedef struct c89cbor_lua c89cbor_lua;
 struct c89cbor_lua {
+  int (*push_cose_key)(c89cbor_lua *, c89cbor_cose_key *, int);
+  /**< Push borrowed immutable key and pin its Lua owner. */
+  c89cbor_cose_key *(*check_cose_key)(c89cbor_lua *, int);
+  /**< Return a live typed key, or NULL without raising a Lua error. */
+  int (*push_cose_operation)(c89cbor_lua *, c89cbor_cose_operation *, int);
+  /**< Push borrowed persistent operation and pin its Lua owner. */
+  c89cbor_cose_operation *(*check_cose_operation)(c89cbor_lua *, int);
+  /**< Return a live typed operation, or NULL. */
+  int (*push_cose_options)(c89cbor_lua *, c89cbor_cose_options *, int);
+  /**< Push borrowed options; the owner preserves their pointed-to bytes. */
+  c89cbor_cose_options *(*check_cose_options)(c89cbor_lua *, int);
+  /**< Return live borrowed options, or NULL. */
   int (*push_options)(c89cbor_lua *, c89cbor_options *,
                       int); /**< Push borrowed conversion configuration. */
   c89cbor_options *(*check_options)(
@@ -84,6 +96,29 @@ struct c89cbor_lua {
 };
 /** Standard Lua module opener; bootstrap exception to receiver parity. */
 C89CBOR_API int luaopen_cbor(struct lua_State *state);
+/** Borrow a native key; no secret copy or ownership transfer. Pin owner_index
+ * until close/GC; zero selects caller-managed native lifetime. */
+C89CBOR_API int c89cbor_lua_push_cose_key(c89cbor_lua *, c89cbor_cose_key *,
+                                          int owner_index);
+/** Check live typed key without raising a Lua argument error. */
+C89CBOR_API c89cbor_cose_key *c89cbor_lua_check_cose_key(c89cbor_lua *,
+                                                         int index);
+/** Borrow an operation. Its native keys/endpoints must outlive the handle;
+ * owner_index pins the Lua owner without transferring native ownership. */
+C89CBOR_API int c89cbor_lua_push_cose_operation(c89cbor_lua *,
+                                                c89cbor_cose_operation *,
+                                                int owner_index);
+/** Check live typed operation or return NULL without raising a Lua error. */
+C89CBOR_API c89cbor_cose_operation *
+c89cbor_lua_check_cose_operation(c89cbor_lua *, int index);
+/** Borrow options and their dependent pointer fields, pinning owner_index.
+ * Native storage must remain stable until the returned handle closes. */
+C89CBOR_API int c89cbor_lua_push_cose_options(c89cbor_lua *,
+                                              c89cbor_cose_options *,
+                                              int owner_index);
+/** Check live borrowed options or return NULL without raising a Lua error. */
+C89CBOR_API c89cbor_cose_options *c89cbor_lua_check_cose_options(c89cbor_lua *,
+                                                                 int index);
 /** Initialize fresh storage; NULL allocator selects defaults. State is
  * borrowed. */
 C89CBOR_API int c89cbor_lua_init(c89cbor_lua *binding, struct lua_State *state,

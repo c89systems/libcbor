@@ -1,5 +1,9 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
 find_dependency(lonejson 0.49.0 EXACT CONFIG)
+find_dependency(CpktCore 0.7.0 CONFIG)
+list(APPEND CMAKE_FIND_ROOT_PATH "${CpktCore_PREFIX}")
+list(APPEND CMAKE_PREFIX_PATH "${CpktCore_PREFIX}")
+find_dependency(OpenSSL 3.6.5 CONFIG HINTS "${CpktCore_PREFIX}/lib/cmake/OpenSSL")
 include("${CMAKE_CURRENT_LIST_DIR}/C89CborTargets.cmake")
 check_required_components(C89Cbor)

@@ -16,6 +16,9 @@ typedef char
 #define VIEW "c89cbor.record_view"
 #define OPTIONS "c89cbor.options"
 #define CONFIG "c89cbor.config"
+#define COSE_KEY "c89cbor.cose_key"
+#define COSE_OPERATION "c89cbor.cose_operation"
+#define COSE_OPTIONS "c89cbor.cose_options"
 
 #define DEC "c89cbor.decoder"
 #define ENC "c89cbor.encoder"
@@ -32,6 +35,8 @@ typedef char
 typedef struct handle {
   void *ptr;
   struct handle *parent[5];
+  struct handle **key_parents;
+  size_t key_parent_count;
   size_t count;
   size_t borrowers;
   int heap_kind;
@@ -83,22 +88,26 @@ static handle *new_handle(lua_State *L, const char *kind, size_t bytes) {
   memset(h, 0, sizeof(*h) + bytes);
   h->ptr = bytes ? h + 1 : NULL;
   if (bytes != 0) {
-    h->heap_kind = strcmp(kind, DEC) == 0          ? -1
-                   : strcmp(kind, ENC) == 0        ? -2
-                   : strcmp(kind, READER) == 0     ? -3
-                   : strcmp(kind, TRANSFER) == 0   ? -4
-                   : strcmp(kind, FD) == 0         ? -5
-                   : strcmp(kind, ROOT) == 0       ? -6
-                   : strcmp(kind, CONVERSION) == 0 ? -7
-                                                   : 0;
+    h->heap_kind = strcmp(kind, DEC) == 0              ? -1
+                   : strcmp(kind, ENC) == 0            ? -2
+                   : strcmp(kind, READER) == 0         ? -3
+                   : strcmp(kind, TRANSFER) == 0       ? -4
+                   : strcmp(kind, FD) == 0             ? -5
+                   : strcmp(kind, ROOT) == 0           ? -6
+                   : strcmp(kind, CONVERSION) == 0     ? -7
+                   : strcmp(kind, COSE_KEY) == 0       ? -8
+                   : strcmp(kind, COSE_OPERATION) == 0 ? -9
+                                                       : 0;
   }
   luaL_setmetatable(L, kind);
   return h;
 }
 static handle *any_handle(lua_State *L, int index) {
   static const char *const kinds[] = {
-      DEC,  ENC,    READER, SOURCE, SINK,       TRANSFER, ALLOC,   TOKEN,
-      SPAN, FRAMES, FD,     ROOT,   CONVERSION, VIEW,     OPTIONS, CONFIG};
+      DEC,      ENC,      READER,         SOURCE,      SINK,
+      TRANSFER, ALLOC,    TOKEN,          SPAN,        FRAMES,
+      FD,       ROOT,     CONVERSION,     VIEW,        OPTIONS,
+      CONFIG,   COSE_KEY, COSE_OPERATION, COSE_OPTIONS};
   size_t i;
   for (i = 0; i < sizeof(kinds) / sizeof(kinds[0]); ++i) {
     handle *h = luaL_testudata(L, index, kinds[i]);
@@ -130,6 +139,10 @@ static void drop_parent(handle *parent) {
 }
 static void unpin(handle *h) {
   int i;
+  size_t k;
+  for (k = 0; k < h->key_parent_count; ++k)
+    drop_parent(h->key_parents[k]);
+  h->key_parent_count = 0;
   for (i = 0; i < 5; ++i) {
     if (h->parent[i] != NULL) {
       drop_parent(h->parent[i]);
@@ -187,6 +200,18 @@ static int release_handle(handle *h) {
     case -7:
       status = c89cbor_conversion_cleanup(h->ptr);
       break;
+    case 8:
+      status = c89cbor_cose_key_destroy(h->ptr);
+      break;
+    case -8:
+      status = c89cbor_cose_key_cleanup(h->ptr);
+      break;
+    case 9:
+      status = c89cbor_cose_operation_destroy(h->ptr);
+      break;
+    case -9:
+      status = c89cbor_cose_operation_cleanup(h->ptr);
+      break;
     default:
       break;
     }
@@ -199,9 +224,16 @@ static int release_handle(handle *h) {
 }
 static int close_handle(lua_State *L) {
   handle *h = any_handle(L, 1);
+  int status, slot;
   if (h == NULL || h->borrowers || h->active)
     return result(L, C89CBOR_INVALID);
-  return result(L, release_handle(h));
+  status = release_handle(h);
+  if (status == 0)
+    for (slot = 1; slot <= 5; ++slot) {
+      lua_pushnil(L);
+      lua_setiuservalue(L, 1, slot);
+    }
+  return result(L, status);
 }
 static int gc_handle(lua_State *L) {
   handle *h = any_handle(L, 1);
@@ -240,6 +272,9 @@ BRIDGE(conversion, c89cbor_conversion, CONVERSION)
 BRIDGE(fd, c89cbor_fd, FD)
 BRIDGE(options, c89cbor_options, OPTIONS)
 BRIDGE(config, c89cbor_config, CONFIG)
+BRIDGE(cose_key, c89cbor_cose_key, COSE_KEY)
+BRIDGE(cose_operation, c89cbor_cose_operation, COSE_OPERATION)
+BRIDGE(cose_options, c89cbor_cose_options, COSE_OPTIONS)
 static int valid_record_view(const lonejson_record_view *view) {
   return view != NULL && view->size >= sizeof(*view) &&
          view->abi_version == LONEJSON_VIEW_ABI_VERSION && view->flags == 0 &&
@@ -330,6 +365,12 @@ int c89cbor_lua_init(c89cbor_lua *binding, lua_State *state,
   binding->check_options = c89cbor_lua_check_options;
   binding->push_config = c89cbor_lua_push_config;
   binding->check_config = c89cbor_lua_check_config;
+  binding->push_cose_key = c89cbor_lua_push_cose_key;
+  binding->check_cose_key = c89cbor_lua_check_cose_key;
+  binding->push_cose_operation = c89cbor_lua_push_cose_operation;
+  binding->check_cose_operation = c89cbor_lua_check_cose_operation;
+  binding->push_cose_options = c89cbor_lua_push_cose_options;
+  binding->check_cose_options = c89cbor_lua_check_cose_options;
   binding->check_span = c89cbor_lua_check_span;
   binding->cleanup = c89cbor_lua_cleanup;
   binding->destroy = c89cbor_lua_destroy;
@@ -440,6 +481,9 @@ BINDING_BRIDGE(fd, c89cbor_fd)
 BINDING_BRIDGE(allocator, c89cbor_allocator)
 BINDING_BRIDGE(options, c89cbor_options)
 BINDING_BRIDGE(config, c89cbor_config)
+BINDING_BRIDGE(cose_key, c89cbor_cose_key)
+BINDING_BRIDGE(cose_operation, c89cbor_cose_operation)
+BINDING_BRIDGE(cose_options, c89cbor_cose_options)
 #undef BINDING_BRIDGE
 int c89cbor_lua_push_span(c89cbor_lua *binding, const void *bytes,
                           size_t length, int owner) {
@@ -983,6 +1027,9 @@ static int diagnostic_handle(lua_State *L) {
     DIAGNOSTIC(READER, c89cbor_reader, c89cbor_reader_diagnostic);
     DIAGNOSTIC(TRANSFER, c89cbor_transfer, c89cbor_transfer_diagnostic);
     DIAGNOSTIC(FD, c89cbor_fd, c89cbor_fd_diagnostic);
+    DIAGNOSTIC(COSE_KEY, c89cbor_cose_key, c89cbor_cose_key_diagnostic);
+    DIAGNOSTIC(COSE_OPERATION, c89cbor_cose_operation,
+               c89cbor_cose_operation_diagnostic);
 #undef DIAGNOSTIC
   }
   result(L, status);
@@ -1239,6 +1286,8 @@ static int progress_handle(lua_State *L) {
       status = c89cbor_conversion_progress(h->ptr, &progress);
     if (luaL_testudata(L, 1, TRANSFER) != NULL)
       status = c89cbor_transfer_progress(h->ptr, &progress);
+    if (luaL_testudata(L, 1, COSE_OPERATION) != NULL)
+      status = c89cbor_cose_operation_progress(h->ptr, &progress);
   }
   result(L, status);
   lua_newtable(L);
@@ -1382,6 +1431,7 @@ static int encode_map_init(lua_State *L) {
 static int decode_map_init(lua_State *L) {
   return runtime_conversion(L, DECODE_MAP, 2);
 }
+#include "cose.inc.h"
 static void metatable(lua_State *L, const char *name, const luaL_Reg *methods) {
   luaL_newmetatable(L, name);
   lua_pushvalue(L, -1);
@@ -1441,70 +1491,102 @@ int luaopen_cbor(lua_State *L) {
                                 {"run", conversion_run},
                                 {"progress", progress_handle},
                                 {NULL, NULL}};
-  static const luaL_Reg root[] = {{"encoder", new_encoder},
-                                  {"decoder", new_decoder},
-                                  {"encoder_init", new_encoder},
-                                  {"decoder_init", new_decoder},
-                                  {"encoder_create", create_encoder},
-                                  {"decoder_create", create_decoder},
-                                  {"reader", new_reader},
-                                  {"reader_init", new_reader},
-                                  {"reader_create", create_reader},
-                                  {"fd", new_fd},
-                                  {"fd_init", new_fd},
-                                  {"fd_create", create_fd},
-                                  {"transfer", new_transfer},
-                                  {"transfer_init", new_transfer},
-                                  {"transfer_create", create_transfer},
-                                  {"json_to_cbor", json_to_cbor},
-                                  {"json_to_cbor_open", json_to_cbor_open},
-                                  {"json_to_cbor_init", json_to_cbor_init},
-                                  {"cbor_to_json", cbor_to_json},
-                                  {"cbor_to_json_open", cbor_to_json_open},
-                                  {"cbor_to_json_init", cbor_to_json_init},
-                                  {"encode_map", encode_map},
-                                  {"encode_map_open", encode_map_open},
-                                  {"encode_map_init", encode_map_init},
-                                  {"encode_map_view", encode_map},
-                                  {"encode_map_view_open", encode_map_open},
-                                  {"encode_map_view_init", encode_map_init},
-                                  {"decode_map", decode_map},
-                                  {"decode_map_open", decode_map_open},
-                                  {"decode_map_init", decode_map_init},
-                                  {"decode_map_view", decode_map},
-                                  {"decode_map_view_open", decode_map_open},
-                                  {"decode_map_view_init", decode_map_init},
-                                  {"default_options", default_options},
-                                  {"default_config", default_config},
-                                  {"default_allocator", default_allocator},
-                                  {"version", version},
-                                  {"status_string", status_string},
-                                  {"float64_set", float_set},
-                                  {"float64_get", float_get},
-                                  {"length32", length32},
-                                  {NULL, NULL}};
-  static const luaL_Reg module[] = {{"version", version},
-                                    {"create", new_runtime},
-                                    {"init", init_runtime},
-                                    {"default_options", default_options},
-                                    {"default_config", default_config},
-                                    {"default_allocator", default_allocator},
-                                    {"status_string", status_string},
-                                    {"decoder", new_decoder},
-                                    {"encoder", new_encoder},
-                                    {"decoder_create", create_decoder},
-                                    {"encoder_create", create_encoder},
-                                    {"frames", new_frames},
-                                    {"token", new_token},
-                                    {"span", new_span},
-                                    {"reader", new_reader},
-                                    {"reader_create", create_reader},
-                                    {"length32", length32},
-                                    {"fd", new_fd},
-                                    {"fd_create", create_fd},
-                                    {"transfer", new_transfer},
-                                    {"transfer_create", create_transfer},
-                                    {NULL, NULL}};
+  static const luaL_Reg ck[] = {{"metadata", cose_key_metadata},
+                                {"public_key", cose_key_public_key},
+                                {NULL, NULL}};
+  static const luaL_Reg co[] = {{"step", cose_operation_step},
+                                {"stream_info", cose_operation_stream_info},
+                                {"run", cose_operation_run},
+                                {"next", cose_operation_next},
+                                {"progress", progress_handle},
+                                {NULL, NULL}};
+  static const luaL_Reg root[] = {
+      {"encoder", new_encoder},
+      {"default_cose_options", default_cose_options},
+      {"cose_key_init", cose_key_init},
+      {"cose_key_create", cose_key_create},
+      {"cose_encrypt0", cose_encrypt0},
+      {"cose_encrypt0_init", cose_encrypt0_init},
+      {"cose_encrypt0_open", cose_encrypt0_open},
+      {"cose_encrypt", cose_encrypt},
+      {"cose_encrypt_init", cose_encrypt_init},
+      {"cose_encrypt_open", cose_encrypt_open},
+      {"cose_decrypt", cose_decrypt},
+      {"cose_decrypt_init", cose_decrypt_init},
+      {"cose_decrypt_open", cose_decrypt_open},
+      {"cose_encrypt_stream", cose_encrypt_stream},
+      {"cose_encrypt_stream_init", cose_encrypt_stream_init},
+      {"cose_encrypt_stream_open", cose_encrypt_stream_open},
+      {"cose_decrypt_stream", cose_decrypt_stream},
+      {"cose_decrypt_stream_init", cose_decrypt_stream_init},
+      {"cose_decrypt_stream_open", cose_decrypt_stream_open},
+      {"decoder", new_decoder},
+      {"encoder_init", new_encoder},
+      {"decoder_init", new_decoder},
+      {"encoder_create", create_encoder},
+      {"decoder_create", create_decoder},
+      {"reader", new_reader},
+      {"reader_init", new_reader},
+      {"reader_create", create_reader},
+      {"fd", new_fd},
+      {"fd_init", new_fd},
+      {"fd_create", create_fd},
+      {"transfer", new_transfer},
+      {"transfer_init", new_transfer},
+      {"transfer_create", create_transfer},
+      {"json_to_cbor", json_to_cbor},
+      {"json_to_cbor_open", json_to_cbor_open},
+      {"json_to_cbor_init", json_to_cbor_init},
+      {"cbor_to_json", cbor_to_json},
+      {"cbor_to_json_open", cbor_to_json_open},
+      {"cbor_to_json_init", cbor_to_json_init},
+      {"encode_map", encode_map},
+      {"encode_map_open", encode_map_open},
+      {"encode_map_init", encode_map_init},
+      {"encode_map_view", encode_map},
+      {"encode_map_view_open", encode_map_open},
+      {"encode_map_view_init", encode_map_init},
+      {"decode_map", decode_map},
+      {"decode_map_open", decode_map_open},
+      {"decode_map_init", decode_map_init},
+      {"decode_map_view", decode_map},
+      {"decode_map_view_open", decode_map_open},
+      {"decode_map_view_init", decode_map_init},
+      {"default_options", default_options},
+      {"default_config", default_config},
+      {"default_allocator", default_allocator},
+      {"version", version},
+      {"status_string", status_string},
+      {"float64_set", float_set},
+      {"float64_get", float_get},
+      {"length32", length32},
+      {NULL, NULL}};
+  static const luaL_Reg module[] = {
+      {"version", version},
+      {"default_cose_options", default_cose_options},
+      {"cose_key_init", cose_key_init},
+      {"cose_key_create", cose_key_create},
+      {"create", new_runtime},
+      {"init", init_runtime},
+      {"default_options", default_options},
+      {"default_config", default_config},
+      {"default_allocator", default_allocator},
+      {"status_string", status_string},
+      {"decoder", new_decoder},
+      {"encoder", new_encoder},
+      {"decoder_create", create_decoder},
+      {"encoder_create", create_encoder},
+      {"frames", new_frames},
+      {"token", new_token},
+      {"span", new_span},
+      {"reader", new_reader},
+      {"reader_create", create_reader},
+      {"length32", length32},
+      {"fd", new_fd},
+      {"fd_create", create_fd},
+      {"transfer", new_transfer},
+      {"transfer_create", create_transfer},
+      {NULL, NULL}};
   static const char *const types[] = {
       "UINT",    "NEGATIVE", "BYTES", "TEXT",      "ARRAY",  "MAP",
       "TAG",     "BOOL",     "NULL",  "UNDEFINED", "SIMPLE", "FLOAT16",
@@ -1517,6 +1599,9 @@ int luaopen_cbor(lua_State *L) {
   metatable(L, VIEW, NULL);
   metatable(L, OPTIONS, NULL);
   metatable(L, CONFIG, NULL);
+  metatable(L, COSE_KEY, ck);
+  metatable(L, COSE_OPERATION, co);
+  metatable(L, COSE_OPTIONS, NULL);
   metatable(L, ENC, enc);
   metatable(L, TOKEN, tok);
   metatable(L, SPAN, sp);
@@ -1549,6 +1634,12 @@ int luaopen_cbor(lua_State *L) {
   CONSTANT(UNSUPPORTED);
   CONSTANT(SCHEMA);
   CONSTANT(BUSY);
+  CONSTANT(AUTH);
+  CONSTANT(CRYPTO);
+  CONSTANT(COSE_A256GCM);
+  CONSTANT(COSE_A256KW);
+  CONSTANT(COSE_X25519_PUBLIC);
+  CONSTANT(COSE_X25519_PRIVATE);
   CONSTANT(SINGLE);
   CONSTANT(SEQUENCE);
   CONSTANT(LENGTH32);

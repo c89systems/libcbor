@@ -6,6 +6,7 @@
 #ifndef C89CBOR_LONEJSON_H
 #define C89CBOR_LONEJSON_H
 #include <c89cbor/io.h>
+#include <c89cbor/cose.h>
 #include <lonejson.h>
 #ifdef __cplusplus
 extern "C" {
@@ -53,22 +54,6 @@ typedef struct c89cbor_options {
   size_t step_events; /**< Events per step; defaults to the runtime budget. */
   int allow_unknown_fields; /**< Skip unknown mapped fields after validation. */
 } c89cbor_options;
-/** One source-to-sink operation. Initialize or open through its runtime.
- * Endpoints and runtime are borrowed until cleanup. Step never polls or retries
- * a blocked endpoint internally. Cleanup cancels provisional work.
- */
-typedef struct c89cbor_conversion {
-  int (*step)(struct c89cbor_conversion *,
-              c89cbor_error *); /**< Advance one bounded step. */
-  int (*progress)(const struct c89cbor_conversion *,
-                  c89cbor_progress *); /**< Copy cumulative totals. */
-  int (*diagnostic)(const struct c89cbor_conversion *,
-                    c89cbor_error *);          /**< Copy the retained error. */
-  int (*cleanup)(struct c89cbor_conversion *); /**< Release operation state. */
-  int (*destroy)(struct c89cbor_conversion *); /**< Free an allocated shell. */
-  c89cbor_lifetime lifetime;                   /**< Private lifecycle state. */
-  void *state; /**< Private bounded adapter state. */
-} c89cbor_conversion;
 
 /** Runtime construction policy. Initialize with c89cbor_default_config(). */
 typedef struct c89cbor_config {
@@ -87,6 +72,83 @@ typedef struct c89cbor_config {
  * Configuration is fixed. Serialize factories and lifecycle on a shared root.
  */
 struct c89cbor {
+  c89cbor_cose_options (*default_cose_options)(
+      c89cbor *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_key_init)(
+      c89cbor *, c89cbor_cose_key *, c89cbor_cose_key_kind, const void *,
+      size_t, const void *, size_t,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_key_create)(
+      c89cbor *, c89cbor_cose_key_kind, const void *, size_t, const void *,
+      size_t, c89cbor_cose_key **,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt0)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt0_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt0_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *const *, size_t, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *const *, size_t, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *const *, size_t,
+      const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_decrypt)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_decrypt_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_decrypt_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt_stream)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *const *, size_t, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt_stream_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *const *, size_t, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_encrypt_stream_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *const *, size_t,
+      const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_decrypt_stream)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_decrypt_stream_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
+  int (*cose_decrypt_stream_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
   int (*encode_map)(
       c89cbor *, const lonejson_map *, const void *, size_t,
       const c89cbor_sink *, const c89cbor_options *,

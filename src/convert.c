@@ -699,12 +699,14 @@ int c89cbor_conversion_cleanup(c89cbor_conversion *conversion) {
     return C89CBOR_INVALID;
   if (conversion->lifetime.busy || conversion->lifetime.dependents)
     return C89CBOR_BUSY;
+  conversion->lifetime.busy = 1;
   state = conversion->state;
   conversion->state = NULL;
   if (state != NULL) {
     operation = state;
     operation->release(state);
   }
+  conversion->lifetime.busy = 0;
   status = c89_lifetime_cleanup(&conversion->lifetime);
   return status;
 }

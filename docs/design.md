@@ -5,6 +5,9 @@ codec is transport-independent and executes without creating a JSON runtime.
 The complete library requires the released lonejson 0.49.0 SDK for its mapped
 and JSON receiver methods. POSIX I/O is a separate translation unit. Lua is a separate facade linked
 to the installed public shared library and using Lua 5.5.1's public C API.
+COSE is a separate bounded record layer using libcrypto from cpkt's OpenSSL
+provider. It uses the native CBOR codec for wire structures, never JSON or a
+second CBOR parser. See [COSE](cose.md) for key, authentication and stream policy.
 
 The implementation starts from cai's bounded grammar/UTF-8 approach, not its
 application types or heap-only API. See [provenance](provenance.md). Integration

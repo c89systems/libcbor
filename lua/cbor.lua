@@ -71,3 +71,40 @@
 -- Applications wanting Lua-side processing explicitly iterate next/put/read.
 -- See docs/lua.md for errors, lifetimes, numeric limits and API mapping.
 return require('cbor')
+--
+-- COSE: runtime:cose_key_init(kind,bytes,id=nil) and cose_key_create import
+-- copied 32-byte keys, returning a key or nil,status,error. These constructors
+-- also exist on the module with the default allocator. Key kinds are
+-- COSE_A256GCM, COSE_A256KW, COSE_X25519_PUBLIC and COSE_X25519_PRIVATE.
+-- key:metadata() -> status,{kind,key_id}; key:public_key() -> status,string
+-- for X25519 only. Secret export is unavailable. close/cleanup/destroy and
+-- diagnostic follow the normal handle ownership rules.
+-- runtime:cose_encrypt0(source,sink,key,options=nil),
+-- cose_encrypt(source,sink,recipient_keys,options=nil),
+-- cose_decrypt(source,sink,key,options=nil),
+-- cose_encrypt_stream(source,sink,keys,options=nil),
+-- cose_decrypt_stream(source,sink,key,options=nil) -> status,error.
+-- Every operation has _init and _open constructors -> operation or
+-- nil,status,error. _init keeps the shell in userdata; _open allocates in C.
+-- Constructors never call endpoints. Synchronous methods require blocking,
+-- message-scoped endpoints. Plaintext payloads remain entirely C-side.
+-- default_cose_options() on module/root returns record_bytes, header_bytes,
+-- recipients, step_input, step_output, step_events and encrypt=false. Options
+-- also accept aad, nonce (12 bytes), stream_id (16 bytes), as strings or spans.
+-- Stream Encrypt0 uses one key in keys; encrypt=true selects Encrypt recipients.
+-- Table options and recipient lists are snapshotted, pinning actual owners.
+-- Explicit nonces require application-guaranteed uniqueness; see docs/cose.md.
+-- operation:step()/run() -> status,error. run stops on wait, DONE or failure.
+-- operation:progress() -> status,{input,output,records}; totals are cumulative.
+-- operation:next(sink=nil,options=nil) -> status,error after decrypt DONE,
+-- retaining read-ahead and keys. Omitted options keep AAD/bounds and clear the
+-- expected ID. Bounds cannot change. Sealing next returns UNSUPPORTED.
+-- operation:diagnostic(), close(), cleanup(), destroy() use normal semantics.
+-- Failed authentication returns AUTH and releases no plaintext for that record.
+-- CRYPTO reports backend/RNG failures. Full stream replay admission and sender
+-- identity validation are application policies; public encryption is not signing.
+-- operation:stream_info() -> status,{stream_id,encrypt,complete}, or status,nil.
+-- Decrypt streams expose their authenticated ID after the first verified
+-- record, including from a native sink callback. INPUT means not yet verified;
+-- standalone/sealing operations return UNSUPPORTED. Empty streams expose ID at
+-- DONE. Applications use it for replay admission; libcbor keeps no replay DB.

@@ -1,3 +1,7 @@
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+/* ru_maxrss is a BSD extension hidden by Darwin's strict POSIX namespace. */
+#define _DARWIN_C_SOURCE 1
+#endif
 #include "measure.h"
 #include <assert.h>
 #include <stdio.h>

@@ -15,7 +15,7 @@ tar -xzf "dist/$name.tar.gz" -C "$stage/relocated"
 sdk=$root/$stage/relocated/$name
 [[ -f "$sdk/LICENSE" || -f "$sdk/share/doc/C89Cbor/LICENSE" ]]
 [[ -f "$sdk/include/c89cbor/cbor.h" && -f "$sdk/include/c89cbor/io.h" && -f "$sdk/lib/libcbor.a" ]]
-[[ -f "$sdk/include/c89cbor/lua.h" && ! -e "$sdk/include/c89" && ! -e "$sdk/include/cbor" ]]
+[[ -f "$sdk/include/c89cbor/lua.h" && -f "$sdk/include/c89cbor/cose.h" && ! -e "$sdk/include/c89" && ! -e "$sdk/include/cbor" ]]
 if rg -a -l '/home/|/tmp/|\.cache/|fsanitize=|GLIBC_TUNABLES' "$sdk"; then
   printf 'Private path or test instrumentation in SDK\n' >&2; exit 1
 fi
@@ -41,13 +41,14 @@ else
   rg -q 'SONAME.*libcbor.so.0' "$stage/dependencies"
   if rg 'RPATH|RUNPATH' "$stage/dependencies"; then printf 'Unexpected SDK RPATH\n' >&2; exit 1; fi
 fi
-rg --no-filename -o 'c89cbor_[a-zA-Z0-9_]+\(' include/c89cbor/cbor.h include/c89cbor/io.h include/c89cbor/lonejson.h | sed 's/($//' | sort -u > "$stage/expected-exports"
+rg --no-filename -o 'c89cbor_[a-zA-Z0-9_]+\(' include/c89cbor/cbor.h include/c89cbor/io.h include/c89cbor/cose.h include/c89cbor/lonejson.h | sed 's/($//' | sort -u > "$stage/expected-exports"
 diff -u "$stage/expected-exports" "$stage/exports"
 lifecycle=${CPKT_LIFECYCLE_SCRIPTS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/pkt-systems-cmake-lifecycle/scripts}
 cmake -S tests/consumer -B "$stage/consumer" -G Ninja \
   "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake" "-DC89CBOR_TARGET=$target" \
   "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" \
   "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-$target/lib/cmake/lonejson" \
+  "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-$target/lib/cmake/CpktCore" \
   "-DSDK_PREFIX=$sdk" "-DEXPECTED_VERSION=$version" "-DRUNTIME_HELPER=$root/cmake/Runtime.cmake" \
   "-DAPI_SURFACE_SOURCE=$root/build/$target-${config,,}/api_surface.c" \
   "-DAPI_SURFACE_STACK=$root/tests/stack.c"
@@ -57,6 +58,6 @@ if [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]]; then
 else
   printf 'Darwin: target compile/link/Mach-O/exports verified; execution deferred\n'
 fi
-pc_version=$(PKG_CONFIG_LIBDIR="$sdk/lib/pkgconfig:$root/.cache/deps/liblonejson-0.49.0-$target/lib/pkgconfig" pkg-config --modversion c89cbor)
+pc_version=$(PKG_CONFIG_LIBDIR="$sdk/lib/pkgconfig:$root/.cache/deps/liblonejson-0.49.0-$target/lib/pkgconfig:$root/.cache/deps/cpkt-0.7.0-$target/lib/pkgconfig" pkg-config --modversion c89cbor)
 [[ $pc_version == "$version" ]]
 printf 'Verified %s\n' "dist/$name.tar.gz"

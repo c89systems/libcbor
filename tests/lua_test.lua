@@ -172,3 +172,92 @@ assert(pump:step() == c.DONE)
 assert(pump:close() == c.OK)
 assert(native_source:close() == c.OK and native_sink:close() == c.OK)
 collectgarbage()
+
+-- All COSE payload I/O remains on the native source/sink callbacks.
+do
+  local owner = c.create({allocator=counting_allocator})
+  assert(owner:default_cose_options().record_bytes == 2048)
+  local content = assert(owner:cose_key_init(c.COSE_A256GCM, string.rep('\0',32)))
+  local wrap = assert(owner:cose_key_create(c.COSE_A256KW, string.rep('w',32), 'wrap'))
+  local private = assert(owner:cose_key_create(c.COSE_X25519_PRIVATE, string.rep('x',32), 'x'))
+  local rc, public_bytes = private:public_key()
+  assert(rc == c.OK and #public_bytes == 32)
+  local public = assert(owner:cose_key_init(c.COSE_X25519_PUBLIC, public_bytes, 'x'))
+  local status, info = wrap:metadata()
+  assert(status == c.OK and info.kind == c.COSE_A256KW and info.key_id == 'wrap')
+  assert(content:public_key() == c.UNSUPPORTED)
+  assert(content:diagnostic() == c.OK)
+  local bad, why = owner:cose_key_init(c.COSE_A256GCM, 'short')
+  assert(bad == nil and why == c.INVALID)
+  local function finish(op)
+    for step=1,10000 do
+      local status, diagnostic = op:run()
+      if status == c.DONE then return end
+      assert(status == c.INPUT or status == c.OUTPUT, diagnostic.layer)
+    end
+    error('COSE stalled')
+  end
+  for _, stream in ipairs({false, true}) do
+    for _, encrypt in ipairs({false, true}) do
+      local seal = stream and 'cose_encrypt_stream' or encrypt and 'cose_encrypt' or 'cose_encrypt0'
+      local open = stream and 'cose_decrypt_stream' or 'cose_decrypt'
+      for _, mode in ipairs({'_init', '_open', ''}) do
+        local source, sink = native_case(1, mode ~= '')
+        local keys = encrypt and {wrap, public} or stream and {content} or content
+        local aad = c.span('application context')
+        local options = {encrypt=encrypt, aad=aad, record_bytes=stream and 16 or 2048,
+                         step_input=11, step_output=7, step_events=3}
+        if mode == '' then
+          assert(owner[seal](owner, source, sink, keys, options) == c.OK)
+        else
+          local op = assert(owner[seal..mode](owner, source, sink, keys, options))
+          -- Mutation must not invalidate captured pointers or key wrapper pins.
+          options.aad = 'changed'; options.encrypt = false
+          if type(keys) == 'table' then keys[1] = nil; keys[2] = nil end
+          assert(aad:close() == c.INVALID)
+          assert((encrypt and wrap or content):close() == c.INVALID)
+          assert(source:close() == c.INVALID and sink:close() == c.INVALID)
+          collectgarbage('collect')
+          finish(op)
+          assert(op:step() == c.DONE and op:progress() == c.OK)
+          assert(op:next() == c.UNSUPPORTED) -- sealing operations cannot resume
+          assert(op:cleanup() == c.OK and op:destroy() == c.OK)
+        end
+        assert(aad:close() == c.OK)
+        assert(source:close() == c.OK and sink:close() == c.OK)
+        source, sink = native_case(2, mode ~= '')
+        local receive_options = {aad='application context', record_bytes=stream and 16 or 2048}
+        if mode == '' then
+          assert(owner[open](owner, source, sink, encrypt and private or content, receive_options) == c.OK)
+        else
+          local op = assert(owner[open..mode](owner, source, sink, encrypt and private or content, receive_options))
+          assert(op:stream_info() == (stream and c.INPUT or c.UNSUPPORTED))
+          finish(op)
+          local info_status, stream_info = op:stream_info()
+          if stream then
+            assert(info_status == c.OK and #stream_info.stream_id == 16 and stream_info.complete and stream_info.encrypt == encrypt)
+          else assert(info_status == c.UNSUPPORTED and stream_info == nil) end
+          assert(op:next(nil, {record_bytes=1}) == c.INVALID)
+          assert(op:next() == c.OK)
+          local terminal
+          repeat terminal = op:run() until terminal ~= c.INPUT and terminal ~= c.OUTPUT
+          assert(terminal == c.MALFORMED)
+          assert(op:close() == c.OK)
+        end
+        assert(source:close() == c.OK and sink:close() == c.OK)
+      end
+    end
+  end
+  assert(public:close() == c.OK and private:close() == c.OK)
+  assert(wrap:close() == c.OK and content:close() == c.OK and owner:close() == c.OK)
+end
+-- Exercise deferred finalization of keys, options, endpoints and both shell
+-- ownership modes without explicit close or a stable user recipient table.
+do
+  local root = c.create({allocator=counting_allocator})
+  local key = root:cose_key_create(c.COSE_A256KW, string.rep('k',32))
+  local source, sink = native_case(1)
+  local op = root:cose_encrypt_open(source, sink, {key}, {aad=c.span('context')})
+  assert(op:step() >= c.OK)
+end
+collectgarbage('collect')

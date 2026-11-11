@@ -9,11 +9,11 @@ c89_owned_path "$stage"; c89_owned_path "dist/$name.tar.gz"
 mkdir -p build/lua-source dist
 rm -rf -- "$stage"
 mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs
-cp lua/cbor.c lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
+cp lua/cbor.c lua/cose.inc.h lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
 cp include/c89cbor/lua.h "$stage/include/c89cbor/"
 cp cmake/Runtime.cmake cmake/FindLua.cmake "$stage/cmake/"
 cp LICENSE "$stage/"
-cp docs/lua.md docs/delivery.md "$stage/docs/"
+cp docs/lua.md docs/cose.md docs/delivery.md "$stage/docs/"
 cat > "$stage/README.md" <<'README'
 # libcbor Lua facade
 
@@ -41,7 +41,8 @@ description = { summary = "Native streaming c89.systems CBOR facade", license = 
 dependencies = { "lua >= 5.5, < 5.6" }
 external_dependencies = {
   CBOR = { header = "c89cbor/lonejson.h", library = "cbor" },
-  LONEJSON = { header = "lonejson.h", library = "lonejson" }
+  LONEJSON = { header = "lonejson.h", library = "lonejson" },
+  CRYPTO = { header = "openssl/evp.h", library = "crypto" }
 }
 build = {
   type = "builtin",
@@ -51,7 +52,7 @@ build = {
       libraries = { "cbor", "lonejson" },
       defines = { "_POSIX_C_SOURCE=200809L" },
       incdirs = { "include", "\$(CBOR_INCDIR)", "\$(LONEJSON_INCDIR)" },
-      libdirs = { "\$(CBOR_LIBDIR)", "\$(LONEJSON_LIBDIR)" }
+      libdirs = { "\$(CBOR_LIBDIR)", "\$(LONEJSON_LIBDIR)", "\$(CRYPTO_LIBDIR)" }
     }
   }
 }

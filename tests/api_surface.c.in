@@ -28,6 +28,9 @@ static void *verify_surface(void *unused) {
   c89cbor_transfer transfer;
   c89cbor_fd fd;
   c89cbor_conversion conversion;
+  c89cbor_cose_key cose_key;
+  c89cbor_cose_operation cose_operation;
+  unsigned char key[32] = {0};
   c89cbor_error error;
   c89cbor_source source;
   c89cbor_sink sink;
@@ -47,7 +50,13 @@ static void *verify_surface(void *unused) {
   sink.context = NULL;
   assert(runtime.json_to_cbor_init(&runtime, &conversion, &source, &sink, NULL,
                                    &error) == 0);
+  assert(runtime.cose_key_init(&runtime, &cose_key, C89CBOR_COSE_A256GCM,
+                               key, sizeof(key), NULL, 0, &error) == 0);
+  assert(runtime.cose_encrypt0_init(&runtime, &cose_operation, &source, &sink,
+                                    &cose_key, NULL, &error) == 0);
 @C89_API_ASSERTIONS@
+  assert(cose_operation.cleanup(&cose_operation) == 0);
+  assert(cose_key.cleanup(&cose_key) == 0);
   assert(conversion.cleanup(&conversion) == 0);
   assert(fd.cleanup(&fd) == 0 && transfer.cleanup(&transfer) == 0);
   assert(reader.cleanup(&reader) == 0 && decoder.cleanup(&decoder) == 0);

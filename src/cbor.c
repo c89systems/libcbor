@@ -653,6 +653,10 @@ const char *c89cbor_status_string(c89cbor *runtime, int status) {
     return "unsupported conversion";
   case C89CBOR_SCHEMA:
     return "mapped schema violation";
+  case C89CBOR_AUTH:
+    return "authentication failed";
+  case C89CBOR_CRYPTO:
+    return "cryptographic backend failed";
   case C89CBOR_IO:
     return "I/O failed";
   default:

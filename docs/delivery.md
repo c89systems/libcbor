@@ -9,6 +9,10 @@ Additional products: libcbor-VERSION.tar.gz source;
 libcbor-lua-VERSION.tar.gz facade source; libcbor-VERSION-1.rockspec; and
 libcbor-VERSION-1.src.rock. libcbor-VERSION-CHECKSUMS is the complete upload
 inventory. PJK/libcbor and upstream Lua binaries are not bundled in these products.
+The required lonejson SDK and cpkt OpenSSL provider are installed separately.
+Shared libcbor needs lonejson and libcrypto at runtime. Static consumers receive
+the complete imported target closure; the SDK does not bundle provider archives.
+LuaRocks requires CBOR_DIR, LONEJSON_DIR and CRYPTO_DIR plus Lua's normal headers.
 
 `make package` stages one target/configuration via CMake install and writes a
 scoped binary checksum under build/package. `make package-verify` extracts that

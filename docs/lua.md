@@ -7,7 +7,8 @@ all public Lua constructors and methods. C interoperability is documented in
 `<c89cbor/lua.h>`; its opaque `struct lua_State` pointer needs no Lua headers.
 Native embedders include `<lua.h>`, `<lauxlib.h>` and `<lualib.h>` when using
 Lua directly. The host owns the Lua runtime; the module resolves its Lua symbols
-there. There is no cpkt dependency. Lua uses 64-bit integers and binary64 numbers.
+there. The facade has no cpkt Lua dependency. libcbor's COSE implementation uses
+libcrypto from cpkt's OpenSSL SDK. Lua uses 64-bit integers and binary64 numbers.
 
 The build prepares unmodified upstream Lua 5.5.1 from its verified source archive
 for local embedding tests on each target. It is a build prerequisite, not bundled
@@ -92,3 +93,46 @@ from its beginning against a destination which already received its prefix.
 
 Lua release products are a separate source archive, rockspec and source rock.
 SDK archives contain the C library, not an interpreter or prebuilt Lua module.
+
+## COSE
+
+`runtime:cose_key_init(kind, bytes, id=nil)` and `cose_key_create` import copied
+32-byte keys. Constants COSE_A256GCM, COSE_A256KW, COSE_X25519_PUBLIC and
+COSE_X25519_PRIVATE select distinct key policies. `key:metadata()` returns
+`status,{kind,key_id}`; `key:public_key()` returns `status,bytes` for X25519,
+or UNSUPPORTED for symmetric keys. Secret export is unavailable. Constructors
+return a handle or `nil,status,error`. They also exist on the module for keys
+with the default native allocator. Key cleanup/destroy/close and diagnostic
+follow normal receiver ownership rules.
+
+The root exposes `cose_encrypt0(source,sink,key,options=nil)`,
+`cose_encrypt(source,sink,recipient_keys,options=nil)`,
+`cose_decrypt(source,sink,key,options=nil)`,
+`cose_encrypt_stream(source,sink,keys,options=nil)` and
+`cose_decrypt_stream(source,sink,key,options=nil)`. Each has `_init` and `_open`
+factories returning a COSE operation. Synchronous calls return `status,error`
+and require blocking, message-scoped endpoints. `_init` stores a native shell
+in userdata; `_open` allocates the shell through the runtime allocator.
+
+`cbor.default_cose_options()` and the root method return a table. Options expose
+record_bytes, header_bytes, recipients, step_input, step_output, step_events,
+encrypt, aad, nonce and stream_id. AAD/nonce/ID accept strings or native spans;
+nonce must be 12 bytes and ID 16. The native [nonce rules](cose.md) apply.
+Table options and recipient arrays are snapshotted, pinning their actual byte
+owners and every key wrapper. Later table mutation cannot invalidate an active
+operation. Typed native options retain their native-owner lifetime contract.
+
+COSE operations expose step/run, progress, diagnostic, cleanup/destroy/close
+and `next(sink=nil,options=nil)`. Next preserves coalesced input after decrypt
+DONE, keeps the old sink/AAD when omitted, and clears an expected stream ID.
+Configured workspace limits and key policy cannot change. Failed/sealing
+operations require reconstruction. Progress is cumulative across next calls.
+Payload bytes stay on native endpoints; importing a Lua key string and exporting
+public bytes are explicit copies. Native embedders use binding push/check pairs
+for cose_key, cose_operation and cose_options, with the usual owner pins.
+
+`operation:stream_info()` returns `status,{stream_id,encrypt,complete}` after a
+stream's first record authenticates, or `INPUT,nil` before that point.
+Standalone/sealing operations return `UNSUPPORTED,nil`. Empty streams expose
+metadata after DONE. Applications own replay admission; authentication of an
+individual stream never implies a persistent replay database.

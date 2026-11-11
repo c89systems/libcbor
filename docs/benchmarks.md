@@ -137,3 +137,49 @@ datagrams measured 12.4 and 15.0 MiB/s and must be assessed as request/ack runs.
 The reproducible raw rounds, latency distributions, CPU/allocation/copy counters,
 transport syscalls and binary hashes are under `build/bench/*.jsonl`,
 `context.txt` and `comparison-context.txt` after running both benchmark targets.
+
+## COSE
+
+The same benchmark target now writes `cose-<profile>-<mode>.jsonl` for GCM,
+A256KW, X25519 and eight X25519 recipient entries. Standalone seal/open measure
+1024-byte opaque payloads, including operation construction and cleanup. Keys
+and algorithm preparation are outside timing and reported as setup_seconds.
+The eight-entry fixture repeats the same recipient public key with independently
+generated ephemeral keys; it measures fanout cost rather than eight identities.
+
+Stream roundtrips generate input through a fixed 4096-byte ring, authenticate
+before verifying each plaintext byte, and prove delivery before producer EOF.
+A 2 KiB plaintext record is the default. Here the JSONL records count **1024-byte
+payload accounting units**, not cryptographic records. Thus 1000 units represent
+1024000 plaintext bytes and 501 COSE records, including the empty final record.
+wire_bytes_per_record and mean_ns use the same accounting unit. One warmup is
+excluded and five measured rounds remain. Stream latency fields are amortized
+whole-stream values with one sample per round; they are not request-tail latency
+quantiles. Standalone latency samples cover the first 256 individual operations.
+
+The C/Lua comparison uses `cose_lua_benchmark` with the same shared libcbor,
+endpoints and native drive-until-wait scheduling. Lua passes native pointers and
+schedules bounded operations; it performs no per-token payload conversion.
+Its timed interval includes borrowed-handle preparation and Lua chunk execution;
+VM/module creation belongs to setup. Native standalone/core measurements link
+statically. These link modes are intentional and should not be conflated.
+
+The COSE development run on the x86_64 host/compiler above, OpenSSL 3.6.5,
+1000 payload units and default bounds produced these medians of five rounds:
+
+| Profile | Standalone seal µs | Standalone open µs | Shared C stream MiB/s | Lua stream MiB/s |
+| --- | ---: | ---: | ---: | ---: |
+| A256GCM | 5.98 | 6.06 | 162.3 | 116.8 |
+| A256KW recipient | 12.85 | 14.87 | 142.8 | 126.1 |
+| X25519 recipient | 114.64 | 61.78 | 120.4 | 111.7 |
+| Eight X25519 entries | 870.29 | 90.85 | 48.7 | 47.1 |
+
+Each paired stream made six libcbor allocator calls at construction, with 65904
+peak owned bytes including the four prepared key handles. Streaming length does
+not increase this workspace. OpenSSL provider/RNG allocations and Lua VM
+allocations are outside those allocator hooks; this is not allocation-free
+cryptography. Endpoint copy counters exclude internal codec/crypto copies.
+All C/Lua pairs used identical endpoint callback counts and copied-byte totals.
+Shared-host timing varies; these figures establish workloads, not speed gates.
+Binary hashes, dirty-source context, toolchain and configured repetition counts
+are recorded in the normal build/bench/context.txt.

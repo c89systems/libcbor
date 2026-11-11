@@ -36,7 +36,11 @@ typedef enum c89cbor_status {
   C89CBOR_UNSUPPORTED =
       -7,              /**< Value or endpoint has no supported conversion. */
   C89CBOR_SCHEMA = -8, /**< Mapped record violates its schema. */
-  C89CBOR_IO = -5      /**< Adapter I/O failed; stream cannot be resumed. */
+  C89CBOR_AUTH =
+      -9, /**< Authentication or authenticated stream policy failed. */
+  C89CBOR_CRYPTO =
+      -10,        /**< Cryptographic backend or secure randomness failed. */
+  C89CBOR_IO = -5 /**< Adapter I/O failed; stream cannot be resumed. */
 } c89cbor_status;
 /** Token kinds. A TAG begins one child and has an END like other containers. */
 typedef enum c89cbor_type {

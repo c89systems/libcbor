@@ -12,7 +12,7 @@ LONEJSON_MAP_DEFINE(map, record, fields);
 typedef struct memory {
   const unsigned char *input;
   size_t length, offset, used;
-  unsigned char output[32];
+  unsigned char output[512];
 } memory;
 static int read_bytes(void *context, void *bytes, size_t capacity,
                       size_t *count) {
@@ -80,12 +80,65 @@ static void conversions(void) {
   assert(runtime.cleanup(&runtime) == 0);
   lonejson_free(json);
 }
+static void cose(void) {
+  c89cbor runtime;
+  c89cbor_cose_key content, wrapping, private_key, public_key, *keys[2];
+  c89cbor_error error;
+  c89cbor_source source;
+  c89cbor_sink sink;
+  unsigned char raw[32] = {0}, public_bytes[32], wire[512];
+  size_t length, wire_length;
+  memory buffer;
+  int encrypt;
+  assert(c89cbor_init(&runtime, NULL, &error) == 0);
+  assert(runtime.cose_key_init(&runtime, &content, C89CBOR_COSE_A256GCM, raw,
+                               32u, NULL, 0, &error) == 0);
+  raw[0] = 1;
+  assert(runtime.cose_key_init(&runtime, &wrapping, C89CBOR_COSE_A256KW, raw,
+                               32u, NULL, 0, &error) == 0);
+  assert(runtime.cose_key_init(&runtime, &private_key,
+                               C89CBOR_COSE_X25519_PRIVATE, raw, 32u, NULL, 0,
+                               &error) == 0);
+  assert(private_key.public_key(&private_key, public_bytes, 32u, &length) == 0);
+  assert(runtime.cose_key_init(&runtime, &public_key,
+                               C89CBOR_COSE_X25519_PUBLIC, public_bytes, length,
+                               NULL, 0, &error) == 0);
+  keys[0] = &wrapping;
+  keys[1] = &public_key;
+  source.context = sink.context = &buffer;
+  source.read = read_bytes;
+  sink.write = write_bytes;
+  for (encrypt = 0; encrypt < 2; ++encrypt) {
+    memset(&buffer, 0, sizeof(buffer));
+    buffer.input = (const unsigned char *)"\203\001\002\003";
+    buffer.length = 4u;
+    assert((encrypt ? runtime.cose_encrypt(&runtime, &source, &sink, keys, 2u,
+                                           NULL, &error)
+                    : runtime.cose_encrypt0(&runtime, &source, &sink, &content,
+                                            NULL, &error)) == 0);
+    wire_length = buffer.used;
+    memcpy(wire, buffer.output, wire_length);
+    buffer.offset = buffer.used = 0;
+    buffer.input = wire;
+    buffer.length = wire_length;
+    assert(runtime.cose_decrypt(&runtime, &source, &sink,
+                                encrypt ? &private_key : &content, NULL,
+                                &error) == 0);
+    assert(buffer.used == 4u &&
+           memcmp(buffer.output, "\203\001\002\003", 4u) == 0);
+  }
+  assert(public_key.cleanup(&public_key) == 0 &&
+         private_key.cleanup(&private_key) == 0);
+  assert(wrapping.cleanup(&wrapping) == 0 && content.cleanup(&content) == 0 &&
+         runtime.cleanup(&runtime) == 0);
+}
 int main(void) {
   c89cbor_decoder d;
   c89cbor_token t;
   const unsigned char input[] = {0x18, 0x2a};
   size_t used;
   conversions();
+  cose();
   if (c89cbor_decoder_init(NULL, &d, 0, 0, 0) != 0)
     return 1;
   if (c89cbor_decoder_next(&d, input, sizeof(input), &used, &t) !=

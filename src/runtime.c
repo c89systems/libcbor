@@ -94,6 +94,7 @@ int c89_lifetime_destroy(c89cbor_lifetime *life, void *shell) {
   status = c89_lifetime_cleanup(life);
   if (status != C89CBOR_OK)
     return status;
+  life->busy = 1;
   allocator.free(allocator.context, shell);
   return C89CBOR_OK;
 }
@@ -147,6 +148,7 @@ int c89cbor_init(c89cbor *runtime, const c89cbor_config *config,
   if (runtime == NULL)
     return C89CBOR_INVALID;
   memset(runtime, 0, sizeof(*runtime));
+  c89_cose_runtime_methods(runtime);
   runtime->cleanup = c89cbor_cleanup;
   runtime->encode_map = c89cbor_encode_map;
   runtime->encode_map_init = c89cbor_encode_map_init;

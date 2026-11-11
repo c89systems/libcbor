@@ -209,6 +209,23 @@ C89CBOR_API int c89cbor_fd_source(c89cbor_fd *fd, c89cbor_source *source);
 /** Bind a sink view to an initialized, live fd receiver. */
 C89CBOR_API int c89cbor_fd_sink(c89cbor_fd *fd, c89cbor_sink *sink);
 
+/** One source-to-sink operation. Initialize or open through its runtime.
+ * Endpoints and runtime are borrowed until cleanup. Step never polls or retries
+ * a blocked endpoint internally. Cleanup cancels provisional work.
+ */
+typedef struct c89cbor_conversion {
+  int (*step)(struct c89cbor_conversion *,
+              c89cbor_error *); /**< Advance one bounded step. */
+  int (*progress)(const struct c89cbor_conversion *,
+                  c89cbor_progress *); /**< Copy cumulative totals. */
+  int (*diagnostic)(const struct c89cbor_conversion *,
+                    c89cbor_error *);          /**< Copy the retained error. */
+  int (*cleanup)(struct c89cbor_conversion *); /**< Release operation state. */
+  int (*destroy)(struct c89cbor_conversion *); /**< Free an allocated shell. */
+  c89cbor_lifetime lifetime;                   /**< Private lifecycle state. */
+  void *state; /**< Private bounded adapter state. */
+} c89cbor_conversion;
+
 #ifdef __cplusplus
 }
 #endif
