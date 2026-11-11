@@ -61,12 +61,60 @@ also identifies its source and Lua payloads.
 
 ### API shape
 
-Use receiver-first methods on the main `c89cbor` runtime and on stateful
-encoder, decoder, framed reader and transfer handles. Each method and its
-free-function twin dispatch to the same implementation. Keep plain data
-structures such as tokens, limits, callback descriptions and map views
-separate from operation handles. Initializers and constructors are free
-functions or runtime methods, so callers can initialize fresh storage.
+Every public operation with a natural receiver is callable on that
+receiver. This includes creation of child handles, lifecycle operations,
+queries, conversion helpers and native Lua interop. Publish receiver-first
+methods with direct call syntax such as `encoder->put(encoder, &token)`.
+Constructors install the complete method surface before returning success.
+Stateful methods take the handle whose state they advance. Runtime methods
+supply configured factories and utilities shared across operation kinds.
+
+Each method has an exported free-function twin with the same receiver as
+its first argument, remaining parameters, result, diagnostics and ownership
+contract. Both entry points use the same implementation. For example,
+`c89cbor_encoder_put(encoder, &token)` and
+`encoder->put(encoder, &token)` accept and drain the same token state.
+Document each exported symbol's receiver and corresponding member in the
+public API reference.
+
+The root runtime constructor and initializer bootstrap the first receiver.
+Default-value helpers can also be free functions so options and callback
+records can be prepared before any runtime exists. Give a valid runtime
+matching default and utility methods. The Lua module opener, binding
+initializer and binding constructor bootstrap their own receiver.
+These bootstrap functions are the explicit exceptions to instance-method
+parity.
+
+Tokens, spans, limits, allocator callbacks, endpoint callback descriptions
+and lonejson map views remain plain data. Put operations on those values
+on the runtime or an existing operation handle. The source's `read` and
+sink's `write` remain provider callbacks with their declared context
+argument. Receiver methods that drive them belong to a transfer or
+conversion handle.
+
+| Receiver | Required operations and ownership |
+| --- | --- |
+| `c89cbor` | Runtime cleanup and destruction, configured child factories and initializers, option defaults, `status_string`, `version`, `float64_set`, `float64_get`, `length32` and the mapped and JSON methods below. |
+| `c89cbor_encoder` | `put`, copying `read`, borrowed-output `peek` and `advance`, `finish`, `reset`, `cleanup` and heap `destroy`. |
+| `c89cbor_decoder` | `next`, `finish`, `reset`, `cleanup` and heap `destroy`. |
+| `c89cbor_reader` | Framed `next`, `finish`, `reset`, `cleanup` and heap `destroy`. |
+| `c89cbor_transfer` | Bounded `step`, progress query, `cleanup` and heap `destroy`. |
+| `c89cbor_conversion` | Bounded `step`, progress query, `cleanup` and heap `destroy` for one mapped or JSON conversion. |
+| `c89cbor_fd` | Borrowed source and sink views, `cleanup` and heap `destroy`. It borrows the operating-system descriptor. |
+| `c89cbor_lua` | Typed `push_*` and `check_*` methods for native handles, record views, allocators and spans, with `cleanup` and heap `destroy`. It borrows one Lua state. |
+
+Each stateful receiver also exposes a `diagnostic` query. Method pointers
+belong to the library and remain read-only to callers. Public headers
+declare complete shells for the caller-storage route, including the
+required bounded native state. An active shell has a stable address and
+can be passed by pointer. It cannot be copied or moved while initialized.
+
+Integer and raw-float tokens can be constructed as plain data. The runtime
+float helpers perform checked conversion to and from native binary64.
+Tagged-value helpers belong to the encoder or decoder they advance.
+Length32 formatting belongs to the runtime's framing utilities. Native
+Lua interop belongs to the optional binding receiver declared in
+`<c89cbor/lua.h>`.
 
 The main receiver exposes `json_to_cbor`, `cbor_to_json`, `encode_map`
 and `decode_map`, with borrowed-view variants for mapped records. Keep
@@ -77,7 +125,7 @@ a route that accepts `lonejson_record_view` for native interop. It borrows the
 same record and schema with the view's size, ABI and lifetime checks. C
 callers with ordinary structs can pass a map and record directly.
 
-| Receiver method | Borrowed arguments in addition to the receiver, options and diagnostic |
+| Synchronous runtime method | Borrowed arguments in addition to the receiver, options and diagnostic |
 | --- | --- |
 | `json_to_cbor` | JSON source, CBOR sink. |
 | `cbor_to_json` | CBOR source, JSON sink. |
@@ -85,6 +133,30 @@ callers with ordinary structs can pass a map and record directly.
 | `decode_map` | CBOR source, `const lonejson_map *`, initialized destination record and its extent. |
 | `encode_map_view` | Borrowed `lonejson_record_view`, CBOR sink. |
 | `decode_map_view` | CBOR source, borrowed writable `lonejson_record_view`. |
+
+Each of these six methods has an `_open` factory on the same runtime.
+It accepts the same value arguments and returns a `c89cbor_conversion`
+handle through an output parameter. For example,
+`codec->json_to_cbor_open(codec, ...)` and its exported twin
+`c89cbor_json_to_cbor_open(codec, ...)` prepare a resumable operation.
+Successful open validates configuration and borrows the endpoints. It
+performs no endpoint I/O and delivers no record callbacks.
+
+`conversion->step(conversion, ...)` advances that operation until a byte
+or event budget is exhausted, input or output must wait, or it reaches
+completion or failure. Progress reports cumulative input and output bytes
+and completed records. It remains queryable after completion or failure.
+The synchronous methods drive this same state to completion with blocking
+endpoints. If an endpoint unexpectedly would block, they return a terminal
+endpoint error with the progress already made. Callers that need to resume
+use the `_open` factory and retain its operation handle.
+
+Completion of a conversion includes final parser and writer checks and
+draining pending output. Repeated steps after completion return completion
+with unchanged counts and no callbacks. Failed steps preserve the terminal
+diagnostic. Cleanup cancels a live operation and releases its owned state.
+Already delivered bytes and record effects keep their provisional status
+when cancellation prevents successful completion.
 
 Reuse the native source and sink contracts. With a record view, use the
 view's lonejson runtime for operations on the record. Check both view
@@ -99,6 +171,71 @@ also work with caller-initialized codec state and no runtime construction.
 Optional allocating constructors use the configured allocator. Caller
 storage remains usable without a hidden allocation fallback.
 
+### Construction and lifecycle
+
+Provide `c89cbor_default_config`, `c89cbor_init` for caller-owned runtime
+storage and `c89cbor_create` for an allocated root runtime. Both initializer
+and constructor accept configuration and an optional diagnostic. The
+allocating constructor returns status and initializes its output pointer
+to NULL before attempting allocation. Every public operational receiver
+has an initializer for caller storage and an allocating constructor.
+
+The optional binding bootstraps through `c89cbor_lua_init` or
+`c89cbor_lua_create` using the already existing Lua state. Creating this
+receiver requires the binding to have been loaded into that state.
+Its methods then provide the full typed pointer interop surface.
+
+Runtime factories use `<kind>_init` and `<kind>_create`, including
+`encoder_init`, `encoder_create`, `decoder_init`, `decoder_create`,
+`reader_init`, `reader_create`, `transfer_init`, `transfer_create`,
+`fd_init` and `fd_create`. The six conversion `_open` methods are its
+configured conversion constructors. Give the conversion receiver matching
+caller-storage `<operation>_init` entry points on the runtime, such as
+`json_to_cbor_init`. Their exported twins use the same receiver-first
+signature. A NULL runtime on a native initializer or constructor selects
+documented native defaults and the
+supplied operation options. A conversion requires a configured runtime.
+
+Snapshot scalar configuration and allocator callbacks during construction.
+Options default helpers return fully initialized values. NULL options
+select defaults, and zero selects the documented default for numerical
+limits. Borrowed frame arrays, schemas, records, endpoint contexts,
+allocator contexts and lonejson runtimes retain their explicit lifetime
+requirements. A child created from a runtime borrows that runtime until
+the child's cleanup. The runtime must outlive all such children. Its
+cleanup and destruction return a busy status while dependents exist.
+
+An initializer establishes a fresh caller-owned shell without inspecting
+arbitrary prior bytes. Reinitializing caller storage requires cleanup
+first. An allocated shell is destroyed and reconstructed when fresh
+initialization is required. On initialization failure, the destination
+is in a documented cleanup-safe
+state. No endpoint or record becomes owned merely because initialization
+succeeds. Native encoder, decoder, reader, fd and transfer initialization
+and execution remain allocation-free with sufficient caller storage.
+Record construction and lonejson workspace can allocate according to
+their declared contracts. Document those allocations separately.
+
+Every receiver supplies `cleanup` to release owned resources while
+preserving its shell storage, and `destroy` to release an allocated
+shell through its recorded allocator. Cleanup is idempotent for an
+initialized shell. Destroying caller-owned storage returns invalid API
+use without freeing it. An allocated shell remains destroyable after
+cleanup. The caller releases every created child. Closing an fd adapter
+leaves descriptor ownership with the caller. A closed borrowed Lua view
+releases its pins while the native owner's lifecycle remains authoritative.
+
+All lifecycle operations reject callback reentry and tracked dependent
+borrows before changing state. Native callers finish using borrowed spans
+before cleaning up their owner. Successful cleanup is also available for
+paused and failed operations. Cleanup of mapped record storage follows
+lonejson's separate record lifecycle. Context reset starts another item
+using existing storage after successful finish. Changed configuration or
+a terminal error requires reconstruction under the shell's ownership
+contract.
+
+### Results and diagnostics
+
 Expose a common result convention for completion, input readiness, output
 readiness, invalid API use, malformed data, unsupported conversion, limits,
 I/O and allocation failure. A diagnostic identifies the failed layer and
@@ -106,6 +243,25 @@ operation. It carries an input offset when available, and a field path or
 field identity for mapped failures. Preserve a lonejson status as the cause
 when one exists. Diagnostic storage and lifetime must be documented. An
 allocation failure must still return a meaningful status.
+
+Completion, progress, a produced token and readiness conditions have
+distinct results. Exhausting a drive budget reports progress. Input or
+output readiness returns control to the caller. It never causes an
+internal retry loop. Decoder consumption and encoder output counts remain
+valid on every result, including errors. Every size output is initialized
+before validation. Optional diagnostic output can be NULL.
+
+Argument, ownership and busy errors leave an existing valid handle usable
+without advancing it. Malformed wire data, schema violations and endpoint
+failures are terminal for the current operation. A failed lifecycle
+request leaves resource ownership and any stored terminal cause intact.
+
+The handle retains its first terminal diagnostic until cleanup or reset
+under its lifecycle contract. A diagnostic query copies it into caller
+storage. Messages and bounded field paths require no allocation and
+remain valid independently of an upstream callback's stack. Report when
+a path has been shortened. An endpoint error after partial delivery
+preserves the accepted byte counts and upstream cause.
 
 ### Wire behavior
 
@@ -166,13 +322,36 @@ reports exact consumed and produced counts and returns promptly when the
 next operation would block. Completion never consumes bytes belonging to
 the following record. An empty input fragment can drain pending structural
 events. EOF is a distinct action. A terminal failure is sticky for the
-operation. After failure the caller cleans up or reinitializes the handle.
+operation. After failure the caller releases the operation or reconstructs
+it under its lifecycle contract.
+
+An encoder `put` returning output readiness has left the submitted token
+unaccepted. Drain prior output and retry the token. Successful submission
+accepts the token exactly once and borrows any DATA until drained. This
+acceptance rule is part of receiver and free-function parity. Lonejson's
+visitor pause separately accepts its callback event, as specified below.
 
 Handles have one owner. Independent operations can run concurrently with
 independent state. Reusing or closing a busy handle from its callback fails.
 No process-global mutable codec state. Preserve the caller's descriptor
 flags, signal policy and scheduling. The application owns waits, deadlines,
 cancellation and connection teardown.
+
+Runtime configuration is fixed after initialization. Independent child
+operations can execute concurrently while their runtime and borrowed
+dependencies stay alive. Serialize factories, runtime utilities that
+mutate state, and lifecycle calls on a shared runtime. Document any
+additional concurrency requirements inherited from a user allocator,
+lonejson runtime or endpoint. A Lua binding receiver follows its Lua
+state's thread ownership.
+
+For a nonempty read request, the native source reports positive bytes
+with success, zero bytes with success for EOF, or zero bytes with input
+readiness when it would block. The sink reports exact accepted bytes,
+including a partial write followed by output readiness. A successful
+zero-byte write for a nonempty request is an endpoint contract error.
+Reject counts beyond the offered buffer or span. An operation drains
+its pending output before accepting additional source data.
 
 ## Framing and transport
 
@@ -208,9 +387,10 @@ of its own.
 Use `lonejson_source_write_to_sink` and `lonejson_spooled_write_to_sink`
 to drain outbound byte sources directly on synchronous calls. Adapt
 embedded JSON from the handle's documented buffer, reader, file, fd or
-path to the visitor's pull contract. Borrow existing handles and close
-only resources the adapter opened. Chaining a push-only serializer into
-the one-shot visitor would require staging and is outside this contract.
+path to the resumable visitor's push contract. A public push producer can
+feed that visitor directly on a synchronous route. A resumable route must
+also be able to pause its producer when output waits. Borrow existing
+handles and close only resources the adapter opened.
 
 Use the descriptor's field names as CBOR text keys. Preserve published
 required, presence, nullable, omit-null and omit-empty semantics for the
@@ -312,8 +492,9 @@ documented default:
 | Resource | Default and behavior |
 | --- | --- |
 | Nesting and payload chunk | 32 frames and 2 KiB, with distinct limits for wire state and adapter scratch as needed. |
+| One transfer or conversion step | At most 2 KiB of new input, 2 KiB of delivered output and 256 converted events. Each budget is configurable. Exhaustion yields progress with retained state. |
 | One decoded object key | 2 KiB. The cap applies to both directions. |
-| Active keys in generic JSON conversion | 256 keys and 16 KiB of decoded key bytes across open objects. Release their storage when the object closes. Compare exact bytes after any hash match. |
+| Active keys in generic JSON conversion and unknown mapped fields | 256 keys and 16 KiB of decoded key bytes across open objects. Release their storage when the object closes. Compare exact bytes after any hash match. Known mapped fields use bounded schema presence tracking. |
 | One JSON number token | 256 bytes. Longer numeric lexemes fail with a limit status. |
 | Mapped materialization | 64 KiB per stored text field, 16,384 materialized array elements total and 1 MiB of logical new record storage per operation. Apply any stricter lonejson or field limits. Allocator accounting reports actual allocations separately. |
 | Declared stream destinations | Bound codec and adapter memory independently of field length. Apply any caller-supplied size cap and final sink or spool policy. |
@@ -389,6 +570,15 @@ token or callback API. No FFI dependency and no automatic conversion of
 whole native records to Lua tables. Match C behavior for errors,
 partial progress and unsupported representations.
 
+Expose `cbor.create(config)` for a Lua runtime receiver. Its factories
+produce checked encoder, decoder, reader, transfer and conversion userdata.
+Lua colon methods map to the corresponding C receiver methods. Module
+convenience constructors use these same factories with default
+configuration. Resume conversion with its `step` method and close the
+handle after completion, failure or cancellation. Binding push/check
+methods use the per-state Lua binding receiver and preserve the existing
+owner pin and type checks for every native pointer crossing.
+
 ## Verification and performance
 
 ### Correctness and conformance
@@ -401,6 +591,19 @@ partial progress and unsupported representations.
 - Exercise exact consumption, write progress, borrowed span lifetime,
   reentry, partial failure, EOF and resource limits. Verify a receiver
   method and its free function return equivalent events and errors.
+- Maintain an API inventory mapping every exported function to its
+  receiver member or documented bootstrap exception. Check declarations,
+  exported symbols, C receiver members and Lua coverage together. Any
+  missing natural receiver method fails the public API completeness gate.
+  Exercise both entry points through installed static and shared SDKs.
+- Test every receiver's caller-storage initializer and heap constructor,
+  including allocation failure, output-pointer clearing, failed-init
+  cleanup, repeated cleanup, destroy after cleanup, parent lifetime and
+  invalid destruction of caller storage. Reject busy cleanup without
+  changing state. Verify descriptors and borrowed runtimes remain owned
+  by their callers. Prove native initialization and dispatch allocate no
+  memory. Test conversion open without endpoint I/O, bounded step budgets,
+  terminal queries and synchronous/resumable output equivalence.
 - Demonstrate long native and JSON stream delivery before producer EOF
   with fixed working memory. Include indefinite byte and text strings,
   UTF-8 boundaries, large arrays, source failure after partial emission,
