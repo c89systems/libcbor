@@ -321,11 +321,29 @@ They do not spin, start a worker, or retain a whole value for later
 replay. Native CBOR operations retain their resumable contracts. [Lonejson v0.48.0 public header](https://github.com/c89systems/lonejson/blob/v0.48.0/include/lonejson.h)
 
 The next dependency pin must be a released SDK that exposes a resumable
-arbitrary-value visitor. Verify both input suspension and callback yield
-under output pressure before promising a nonblocking bridge. Input
-consumed counts, accepted callback events, borrowed chunk lifetime and
-EOF retry must be explicit. Keep at most bounded pending data when the
-visitor's chunk lifetime ends. The reverse direction must retain the
+arbitrary-value visitor. The sibling lonejson checkout at `efb51e9`
+provides the required `lonejson_value_visitor_stream` contract through
+`runtime->value_visitor_stream_open` and equivalent free functions.
+
+Feed bounded input through `push` and advance by its exact `consumed`
+count. `LONEJSON_STATUS_PAUSED` accepts the callback event once and stops
+delivery until the next push. It can consume zero input while draining
+pending number events. An empty push drains pending events. Input memory
+can be reused after push returns. Callback chunk memory is borrowed only
+until that callback returns. Retain one bounded output chunk before
+pausing and drain it before resuming the visitor. Size that chunk for the
+input fragment, CBOR token headers and at least one complete four-byte
+UTF-8 scalar.
+
+Call `finish` at EOF and repeat it after pauses until completion or failure.
+No further input is accepted after signaling EOF. Trailing non-whitespace
+and incomplete input fail. Keep output provisional until finish succeeds.
+The visitor copies runtime limits and allocator configuration at open and
+allocates bounded frame and number workspace. It streams keys and string
+values without growing workspace with their length. Configure its string,
+key, number and depth limits consistently with the bridge's limits.
+
+The reverse direction must retain the
 lonejson writer operation and its pending output across retries. Use the
 public writer generator or a bounded sink for one writer event at a
 time. Drain that output before accepting another event. Prove
