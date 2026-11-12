@@ -3,7 +3,7 @@
 #include <string.h>
 
 #if LONEJSON_ABI_VERSION != 29
-#error "libcbor requires lonejson 0.49.0 ABI 29"
+#error "libcbor requires lonejson 0.50.0 ABI 29"
 #endif
 
 static void *default_alloc(void *context, size_t size) {

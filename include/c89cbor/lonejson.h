@@ -1,5 +1,5 @@
 /** @file c89cbor/lonejson.h
- * Runtime receiver and required lonejson 0.49.0 integration.
+ * Runtime receiver and required lonejson 0.50.0 integration.
  * Caller storage and constructor storage have distinct ownership. Methods and
  * exported twins share implementation. Native defaults can use a NULL runtime.
  */

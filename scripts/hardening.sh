@@ -29,7 +29,7 @@ fuzz)
     -DC89CBOR_TARGET=x86_64-linux-gnu "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" \
     -DC89CBOR_AFL=ON -DC89CBOR_DISABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
     "-DC89CBOR_VERSION_OVERRIDE=${2:-}" \
-    "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-x86_64-linux-gnu/lib/cmake/lonejson" \
+    "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-x86_64-linux-gnu/lib/cmake/lonejson" \
     "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore"
   cmake --build build/fuzz --parallel "${BUILD_JOBS:-2}"
   read -ra fuzz_cases <<< "${FUZZ_CASES:-codec json cbor map cose cose-stream}"

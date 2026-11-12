@@ -47,7 +47,7 @@ lifecycle=${CPKT_LIFECYCLE_SCRIPTS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/pkt-s
 cmake -S tests/consumer -B "$stage/consumer" -G Ninja \
   "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake" "-DC89CBOR_TARGET=$target" \
   "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" \
-  "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.49.0-$target/lib/cmake/lonejson" \
+  "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-$target/lib/cmake/lonejson" \
   "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-$target/lib/cmake/CpktCore" \
   "-DSDK_PREFIX=$sdk" "-DEXPECTED_VERSION=$version" "-DRUNTIME_HELPER=$root/cmake/Runtime.cmake" \
   "-DAPI_SURFACE_SOURCE=$root/build/$target-${config,,}/api_surface.c" \
@@ -58,6 +58,6 @@ if [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]]; then
 else
   printf 'Darwin: target compile/link/Mach-O/exports verified; execution deferred\n'
 fi
-pc_version=$(PKG_CONFIG_LIBDIR="$sdk/lib/pkgconfig:$root/.cache/deps/liblonejson-0.49.0-$target/lib/pkgconfig:$root/.cache/deps/cpkt-0.7.0-$target/lib/pkgconfig" pkg-config --modversion c89cbor)
+pc_version=$(PKG_CONFIG_LIBDIR="$sdk/lib/pkgconfig:$root/.cache/deps/liblonejson-0.50.0-$target/lib/pkgconfig:$root/.cache/deps/cpkt-0.7.0-$target/lib/pkgconfig" pkg-config --modversion c89cbor)
 [[ $pc_version == "$version" ]]
 printf 'Verified %s\n' "dist/$name.tar.gz"

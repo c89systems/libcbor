@@ -22,7 +22,7 @@ schema, protocol negotiation, authorization and business logic.
 | Public headers | `<c89cbor/cbor.h>`, `<c89cbor/io.h>`, `<c89cbor/lonejson.h>` and `<c89cbor/lua.h>`. |
 | Package discovery | Retain `C89Cbor::static`, `C89Cbor::shared` and pkg-config `c89cbor` as discovery identifiers to distinguish the C89 Systems SDK. Both link modes expose the full receiver. |
 | Lua | `require('cbor')` on Lua 5.5.1 through its public C API, without a cpkt Lua facade. Native interop uses typed C pointers and owner references. |
-| Required dependency | [c89systems/lonejson 0.49.0](https://github.com/c89systems/lonejson/releases/tag/v0.49.0), shared ABI 29. |
+| Required dependency | [c89systems/lonejson 0.50.0](https://github.com/c89systems/lonejson/releases/tag/v0.50.0), shared ABI 29. |
 | Reference implementation | PJK/libcbor stays in a private benchmark prefix. Compare separate executables linked against their respective libraries. |
 
 The two CBOR products have overlapping library filenames. SDK instructions
@@ -44,20 +44,20 @@ pkg-config metadata must resolve the complete static and shared dependency
 closure from the consumer's SDK prefixes. JSON conversion needs lonejson's
 base library, without its HTTP, authentication or curl components.
 
-Use the release assets named `liblonejson-0.49.0-<target>.tar.gz` with
+Use the release assets named `liblonejson-0.50.0-<target>.tar.gz` with
 the following SHA-256 pins. The release's
-[checksum manifest](https://github.com/c89systems/lonejson/releases/download/v0.49.0/lonejson-0.49.0-CHECKSUMS)
+[checksum manifest](https://github.com/c89systems/lonejson/releases/download/v0.50.0/lonejson-0.50.0-CHECKSUMS)
 also identifies its source and Lua payloads.
 
 | Target | SDK SHA-256 |
 | --- | --- |
-| `x86_64-linux-gnu` | `3fe1629888f264b9605fa5ba96ea57e4b5da11276c245cba11409608fb292480` |
-| `x86_64-linux-musl` | `47049e9f26701f1a5b16c3fd9dfa4ad04357402539ec1f861745f7f8843c4be8` |
-| `aarch64-linux-gnu` | `ce472cab6e7340dec9a4d713e04c31fbb207f2de72bfa9e7aaa8e9f9c2f02c3a` |
-| `aarch64-linux-musl` | `76652c0a1656a38a5fb6b05c55a88607f80b2797c80d5859ce0bff81d49494db` |
-| `armhf-linux-gnu` | `f466f7d639b09015b7b202d455d9d759d9a2249c0f43e4dc4c0b904f625ac716` |
-| `armhf-linux-musl` | `03bb63d7f5f88217129bda677b35f85ee8109f785780723961aae8180de564c8` |
-| `arm64-apple-darwin` | `51344ba031e2e09ea88266eb02b6e0ba3411a430c7081c9e204b237bc9bd4af8` |
+| `x86_64-linux-gnu` | `c0b855e40cc21a39a3d4bb5366f0e7f3629e53c956a0e675dea69791a7d7b936` |
+| `x86_64-linux-musl` | `e736ab07a9694558fab51d1b7403a2d0ce8884900be9d0bcee7ca1903489ef12` |
+| `aarch64-linux-gnu` | `0bcc6d753b65bf122d7941fca0e4671f0dfdb508c4cfff968fe628357db7b04e` |
+| `aarch64-linux-musl` | `d18d291a2c6a731aa54205673633221e388e4fbea3e5e2ee15caf8a0c653b04b` |
+| `armhf-linux-gnu` | `5ea12a2dc327811101bad13dff23182c54a2bfa7133e87352442147706e6b094` |
+| `armhf-linux-musl` | `d11abea1a1e0e387426b230fb19c7ef35086b351b40245a10efb12784ee64797` |
+| `arm64-apple-darwin` | `efc25f93d2768fb57f89d54025711ae3f82f7feeba1c776b25108b43356d8031` |
 
 ## Native codec and receiver contracts
 
@@ -509,14 +509,14 @@ failures.
 
 ### Streaming with the pinned dependency
 
-Lonejson 0.49.0 provides `lonejson_value_visitor_stream` through
+Lonejson 0.50.0 provides `lonejson_value_visitor_stream` through
 `runtime->value_visitor_stream_open` and equivalent free functions.
 Use this public API for resumable JSON input in the initial bridge.
 Both JSON conversion directions must retain their operation state across
 input and output readiness. Return promptly when an endpoint would block
 and let the caller schedule the next step. Provide synchronous convenience
 entry points for blocking endpoints using the same conversion state.
-Native CBOR operations retain their resumable contracts. [Lonejson v0.49.0 public header](https://github.com/c89systems/lonejson/blob/v0.49.0/include/lonejson.h)
+Native CBOR operations retain their resumable contracts. [Lonejson v0.50.0 public header](https://github.com/c89systems/lonejson/blob/v0.50.0/include/lonejson.h)
 
 Feed bounded input through `push` and advance by its exact `consumed`
 count. `LONEJSON_STATUS_PAUSED` accepts the callback event once and stops
@@ -692,7 +692,7 @@ baseline.
 1. Establish the required lonejson SDK pin and the receiver API. Complete
    the libcbor filename cutover and prove the existing native paths.
 2. Ship both direct mapped operations and both resumable JSON conversions
-   against 0.49.0. Prove type, ownership, bounded streaming, pause/resume
+   against 0.50.0. Prove type, ownership, bounded streaming, pause/resume
    and interoperable bytes, including mapped transfers with compatible
    endpoints. Keep the same value mapping and record ownership rules.
 3. Integrate cai against the installed public SDK in its own repository.

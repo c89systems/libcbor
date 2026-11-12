@@ -2,7 +2,7 @@
 
 Include `<c89cbor/cbor.h>` for the codec and `<c89cbor/io.h>` for framing/adapters.
 Include `<c89cbor/lonejson.h>` for the root runtime receiver and required
-lonejson 0.49.0 types. Initialize a caller-owned root with `c89cbor_init`, or
+lonejson 0.50.0 types. Initialize a caller-owned root with `c89cbor_init`, or
 allocate it with `c89cbor_create`. Its factories construct native children.
 Every child exposes receiver-first operation, cleanup, destruction and
 diagnostic methods. Free-function twins share the same implementation.
@@ -151,7 +151,7 @@ target_link_libraries(app PRIVATE C89Cbor::static) # or C89Cbor::shared
 
 `pkg-config --cflags --libs c89cbor` is relocatable. Linux consumers select their
 own pinned compiler/runtime; the SDK never exports workstation loader or cache
-paths. Both link modes declare lonejson 0.49.0 as a required SDK prerequisite.
+paths. Both link modes declare lonejson 0.50.0 as a required SDK prerequisite.
 Supply its CMake prefix or pkg-config directory alongside libcbor's prefix.
 The native transfer includes POSIX descriptor functions only when its
 translation unit is linked.

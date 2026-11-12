@@ -18,7 +18,7 @@ target_link_libraries(app PRIVATE C89Cbor::static) # or C89Cbor::shared
 Include `<c89cbor/cbor.h>` for tokens and codec state, `<c89cbor/io.h>` for framing
 and I/O, or `<c89cbor/lonejson.h>` for the runtime receiver. Load
 `require('cbor')` from Lua 5.5.1. The build acquires the required lonejson
-0.49.0 SDK and cpkt's pinned OpenSSL provider for COSE encryption. Install
+0.50.0 SDK and cpkt's pinned OpenSSL provider for COSE encryption. Install
 PJK/libcbor in its own prefix for comparisons.
 
 - [Implementation specification](docs/spec.md)
