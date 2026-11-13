@@ -15,6 +15,7 @@
 -- runtime:cbor_to_json(source,sink,options=nil) -> status,error.
 -- runtime:encode_map(record_view,sink,options=nil) -> status,error.
 -- runtime:decode_map(source,record_view,options=nil) -> status,error.
+-- Synchronous calls pin arguments through native callbacks, success and errors.
 -- These methods have _open and _init factories returning a conversion,
 -- or nil,status,error. Opening performs no endpoint I/O. Map methods have
 -- encode_map_view/decode_map_view aliases and matching factories.

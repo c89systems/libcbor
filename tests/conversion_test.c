@@ -218,7 +218,17 @@ static void environment(void) {
 }
 typedef struct memory_count {
   size_t live, bytes, peak, calls, fail_at;
+  c89cbor_conversion *initializing;
+  size_t reentries;
 } memory_count;
+static void construction_probe(memory_count *count) {
+  if (count->initializing != NULL) {
+    assert(count->initializing->cleanup(count->initializing) == C89CBOR_BUSY);
+    assert(count->initializing->step(count->initializing, NULL) ==
+           C89CBOR_BUSY);
+    ++count->reentries;
+  }
+}
 typedef union allocation_header {
   size_t size;
   long double alignment;
@@ -227,6 +237,7 @@ typedef union allocation_header {
 static void *count_allocate(void *context, size_t size) {
   memory_count *count = context;
   allocation_header *header;
+  construction_probe(count);
   ++count->calls;
   if (count->calls == count->fail_at || size > (size_t)-1 - sizeof(*header))
     return NULL;
@@ -245,6 +256,7 @@ static void count_release(void *context, void *storage) {
   allocation_header *header;
   if (storage == NULL)
     return;
+  construction_probe(count);
   header = (allocation_header *)storage - 1;
   assert(count->live != 0 && count->bytes >= header->size);
   --count->live;
@@ -324,6 +336,67 @@ static void allocation_failures(void) {
       }
       if (count.calls < fail_at)
         finished = 1;
+      assert(runtime.cleanup(&runtime) == 0);
+      assert(count.live == 0 && count.bytes == 0);
+      if (finished)
+        break;
+    }
+    assert(finished);
+  }
+}
+typedef struct construction_record {
+  lonejson_int64 id;
+} construction_record;
+static const lonejson_field construction_fields[] = {
+    LONEJSON_FIELD_I64_REQ(construction_record, id, "id")};
+LONEJSON_MAP_DEFINE(construction_map, construction_record, construction_fields);
+static void construction_reentry(void) {
+  c89cbor runtime;
+  c89cbor_config config;
+  lonejson_allocator json;
+  memory_count count;
+  endpoint memory;
+  c89cbor_source source;
+  c89cbor_sink sink;
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  construction_record record;
+  size_t fail_at;
+  int direction, status, finished;
+  source.context = sink.context = &memory;
+  source.read = read_bytes;
+  sink.write = write_bytes;
+  record.id = 42;
+  for (direction = 0; direction < 4; ++direction) {
+    finished = 0;
+    for (fail_at = 1; fail_at < 100; ++fail_at) {
+      memset(&count, 0, sizeof(count));
+      memset(&memory, 0, sizeof(memory));
+      count.fail_at = fail_at;
+      counted_config(&config, &json, &count);
+      assert(c89cbor_init(&runtime, &config, NULL) == 0);
+      count.initializing = &operation;
+      if (direction == 0)
+        status = runtime.json_to_cbor_init(&runtime, &operation, &source, &sink,
+                                           NULL, &error);
+      else if (direction == 1)
+        status = runtime.cbor_to_json_init(&runtime, &operation, &source, &sink,
+                                           NULL, &error);
+      else if (direction == 2)
+        status = runtime.encode_map_init(&runtime, &operation,
+                                         &construction_map, &record,
+                                         sizeof(record), &sink, NULL, &error);
+      else
+        status = runtime.decode_map_init(&runtime, &operation, &source,
+                                         &construction_map, &record,
+                                         sizeof(record), NULL, &error);
+      count.initializing = NULL;
+      assert(status == C89CBOR_OK || status == C89CBOR_NOMEM);
+      assert(memory.read_calls == 0 && memory.write_calls == 0);
+      assert(count.reentries != 0);
+      finished = count.calls < fail_at;
+      assert(operation.cleanup(&operation) == 0);
+      assert(operation.cleanup(&operation) == 0);
       assert(runtime.cleanup(&runtime) == 0);
       assert(count.live == 0 && count.bytes == 0);
       if (finished)
@@ -570,6 +643,7 @@ static void *run_tests(void *unused) {
   environment();
   limits_and_wrappers();
   allocation_failures();
+  construction_reentry();
   bounded_streaming();
   reverse_bounded_streaming();
   return NULL;

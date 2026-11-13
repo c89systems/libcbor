@@ -87,7 +87,9 @@ advance accepts exact byte counts. Close the span before put/reset can reuse
 the encoder. Explicit string conversion remains available through span:string().
 
 Owners are pinned across callbacks/operations. Explicit close is idempotent and
-rejects active or borrowed owners; close borrowed child views first. GC cleans
+rejects active or borrowed owners; close borrowed child views first.
+Synchronous JSON/map calls borrow their endpoints, record view and native
+options until return, including native callbacks and error paths. GC cleans
 owned heap contexts after dependents disappear. A failed stream cannot be retried
 from its beginning against a destination which already received its prefix.
 

@@ -856,6 +856,8 @@ static int initialize_conversion(c89cbor *runtime,
       error->status = C89CBOR_INVALID;
     return C89CBOR_INVALID;
   }
+  /* Allocator and dependency callbacks must not release partial state. */
+  conversion->lifetime.busy = 1;
   state = conversion->lifetime.allocator.alloc(
       conversion->lifetime.allocator.context, sizeof(*state));
   if (state == NULL) {
@@ -874,6 +876,7 @@ static int initialize_conversion(c89cbor *runtime,
     c89_options_resolve(runtime, options, &state->options);
     status = prepare_state(state, runtime);
   }
+  conversion->lifetime.busy = 0;
   if (status != 0)
     (void)c89cbor_conversion_cleanup(conversion);
   if (error != NULL)

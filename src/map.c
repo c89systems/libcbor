@@ -464,6 +464,7 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
       error->status = C89CBOR_INVALID;
     return C89CBOR_INVALID;
   }
+  conversion->lifetime.busy = 1;
   state = conversion->lifetime.allocator.alloc(
       conversion->lifetime.allocator.context, sizeof(*state));
   if (state == NULL) {
@@ -491,6 +492,7 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
     c89_options_resolve(runtime, options, &state->options);
     status = prepare_map(state, extent);
   }
+  conversion->lifetime.busy = 0;
   if (error != NULL)
     *error = conversion->lifetime.error;
   if (status != 0)

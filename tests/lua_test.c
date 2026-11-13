@@ -200,6 +200,110 @@ static void prepare_fixture(conversion_fixture *fixture, c89cbor_lua *binding) {
   assert(binding->push_allocator(binding, &fixture->allocator, 0) == 0);
   lua_setglobal(binding->state, "counting_allocator");
 }
+typedef struct sync_probe {
+  lua_State *state;
+  c89cbor_source source;
+  c89cbor_sink sink;
+  size_t calls;
+  int finalized;
+} sync_probe;
+static int finalize_sync_owner(lua_State *L) {
+  sync_probe **owner = lua_touserdata(L, 1);
+  ++(*owner)->finalized;
+  return 0;
+}
+static void probe_sync_arguments(sync_probe *probe) {
+  assert(
+      luaL_dostring(
+          probe->state,
+          "local c=require('cbor'); "
+          "assert(sync_left:close()==c.INVALID); "
+          "assert(sync_right:close()==c.INVALID); "
+          "assert(sync_options:close()==c.INVALID); "
+          "assert(sync_root:close()==c.INVALID); collectgarbage('collect')") ==
+      LUA_OK);
+  assert(probe->finalized == 0);
+  ++probe->calls;
+}
+static int sync_read(void *context, void *bytes, size_t capacity,
+                     size_t *count) {
+  sync_probe *probe = context;
+  probe_sync_arguments(probe);
+  return probe->source.read(probe->source.context, bytes, capacity, count);
+}
+static int sync_write(void *context, const void *bytes, size_t length,
+                      size_t *count) {
+  sync_probe *probe = context;
+  probe_sync_arguments(probe);
+  return probe->sink.write(probe->sink.context, bytes, length, count);
+}
+static void synchronous_reentry(c89cbor_lua *binding) {
+  static const char *const methods[] = {"json_to_cbor", "cbor_to_json",
+                                        "encode_map", "decode_map"};
+  lua_State *L = binding->state;
+  sync_probe probe, **owner;
+  c89cbor_source source;
+  c89cbor_sink sink;
+  lonejson_record_view *view;
+  c89cbor_options options = c89cbor_default_options();
+  char script[640];
+  int mode, pause, owner_index, status;
+  for (pause = 0; pause < 2; ++pause)
+    for (mode = 1; mode <= 4; ++mode) {
+      memset(&probe, 0, sizeof(probe));
+      probe.state = L;
+      lua_getglobal(L, "native_case");
+      lua_pushinteger(L, mode);
+      lua_pushboolean(L, pause);
+      assert(lua_pcall(L, 2, 2, 0) == LUA_OK);
+      view = NULL;
+      if (mode == 3)
+        view = binding->check_record_view(binding, -2);
+      else
+        probe.source = *binding->check_source(binding, -2);
+      if (mode == 4)
+        view = binding->check_record_view(binding, -1);
+      else
+        probe.sink = *binding->check_sink(binding, -1);
+      lua_pop(L, 2);
+      owner = lua_newuserdatauv(L, sizeof(*owner), 0);
+      *owner = &probe;
+      lua_newtable(L);
+      lua_pushcfunction(L, finalize_sync_owner);
+      lua_setfield(L, -2, "__gc");
+      lua_setmetatable(L, -2);
+      owner_index = lua_gettop(L);
+      source.context = sink.context = &probe;
+      source.read = sync_read;
+      sink.write = sync_write;
+      if (mode == 3)
+        assert(binding->push_record_view(binding, view, owner_index) == 0);
+      else
+        assert(binding->push_source(binding, &source, owner_index) == 0);
+      lua_setglobal(L, "sync_left");
+      if (mode == 4)
+        assert(binding->push_record_view(binding, view, owner_index) == 0);
+      else
+        assert(binding->push_sink(binding, &sink, owner_index) == 0);
+      lua_setglobal(L, "sync_right");
+      assert(binding->push_options(binding, &options, owner_index) == 0);
+      lua_setglobal(L, "sync_options");
+      lua_pop(L, 1);
+      status = snprintf(
+          script, sizeof(script),
+          "local c=require('cbor'); sync_root=c.create(); "
+          "assert(sync_root:%s(sync_left,sync_right,sync_options)==c.%s); "
+          "assert(sync_left:close()==c.OK); assert(sync_right:close()==c.OK); "
+          "assert(sync_options:close()==c.OK); "
+          "assert(sync_root:close()==c.OK); "
+          "sync_left=nil; sync_right=nil; sync_options=nil; sync_root=nil; "
+          "collectgarbage('collect')",
+          methods[mode - 1], pause ? "IO" : "OK");
+      assert(status > 0 && (size_t)status < sizeof(script));
+      assert(luaL_dostring(L, script) == LUA_OK);
+      assert(probe.calls != 0 && probe.finalized == 1);
+    }
+}
 static int close_at(lua_State *L, int index) {
   int status;
   index = lua_absindex(L, index);
@@ -397,6 +501,8 @@ static void *run(void *ctx) {
   lua_pop(L, 1);
   assert(binding_init(&binding, L, NULL, &error) == 0);
   prepare_fixture(&fixture, &binding);
+  if (strstr(args->script, "lua_test.lua") != NULL)
+    synchronous_reentry(&binding);
   typed_interop(&binding, &fixture);
   assert(binding.destroy(&binding) == C89CBOR_INVALID);
   assert(binding_create(L, &fixture.allocator, &heap_binding, &error) == 0);

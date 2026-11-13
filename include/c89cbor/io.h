@@ -212,6 +212,8 @@ C89CBOR_API int c89cbor_fd_sink(c89cbor_fd *fd, c89cbor_sink *sink);
 /** One source-to-sink operation. Initialize or open through its runtime.
  * Endpoints and runtime are borrowed until cleanup. Step never polls or retries
  * a blocked endpoint internally. Cleanup cancels provisional work.
+ * Step/cleanup reentry from allocator callbacks during construction returns
+ * BUSY, just as it does during an active step.
  */
 typedef struct c89cbor_conversion {
   int (*step)(struct c89cbor_conversion *,

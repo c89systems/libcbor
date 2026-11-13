@@ -1374,7 +1374,15 @@ static int runtime_conversion(lua_State *L, enum conversion_kind kind,
   if (view_index)
     view = checked(L, view_index, VIEW)->ptr;
   options_from_lua(L, 4, &options);
-  root->active = 1;
+  /* Borrow before any native allocation or endpoint callback. Synchronous
+   * calls need the same owner pins as retained conversion operations. */
+  h = new_handle(L, CONVERSION,
+                 synchronous == 2 ? sizeof(c89cbor_conversion) : 0);
+  pin(L, h, 1, 1);
+  pin(L, h, source_index ? source_index : view_index, 2);
+  pin(L, h, sink_index ? sink_index : view_index, 3);
+  pin(L, h, 4, 4);
+  root->active = h->active = 1;
   if (synchronous == 1) {
     if (kind == JSON_CBOR)
       status = runtime->json_to_cbor(runtime, source, sink, &options, &error);
@@ -1385,17 +1393,12 @@ static int runtime_conversion(lua_State *L, enum conversion_kind kind,
     else
       status =
           runtime->decode_map_view(runtime, source, view, &options, &error);
-    root->active = 0;
+    root->active = h->active = 0;
+    (void)release_handle(h);
     result(L, status);
     diagnostic_table(L, &error);
     return 2;
   }
-  root->active = 0;
-  /* Allocate Lua storage before creating native children: Lua OOM must not
-   * strand an unreferenced native operation. */
-  h = new_handle(L, CONVERSION,
-                 synchronous == 2 ? sizeof(c89cbor_conversion) : 0);
-  root->active = 1;
   if (synchronous == 2) {
     operation = h->ptr;
     if (kind == JSON_CBOR)
@@ -1424,18 +1427,15 @@ static int runtime_conversion(lua_State *L, enum conversion_kind kind,
                                            &operation, &error);
   h->ptr = operation;
   h->heap_kind = synchronous == 2 ? -7 : 7;
-  root->active = 0;
+  root->active = h->active = 0;
   if (status != 0) {
+    (void)release_handle(h);
     lua_pop(L, 1);
     lua_pushnil(L);
     result(L, status);
     diagnostic_table(L, &error);
     return 3;
   }
-  pin(L, h, 1, 1);
-  pin(L, h, source_index ? source_index : view_index, 2);
-  pin(L, h, sink_index ? sink_index : view_index, 3);
-  pin(L, h, 4, 4);
   return 1;
 }
 static int json_to_cbor(lua_State *L) {
