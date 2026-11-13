@@ -85,7 +85,7 @@ static c89cbor_cose_options *cose_options_snapshot(lua_State *L, int index) {
  */
 static int cose_key_factory(lua_State *L, int create) {
   c89cbor *runtime = check_runtime(L, 1);
-  int base = runtime != NULL ? 1 : 0, status;
+  int base = runtime != NULL ? 1 : 0, status, slot;
   uint64_t kind = integer(L, 1 + base);
   size_t length, id_length;
   const void *bytes = input(L, 2 + base, &length);
@@ -103,6 +103,9 @@ static int cose_key_factory(lua_State *L, int create) {
   h = new_handle(L, COSE_KEY, create ? 0 : sizeof(*key));
   if (base)
     pin(L, h, 1, 1);
+  /* The runtime allocator can re-enter Lua before either input is copied. */
+  pin(L, h, 2 + base, 2);
+  pin(L, h, 3 + base, 3);
   h->active = 1;
   if (base)
     checked(L, 1, ROOT)->active = 1;
@@ -118,6 +121,15 @@ static int cose_key_factory(lua_State *L, int create) {
   if (base)
     checked(L, 1, ROOT)->active = 0;
   h->active = 0;
+  /* Key storage owns copies; release input borrows on success and failure. */
+  for (slot = 2; slot <= 3; ++slot) {
+    if (h->parent[slot - 1] != NULL) {
+      drop_parent(h->parent[slot - 1]);
+      h->parent[slot - 1] = NULL;
+    }
+    lua_pushnil(L);
+    lua_setiuservalue(L, -2, slot);
+  }
   if (status != 0) {
     (void)release_handle(h);
     lua_pushnil(L);
