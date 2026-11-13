@@ -27,6 +27,8 @@ PJK/libcbor in its own prefix for comparisons.
 - [Lua API and native pointer interop](docs/lua.md)
 - [COSE objects, keys and authenticated streams](docs/cose.md)
 - [Sign1, Mac0 and native CWT claim policies](docs/sign1-cwt.md)
+- [Standalone authenticated client/server](docs/standalone.md)
+- [Interoperability and prerelease hardening](docs/hardening.md)
 - [Development and toolchains](docs/development.md)
 - [Benchmarks](docs/benchmarks.md)
 - [SDK targets, packaging and release](docs/delivery.md)

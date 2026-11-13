@@ -326,6 +326,9 @@ int main(int argc, char **argv) {
     b->policy.accepted_audience_count = 1u;
     b->policy.now = 100;
     assert(b->root.cwt_init(&b->root, &b->token, NULL, &error) == 0);
+    assert(b->token.set_seal_keys(&b->token, &b->signing, NULL, 0, &error) ==
+           0);
+    assert(b->token.set_verify_keys(&b->token, recipient, NULL, &error) == 0);
     assert(b->token.set_lonejson(&b->token, &claims, NULL, 0, &error) == 0);
     assert(b->token.view_get(&b->token, &view) == 0);
     b->payload = (uint64_t)view.encoded_length;
@@ -349,13 +352,11 @@ int main(int argc, char **argv) {
       lua_setglobal(L, "verification");
       assert(binding.push_jwt_policy(&binding, &b->policy, 0) == 0);
       lua_setglobal(L, "policy");
-      assert(luaL_dostring(
-                 L,
-                 "function seal_token() local status,s=token:seal(signing); "
-                 "assert(status==0); wire=s end "
-                 "function verify_token() "
-                 "assert(token:verify(wire,verification,nil,policy)==0) end") ==
-             0);
+      assert(luaL_dostring(L,
+                           "function seal_token() local status,s=token:seal(); "
+                           "assert(status==0); wire=s end "
+                           "function verify_token() "
+                           "assert(token:verify(wire,policy)==0) end") == 0);
     }
   }
 #endif
@@ -404,12 +405,11 @@ int main(int argc, char **argv) {
             } else
 #endif
                 if (!decrypt)
-              assert(b->token.seal(&b->token, &b->signing, NULL, 0, b->object,
-                                   sizeof(b->object), &b->wire_length,
-                                   &error) == 0);
+              assert(b->token.seal(&b->token, b->object, sizeof(b->object),
+                                   &b->wire_length, &error) == 0);
             else
               assert(b->token.verify(&b->token, b->object, b->wire_length,
-                                     recipient, NULL, &b->policy, &error) == 0);
+                                     &b->policy, &error) == 0);
           } else if (b->auth) {
             if (!decrypt) {
               b->wire_length = 0;

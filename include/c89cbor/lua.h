@@ -18,6 +18,10 @@ struct lua_State;
  */
 typedef struct c89cbor_lua c89cbor_lua;
 struct c89cbor_lua {
+  int (*push_datagram)(c89cbor_lua *, c89cbor_datagram *,
+                       int); /**< Borrow a datagram shell, pinning its owner. */
+  c89cbor_datagram *(*check_datagram)(
+      c89cbor_lua *, int); /**< Check a live typed datagram shell or NULL. */
   int (*push_cwt)(c89cbor_lua *, c89cbor_cwt *,
                   int); /**< Borrow native cwt, pin owner. */
   c89cbor_cwt *(*check_cwt)(c89cbor_lua *,
@@ -111,6 +115,12 @@ struct c89cbor_lua {
   int owned;                          /**< Private ownership flag. */
 };
 /** Standard Lua module opener; bootstrap exception to receiver parity. */
+/** Borrow a datagram shell; descriptor/storage remain caller-owned. */
+C89CBOR_API int c89cbor_lua_push_datagram(c89cbor_lua *, c89cbor_datagram *,
+                                          int owner_index);
+/** Check a typed live datagram shell without raising a Lua argument error. */
+C89CBOR_API c89cbor_datagram *c89cbor_lua_check_datagram(c89cbor_lua *,
+                                                         int index);
 /** Borrow native cwt; preserve its storage/pointers until close. */
 C89CBOR_API int c89cbor_lua_push_cwt(c89cbor_lua *, c89cbor_cwt *,
                                      int owner_index);

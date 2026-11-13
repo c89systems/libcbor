@@ -1,4 +1,5 @@
 #include <c89cbor/lonejson.h>
+#include "cwt_helpers.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,12 +105,12 @@ int main(int argc, char **argv) {
       claims.exp = 100;
       claims.has_exp = 1;
       assert(token.set_lonejson(&token, &claims, NULL, 0, &error) == 0);
-      assert(token.seal(&token,
-                        &key[strstr(argv[1], "-p256") != NULL   ? 5u
-                             : strstr(argv[1], "-hmac") != NULL ? 6u
-                                                                : 4u],
-                        NULL, 0, io->bytes, sizeof(io->bytes), &written,
-                        &error) == 0);
+      assert(test_cwt_seal(&token,
+                           &key[strstr(argv[1], "-p256") != NULL   ? 5u
+                                : strstr(argv[1], "-hmac") != NULL ? 6u
+                                                                   : 4u],
+                           NULL, 0, io->bytes, sizeof(io->bytes), &written,
+                           &error) == 0);
       assert(fwrite(io->bytes, 1u, written, stdout) == written);
     } else {
       status = token.set_claims(&token, io->bytes, io->length, &error);
@@ -119,8 +120,8 @@ int main(int argc, char **argv) {
         assert(token.view_get(&token, &view) == C89CBOR_INPUT);
       for (i = 4u; i < 7u; ++i)
         for (j = 0; j < 3u; ++j) {
-          status = token.verify(&token, io->bytes, io->length, &key[i], &key[j],
-                                &policy, &error);
+          status = test_cwt_verify(&token, io->bytes, io->length, &key[i],
+                                   &key[j], &policy, &error);
           if (status == 0)
             assert(token.view_get(&token, &view) == 0 && view.authenticated);
           else

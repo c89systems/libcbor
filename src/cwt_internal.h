@@ -17,6 +17,11 @@ typedef struct c89_cwt_state {
   c89_cwt_entry *entries;
   char **strings;
   c89cbor_encoder encoder;
+  c89_cose_state crypto;
+  c89cbor_cose_key *seal_keys[C89_COSE_MAX_RECIPIENTS + 1u];
+  size_t seal_count;
+  c89cbor_cose_key *verify_keys[2];
+  size_t verify_count;
 } c89_cwt_state;
 void c89_cwt_clear(c89_cwt_state *);
 int c89_cwt_parse(c89_cwt_state *, size_t);

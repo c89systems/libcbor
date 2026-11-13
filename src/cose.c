@@ -24,7 +24,7 @@ static int fail(c89_cose_state *state, int status, const char *layer) {
     (void)EVP_CIPHER_CTX_reset(state->cipher_context);
   return c89_error(&state->owner->lifetime, status, layer);
 }
-static void unhold(c89cbor_cose_key *const *keys, size_t count) {
+void c89_cose_keys_unhold(c89cbor_cose_key *const *keys, size_t count) {
   size_t i;
   for (i = 0; i < count; ++i)
     --keys[i]->lifetime.dependents;
@@ -32,8 +32,8 @@ static void unhold(c89cbor_cose_key *const *keys, size_t count) {
 /* Snapshot and pin before entering any caller allocator. The input list can
  * itself be mutated by a callback; only the private snapshot is used afterward.
  */
-static int hold(c89cbor_cose_key *const *keys, size_t count,
-                c89cbor_cose_key **snapshot) {
+int c89_cose_keys_hold(c89cbor_cose_key *const *keys, size_t count,
+                       c89cbor_cose_key **snapshot) {
   size_t i;
   int status = C89CBOR_OK;
   if (keys == NULL || count == 0 || count > C89_COSE_MAX_RECIPIENTS)
@@ -46,7 +46,7 @@ static int hold(c89cbor_cose_key *const *keys, size_t count,
     else if (keys[i]->lifetime.dependents == (size_t)-1)
       status = C89CBOR_LIMIT;
     if (status != 0) {
-      unhold(snapshot, i);
+      c89_cose_keys_unhold(snapshot, i);
       return status;
     }
     snapshot[i] = keys[i];
@@ -54,13 +54,12 @@ static int hold(c89cbor_cose_key *const *keys, size_t count,
   }
   return C89CBOR_OK;
 }
-static void release(void *context) {
-  c89_cose_state *state = context;
+void c89_cose_workspace_cleanup(c89_cose_state *state) {
   c89cbor_allocator allocator = state->allocator;
-  c89cbor_cose_key *keys[C89_COSE_MAX_RECIPIENTS];
-  size_t count = state->key_count;
-  memcpy(keys, state->keys, count * sizeof(*keys));
   EVP_CIPHER_CTX_free(state->cipher_context);
+  EVP_MD_CTX_free(state->digest_context);
+  EVP_MAC_CTX_free(state->mac_context);
+  EVP_MAC_free(state->mac);
   (void)c89cbor_decoder_cleanup(&state->framer);
   if (state->workspace != NULL) {
     OPENSSL_cleanse(state->workspace, state->workspace_size);
@@ -71,9 +70,23 @@ static void release(void *context) {
                     state->options.recipients * sizeof(*state->recipients));
     allocator.free(allocator.context, state->recipients);
   }
+  state->workspace = NULL;
+  state->recipients = NULL;
+  state->cipher_context = NULL;
+  state->digest_context = NULL;
+  state->mac = NULL;
+  state->mac_context = NULL;
+}
+static void release(void *context) {
+  c89_cose_state *state = context;
+  c89cbor_allocator allocator = state->allocator;
+  c89cbor_cose_key *keys[C89_COSE_MAX_RECIPIENTS];
+  size_t count = state->key_count;
+  memcpy(keys, state->keys, count * sizeof(*keys));
+  c89_cose_workspace_cleanup(state);
   OPENSSL_cleanse(state, sizeof(*state));
   allocator.free(allocator.context, state);
-  unhold(keys, count);
+  c89_cose_keys_unhold(keys, count);
 }
 static int read_input(c89_cose_state *state, size_t *budget, int *waiting) {
   size_t count = 0, offered = sizeof(state->input);
@@ -292,7 +305,7 @@ int c89_cose_options_resolve(c89cbor *runtime,
                                                : C89CBOR_INVALID;
   return C89CBOR_OK;
 }
-static int allocate_workspace(c89_cose_state *state) {
+int c89_cose_workspace_init(c89_cose_state *state) {
   c89cbor_allocator selected;
   unsigned char *at;
   size_t record = state->options.record_bytes,
@@ -330,7 +343,34 @@ static int allocate_workspace(c89_cose_state *state) {
   state->cipher_context = EVP_CIPHER_CTX_new();
   if (state->cipher_context == NULL)
     return C89CBOR_NOMEM;
+  if (state->auth == 1 || state->auth == -1) {
+    state->digest_context = EVP_MD_CTX_new();
+    if (state->digest_context == NULL)
+      return C89CBOR_NOMEM;
+  }
+  if (state->auth == 2 || state->auth == -1) {
+    state->mac = EVP_MAC_fetch(NULL, "HMAC", NULL);
+    if (state->mac == NULL)
+      return C89CBOR_UNSUPPORTED;
+    state->mac_context = EVP_MAC_CTX_new(state->mac);
+    if (state->mac_context == NULL)
+      return C89CBOR_NOMEM;
+  }
   return c89cbor_decoder_init(NULL, &state->framer, NULL, 0, 0);
+}
+void c89_cose_workspace_clear(c89_cose_state *state) {
+  OPENSSL_cleanse(state->workspace, state->workspace_size);
+  OPENSSL_cleanse(state->stream_key, sizeof(state->stream_key));
+  OPENSSL_cleanse(state->recipients,
+                  state->options.recipients * sizeof(*state->recipients));
+  if (state->cipher_context != NULL)
+    (void)EVP_CIPHER_CTX_reset(state->cipher_context);
+  if (state->digest_context != NULL)
+    (void)EVP_MD_CTX_reset(state->digest_context);
+  state->arena.length = state->key_count = state->recipient_count = 0;
+  state->stream = state->stream_key_ready = state->recipients_ready = 0;
+  state->plain_length = state->wire_length = state->cipher_length = 0;
+  state->output_length = state->output_offset = 0;
 }
 int c89cbor_cose_operation_step(c89cbor_cose_operation *operation,
                                 c89cbor_error *error) {
@@ -534,7 +574,7 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
       goto failed;
     }
   }
-  status = hold(keys, count, held);
+  status = c89_cose_keys_hold(keys, count, held);
   if (status != 0)
     goto failed;
   held_count = count;
@@ -571,13 +611,13 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
     }
     state->have_id = 1;
   }
-  status = allocate_workspace(state);
+  status = c89_cose_workspace_init(state);
   if (status != 0)
     goto failed;
   driver->lifetime.busy = 0;
   return C89CBOR_OK;
 failed:
-  unhold(held, held_count);
+  c89_cose_keys_unhold(held, held_count);
   driver->lifetime.busy = 0;
   c89_error(&driver->lifetime, status, "cose-open");
   if (error != NULL) {
@@ -603,7 +643,7 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
   if (out == NULL)
     return C89CBOR_INVALID;
   *out = NULL;
-  status = hold(keys, count, held);
+  status = c89_cose_keys_hold(keys, count, held);
   if (status != 0) {
     if (error != NULL)
       error->status = status;
@@ -611,7 +651,7 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
   }
   status = c89_allocate(runtime, NULL, sizeof(*conversion),
                         (void **)&conversion, &selected);
-  unhold(held, count);
+  c89_cose_keys_unhold(held, count);
   if (status != 0) {
     if (error != NULL)
       error->status = status;

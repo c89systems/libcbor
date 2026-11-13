@@ -8,6 +8,7 @@
 #include <c89cbor/io.h>
 #include <c89cbor/cose.h>
 #include <c89cbor/cwt.h>
+#include <c89cbor/datagram.h>
 #include <lonejson.h>
 #ifdef __cplusplus
 extern "C" {
@@ -73,6 +74,12 @@ typedef struct c89cbor_config {
  * Configuration is fixed. Serialize factories and lifecycle on a shared root.
  */
 struct c89cbor {
+  int (*datagram_init)(c89cbor *, c89cbor_datagram *, int, size_t,
+                       c89cbor_error *); /**< Initialize a bounded
+                                            borrowed-socket datagram shell. */
+  int (*datagram_create)(c89cbor *, int, size_t, c89cbor_datagram **,
+                         c89cbor_error *); /**< Allocate a bounded datagram
+                                              shell; no packet I/O. */
   c89cbor_cwt_options (*default_cwt_options)(
       c89cbor *); /**< Default token bounds. */
   int (*cwt_init)(c89cbor *, c89cbor_cwt *, const c89cbor_cwt_options *,

@@ -1,0 +1,7 @@
+FROM docker.io/library/python@sha256:0687a6bc9716edc2a6ee0fbfb0f87e7ee358b262b67c9215de91bc9b2d38ba71
+COPY wheels /wheels
+COPY requirements.txt /requirements.txt
+RUN python -m pip install --no-index --no-cache-dir --require-hashes --find-links=/wheels -r /requirements.txt && rm -rf /wheels
+COPY peer.py /peer.py
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+CMD ["python", "/peer.py"]

@@ -128,8 +128,10 @@ c89cbor_cwt_view view;
 /* root, claims, policy, keys, output and error are application supplied. */
 root.cwt_init(&root, &token, NULL, &error);
 token.set_lonejson(&token, &claims, binary_id, binary_id_length, &error);
-token.seal(&token, signing_key, NULL, 0, output, capacity, &written, &error);
-token.verify(&token, output, written, trusted_key, NULL, &policy, &error);
+token.set_seal_keys(&token, signing_key, NULL, 0, &error);
+token.set_verify_keys(&token, trusted_key, NULL, &error);
+token.seal(&token, output, capacity, &written, &error);
+token.verify(&token, output, written, &policy, &error);
 token.view_get(&token, &view);
 /* Use view.claims directly; check every preceding return status. */
 token.cleanup(&token);
@@ -145,27 +147,29 @@ remote-authentication status. Use a separate destination for `seal` output.
 previous diagnostic; verification failure removes all previously published
 claims. `view_get` then returns INPUT with cleared output.
 
-For encryption, pass an array of encryption keys to `seal`. Its count must be
+For encryption, bind an array of encryption keys with `set_seal_keys`. Its count must be
 one for Encrypt0; set `options.cose.encrypt` before constructing the CWT receiver
-for Encrypt recipients. Verification takes one explicit trusted signature/MAC
-key and a separate decryption key. Bounds and callback context are fixed at
+for Encrypt recipients. `set_verify_keys` binds one explicit trusted signature/MAC
+key and a separate decryption key. Both setters snapshot/pin keys; failed
+replacement preserves prior bindings. NULL/empty bindings unbind. Successful
+rebinding clears the view's authentication status and retains its local claims.
+Bounds and callback context are fixed at
 construction; initialize another receiver to change them. A token can be parsed
 from one bounded datagram or framed from TCP before this memory-only API runs.
 For large opaque values use the COSE record operation instead of a CWT token.
 
 The tagged encryption envelope and nested signed/MACed object are bounded
 separately. Claims default to 2 KiB, unique claims to 64, and audience/scp arrays
-to 32 entries each. Construction allocates four libcbor blocks (state, byte
-workspace, claim entries and string-pointer arrays); create adds its shell.
-Sealing/verifying constructs temporary bounded COSE operations and consequently
-uses their allocator/provider contexts. This is not an allocation-free API.
-Serialize CWT calls that share a root or key handle, because these temporary
-operations perform factory/lifecycle work. Separate roots and key handles per
-worker allow independent token processing. Prepared COSE operations retain their
-existing concurrent-step contract with immutable shared keys.
+to 32 entries each. Construction allocates six libcbor blocks (state, claim byte
+workspace, claim entries, string-pointer arrays, COSE workspace and recipients);
+create adds its shell. Seal/verify reuse provider contexts and perform zero
+libcbor allocator calls per token. OpenSSL's internal allocations are separate.
+Bind keys and construct/clean receivers serially. Independent prepared CWT
+receivers can then process tokens concurrently with shared immutable keys and
+root. A receiver's own calls remain serialized. Workspace contains plaintext
+and is cleared after failed verification and during cleanup.
 
-The UDP failure fixture intentionally supplies an application source callback;
-`c89cbor_fd` remains for files/pipes/stream sockets. It is not a UDP adapter.
-Applications using UDP must preserve boundaries and check `MSG_TRUNC` before
-feeding any bytes to a COSE operation. A datagram source must not turn silence
-or a zero-length packet into successful byte-stream EOF.
+Use the [datagram receiver](hardening.md#datagram-integration) for UDP and Unix
+datagrams. It preserves complete packets and rejects truncation before feeding
+COSE. `c89cbor_fd` remains for files/pipes/stream sockets. Neither silence nor
+an empty packet becomes successful byte-stream EOF on the continuous source.

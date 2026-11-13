@@ -81,8 +81,23 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_cwt_seal` | cwt.seal | cwt:seal |
 | `c89cbor_cwt_set_claims` | cwt.set_claims | cwt:set_claims |
 | `c89cbor_cwt_set_lonejson` | cwt.set_lonejson | cwt:set_lonejson |
+| `c89cbor_cwt_set_seal_keys` | cwt.set_seal_keys | cwt:set_seal_keys |
+| `c89cbor_cwt_set_verify_keys` | cwt.set_verify_keys | cwt:set_verify_keys |
 | `c89cbor_cwt_verify` | cwt.verify | cwt:verify |
 | `c89cbor_cwt_view_get` | cwt.view_get | cwt:view_get |
+| `c89cbor_datagram_cleanup` | datagram.cleanup | datagram:cleanup |
+| `c89cbor_datagram_create` | runtime.datagram_create | runtime:datagram_create |
+| `c89cbor_datagram_destroy` | datagram.destroy | datagram:destroy |
+| `c89cbor_datagram_diagnostic` | datagram.diagnostic | datagram:diagnostic |
+| `c89cbor_datagram_init` | runtime.datagram_init | runtime:datagram_init |
+| `c89cbor_datagram_progress` | datagram.progress | datagram:progress |
+| `c89cbor_datagram_receive` | datagram.receive | datagram:receive |
+| `c89cbor_datagram_reset` | datagram.reset | datagram:reset |
+| `c89cbor_datagram_send` | datagram.send | datagram:send |
+| `c89cbor_datagram_set_peer` | datagram.set_peer | datagram:set_peer |
+| `c89cbor_datagram_sink` | datagram.sink | datagram:sink |
+| `c89cbor_datagram_source` | datagram.source | datagram:source |
+| `c89cbor_datagram_stream_source` | datagram.stream_source | datagram:stream_source |
 | `c89cbor_decode_map` | runtime.decode_map | runtime:decode_map |
 | `c89cbor_decode_map_init` | runtime.decode_map_init | runtime:decode_map_init |
 | `c89cbor_decode_map_open` | runtime.decode_map_open | runtime:decode_map_open |
@@ -146,6 +161,7 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_lua_check_cose_options` | binding.check_cose_options | Native binding.check_cose_options |
 | `c89cbor_lua_check_cwt` | binding.check_cwt | Native binding.check_cwt |
 | `c89cbor_lua_check_cwt_options` | binding.check_cwt_options | Native binding.check_cwt_options |
+| `c89cbor_lua_check_datagram` | binding.check_datagram | Native binding.check_datagram |
 | `c89cbor_lua_check_decoder` | binding.check_decoder | Native binding.check_decoder |
 | `c89cbor_lua_check_encoder` | binding.check_encoder | Native binding.check_encoder |
 | `c89cbor_lua_check_fd` | binding.check_fd | Native binding.check_fd |
@@ -172,6 +188,7 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_lua_push_cose_options` | binding.push_cose_options | Native binding.push_cose_options |
 | `c89cbor_lua_push_cwt` | binding.push_cwt | Native binding.push_cwt |
 | `c89cbor_lua_push_cwt_options` | binding.push_cwt_options | Native binding.push_cwt_options |
+| `c89cbor_lua_push_datagram` | binding.push_datagram | Native binding.push_datagram |
 | `c89cbor_lua_push_decoder` | binding.push_decoder | Native binding.push_decoder |
 | `c89cbor_lua_push_encoder` | binding.push_encoder | Native binding.push_encoder |
 | `c89cbor_lua_push_fd` | binding.push_fd | Native binding.push_fd |

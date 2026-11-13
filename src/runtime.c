@@ -150,6 +150,8 @@ int c89cbor_init(c89cbor *runtime, const c89cbor_config *config,
   memset(runtime, 0, sizeof(*runtime));
   c89_cose_runtime_methods(runtime);
   c89_cwt_runtime_methods(runtime);
+  runtime->datagram_init = c89cbor_datagram_init;
+  runtime->datagram_create = c89cbor_datagram_create;
   runtime->cleanup = c89cbor_cleanup;
   runtime->encode_map = c89cbor_encode_map;
   runtime->encode_map_init = c89cbor_encode_map_init;

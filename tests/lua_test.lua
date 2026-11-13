@@ -318,7 +318,7 @@ do
         local token=assert(root[ctor](root,{require_cti=true,cose={encrypt=encrypt}}))
         assert(token:view_get()==c.INPUT)
         assert(token:set_lonejson(native_claims,'\0id')==c.OK)
-        assert(not pcall(function() token:seal(key,nil,-1) end))
+        assert(not pcall(function() token:seal(-1) end))
         local status,view=token:view_get()
         assert(status==c.OK and not view.authenticated and view.cti=='\0id')
         assert(token:set_claims(view.encoded)==c.OK)
@@ -327,16 +327,21 @@ do
         assert(token:claim('absent')==c.INPUT)
         for _,encrypted in ipairs({false,true}) do
           local enc_key=encrypt and wrapping or content
-          local result,wire,err=token:seal(key,encrypted and {enc_key} or nil)
+          local recipients=encrypted and {enc_key} or nil
+          assert(token:set_seal_keys(key,recipients)==c.OK)
+          if recipients then recipients[1]=nil end -- binding owns its snapshot
+          assert(key:close()==c.INVALID) -- borrowed Lua handles cannot close
+          local result,wire,err=token:seal()
           assert(result==c.OK,err.message)
           assert(wire:length()>0 and wire:string():sub(1,2)=='\xd8\x3d')
-          assert(token:seal(key,nil,1)==c.LIMIT)
-          assert(token:verify(wire,key,encrypted and enc_key or nil,native_policy)==c.OK)
+          assert(token:seal(1)==c.LIMIT)
+          assert(token:set_verify_keys(key,encrypted and enc_key or nil)==c.OK)
+          assert(token:verify(wire,native_policy)==c.OK)
           local why,verified=token:view_get()
           assert(why==c.OK and verified.authenticated and verified.claims.iss=='issuer')
-          assert(token:verify(wire,key,encrypted and enc_key or nil,policy)==c.OK)
+          assert(token:verify(wire,policy)==c.OK)
           policy.now=1000
-          assert(token:verify(wire,key,encrypted and enc_key or nil,policy)==c.AUTH)
+          assert(token:verify(wire,policy)==c.AUTH)
           assert(token:view_get()==c.INPUT)
           policy.now=100
           assert(token:set_lonejson(native_claims,'\0id')==c.OK)
@@ -361,3 +366,34 @@ do
   assert(op:step() >= c.OK)
 end
 collectgarbage('collect')
+
+-- Public datagram constructors, ownership and native endpoints.
+do
+  local root=c.init()
+  for _,ctor in ipairs({'datagram_init','datagram_create'}) do
+    local a=assert(root[ctor](root,datagram_fd_a,32))
+    local b=assert(c[ctor](root,datagram_fd_b,32))
+    assert(b:receive()==c.INPUT)
+    local rc,source=b:source()
+    assert(rc==c.OK)
+    local status,continuous=b:stream_source()
+    assert(status==c.OK)
+    local ok,sink=a:sink()
+    assert(ok==c.OK)
+    assert(a:send('\x81\x01')==c.OK)
+    local got,message=b:receive()
+    assert(got==c.OK and message.bytes:string()=='\x81\x01')
+    assert(b:set_peer(message.peer)==c.OK)
+    assert(a:send('\x00\x00')==c.MALFORMED)
+    assert(b:reset()==c.OK)
+    local _,counts=b:progress()
+    assert(counts.received==1 and counts.input==2)
+    local diagnostic,detail=b:diagnostic()
+    assert(diagnostic==c.OK and detail.status==c.OK)
+    assert(source:close()==c.OK and continuous:close()==c.OK and sink:close()==c.OK)
+    assert(message.bytes:close()==c.OK)
+    if message.peer then assert(message.peer:close()==c.OK) end
+    assert(a:close()==c.OK and b:close()==c.OK)
+  end
+  assert(root:close()==c.OK)
+end

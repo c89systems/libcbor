@@ -38,6 +38,9 @@ targets on this Linux host; Darwin native execution remains a separately declare
 runner requirement and must not be represented as completed here.
 
 The Darwin deployment baseline is macOS 15.
+`make prerelease-hardening` separately runs native sanitizers, memory checks,
+the rootless reference peer and resumable longer fuzz campaigns. It is not part
+of `make release`; see [hardening](hardening.md).
 `make package-lua-verify` verifies the source rock's exact nested source and
 rockspec, rebuilds both entrypoints against the extracted native SDK and runs
 Lua API/interop tests. `make package-checksums` verifies the complete inventory.

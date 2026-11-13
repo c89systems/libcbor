@@ -195,25 +195,29 @@ outside the libcbor allocator counters. Internal CBOR, claim and crypto copies
 are not inferred from endpoint counters. COSE object runs use 1024 payload
 bytes; CWT runs use the actual small issuer/audience/expiration map. Throughput
 uses the actual wire bytes per token. Setup includes key/token receiver creation;
-per-token measurements include temporary COSE operation allocation and cleanup.
+per-token measurements use prepared key bindings and reusable bounded workspaces.
+The configured libcbor allocator records zero calls per native CWT seal/verify;
+backend allocations and Lua output userdata remain separate. Binding replacement
+and construction occur outside the timed interval.
 
 The common COSE workspace now accommodates a bounded signature input:
 `4 * record_bytes + 8 * header_bytes + 592` bytes per operation, plus state and
 recipient storage. Historical allocation peaks above describe the previous
 encryption-only workspace; current JSONL counters are authoritative.
 
-A subsequent x86_64 development run with OpenSSL 3.6.5 and 1000 operations per
-round produced these medians of five measured rounds for the small CWT map:
+The prepared-receiver x86_64 run with OpenSSL 3.6.5 and 1000 operations per
+round produced these medians of five measured rounds for the small CWT map.
+Every static/shared/Lua CWT interval recorded zero libcbor allocator calls:
 
 | Profile | Shared C seal µs | Shared C verify µs | Lua seal µs | Lua verify µs |
 | --- | ---: | ---: | ---: | ---: |
-| Ed25519 | 24.85 | 64.56 | 27.84 | 66.60 |
-| P-256 | 19.15 | 45.81 | 20.64 | 48.79 |
-| HMAC-SHA-256 | 3.52 | 6.03 | 5.95 | 6.00 |
+| Ed25519 | 24.18 | 62.58 | 27.14 | 63.73 |
+| P-256 | 17.43 | 43.32 | 19.05 | 43.85 |
+| HMAC-SHA-256 | 2.65 | 3.98 | 5.04 | 5.04 |
 
-Shared C bounded-record sign/verify roundtrips measured 21.8 MiB/s for Ed25519,
+Earlier shared C bounded-record sign/verify roundtrips measured 21.8 MiB/s for Ed25519,
 32.0 MiB/s for P-256 and 247.8 MiB/s for HMAC, counting authenticated wire bytes.
-These are initial measurements on a shared host, not comparative speed claims.
+Those historical stream figures are initial measurements on a shared host, not comparative speed claims.
 The same run includes static C, native Lua spans, every encryption profile and
 Unix/TCP/UDP/pipe transport measurements under `build/bench/`. Timing and allocator
 context are recorded alongside the JSONL; rerun before drawing optimization or

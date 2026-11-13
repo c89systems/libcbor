@@ -1,4 +1,5 @@
 #include <sys/uio.h>
+#include "cwt_helpers.h"
 typedef struct cwt_admission {
   c89cbor_cwt *receiver;
   size_t calls;
@@ -77,8 +78,8 @@ static void cwt_transport(fixture *f, c89cbor_cwt *receiver,
       }
     assert(received == f->wire.length &&
            memcmp(f->wire.bytes, f->output.bytes, received) == 0);
-    assert(receiver->verify(receiver, f->output.bytes, received, verification,
-                            decryption, policy, &error) == 0);
+    assert(test_cwt_verify(receiver, f->output.bytes, received, verification,
+                           decryption, policy, &error) == 0);
     assert(receiver->view_get(receiver, &view) == 0 && view.authenticated);
     assert(close(pair[0]) == 0 && close(pair[1]) == 0);
   }
@@ -182,12 +183,12 @@ static void cwt_tokens(fixture *f) {
                         : encryption == 2 ? &f->wrap
                                           : &f->public_key;
         recipients[1] = &f->wrap;
-        assert(token->seal(token, &signing, encryption ? recipients : NULL,
-                           encryption == 3 ? 2u
-                           : encryption    ? 1u
-                                           : 0u,
-                           f->wire.bytes, sizeof(f->wire.bytes), &written,
-                           &error) == 0);
+        assert(test_cwt_seal(token, &signing, encryption ? recipients : NULL,
+                             encryption == 3 ? 2u
+                             : encryption    ? 1u
+                                             : 0u,
+                             f->wire.bytes, sizeof(f->wire.bytes), &written,
+                             &error) == 0);
         f->wire.length = written;
         assert(written > view.encoded_length && f->wire.bytes[0] == 0xd8 &&
                f->wire.bytes[1] == 61u);
@@ -198,12 +199,12 @@ static void cwt_tokens(fixture *f) {
                                         : NULL,
                       &policy);
         calls = admission.calls;
-        assert(token->verify(token, f->wire.bytes, written, &verifying,
-                             encryption == 1   ? &f->content
-                             : encryption == 2 ? &f->wrap
-                             : encryption == 3 ? &f->private_key
-                                               : NULL,
-                             &policy, &error) == 0);
+        assert(test_cwt_verify(token, f->wire.bytes, written, &verifying,
+                               encryption == 1   ? &f->content
+                               : encryption == 2 ? &f->wrap
+                               : encryption == 3 ? &f->private_key
+                                                 : NULL,
+                               &policy, &error) == 0);
         assert(admission.calls == calls + 1u &&
                token->view_get(token, &view) == 0);
         assert(view.authenticated && view.algorithm == (algorithm == 0   ? -19
@@ -218,33 +219,33 @@ static void cwt_tokens(fixture *f) {
                value_length == 7u);
         assert(memcmp(value, "\x66issuer", 7u) == 0);
         admission.reject = 1;
-        assert(token->verify(token, f->wire.bytes, written, &verifying,
-                             encryption == 1   ? &f->content
-                             : encryption == 2 ? &f->wrap
-                             : encryption == 3 ? &f->private_key
-                                               : NULL,
-                             &policy, &error) == C89CBOR_AUTH);
+        assert(test_cwt_verify(token, f->wire.bytes, written, &verifying,
+                               encryption == 1   ? &f->content
+                               : encryption == 2 ? &f->wrap
+                               : encryption == 3 ? &f->private_key
+                                                 : NULL,
+                               &policy, &error) == C89CBOR_AUTH);
         assert(token->view_get(token, &view) == C89CBOR_INPUT &&
                view.claims == NULL);
         admission.reject = 0;
         policy.now = 101;
         calls = admission.calls;
-        assert(token->verify(token, f->wire.bytes, written, &verifying,
-                             encryption == 1   ? &f->content
-                             : encryption == 2 ? &f->wrap
-                             : encryption == 3 ? &f->private_key
-                                               : NULL,
-                             &policy, &error) == C89CBOR_AUTH);
+        assert(test_cwt_verify(token, f->wire.bytes, written, &verifying,
+                               encryption == 1   ? &f->content
+                               : encryption == 2 ? &f->wrap
+                               : encryption == 3 ? &f->private_key
+                                                 : NULL,
+                               &policy, &error) == C89CBOR_AUTH);
         assert(error.cause != 0 && admission.calls == calls &&
                token->view_get(token, &view) == C89CBOR_INPUT);
         policy.now = 100;
         cwt_corrupt_payload(&f->wire);
-        assert(token->verify(token, f->wire.bytes, written, &verifying,
-                             encryption == 1   ? &f->content
-                             : encryption == 2 ? &f->wrap
-                             : encryption == 3 ? &f->private_key
-                                               : NULL,
-                             &policy, &error) == C89CBOR_AUTH);
+        assert(test_cwt_verify(token, f->wire.bytes, written, &verifying,
+                               encryption == 1   ? &f->content
+                               : encryption == 2 ? &f->wrap
+                               : encryption == 3 ? &f->private_key
+                                                 : NULL,
+                               &policy, &error) == C89CBOR_AUTH);
         assert(admission.calls == calls &&
                token->view_get(token, &view) == C89CBOR_INPUT);
         assert(f->runtime.json == NULL);
@@ -339,22 +340,21 @@ static void cwt_policy_edges(fixture *f) {
   claims.scp.items = scope_items;
   claims.scp.count = 1u;
   assert(sender.set_lonejson(&sender, &claims, NULL, 0, &error) == 0);
-  assert(sender.seal(&sender, &key, NULL, 0, f->wire.bytes,
-                     sizeof(f->wire.bytes), &length, &error) == 0);
-  assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
+  assert(test_cwt_seal(&sender, &key, NULL, 0, f->wire.bytes,
+                       sizeof(f->wire.bytes), &length, &error) == 0);
+  assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
                          &error) == 0);
-  assert(required_encryption.verify(&required_encryption, f->wire.bytes, length,
-                                    &key, &f->content, &policy,
-                                    &error) == C89CBOR_AUTH);
+  assert(test_cwt_verify(&required_encryption, f->wire.bytes, length, &key,
+                         &f->content, &policy, &error) == C89CBOR_AUTH);
   /* Omit the optional CWT tag, then both tags: attached untagged COSE is valid.
    */
-  assert(receiver.verify(&receiver, f->wire.bytes + 2u, length - 2u, &key, NULL,
+  assert(test_cwt_verify(&receiver, f->wire.bytes + 2u, length - 2u, &key, NULL,
                          &policy, &error) == 0);
-  assert(receiver.verify(&receiver, f->wire.bytes + 3u, length - 3u, &key, NULL,
+  assert(test_cwt_verify(&receiver, f->wire.bytes + 3u, length - 3u, &key, NULL,
                          &policy, &error) == 0);
   memmove(f->input.bytes, f->wire.bytes, length);
   memmove(f->input.bytes + 2u, f->wire.bytes + 3u, length - 3u);
-  assert(receiver.verify(&receiver, f->input.bytes, length - 1u, &key, NULL,
+  assert(test_cwt_verify(&receiver, f->input.bytes, length - 1u, &key, NULL,
                          &policy, &error) == C89CBOR_MALFORMED);
   for (which = 0; which < 10; ++which) {
     lonejson_jwt_claim_policy wrong = policy;
@@ -391,7 +391,7 @@ static void cwt_policy_edges(fixture *f) {
       wrong.allowed_clock_skew = -1;
       break;
     }
-    assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL, &wrong,
+    assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL, &wrong,
                            &error) == C89CBOR_AUTH);
     assert(receiver.view_get(&receiver, &view) == C89CBOR_INPUT &&
            view.encoded == NULL);
@@ -399,13 +399,13 @@ static void cwt_policy_edges(fixture *f) {
   }
   policy.allowed_clock_skew = 1;
   policy.now = 99;
-  assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
+  assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
                          &error) == 0);
   policy.now = 101;
-  assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
+  assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
                          &error) == 0);
   policy.now = 102;
-  assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
+  assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL, &policy,
                          &error) == C89CBOR_AUTH);
   /* Require a nonempty binary ID independently of lonejson's string claims. */
   assert(required_encryption.cleanup(&required_encryption) == 0);
@@ -414,15 +414,13 @@ static void cwt_policy_edges(fixture *f) {
   assert(f->runtime.cwt_init(&f->runtime, &required_encryption, &options,
                              &error) == 0);
   policy.now = 100;
-  assert(required_encryption.verify(&required_encryption, f->wire.bytes, length,
-                                    &key, NULL, &policy,
-                                    &error) == C89CBOR_AUTH);
+  assert(test_cwt_verify(&required_encryption, f->wire.bytes, length, &key,
+                         NULL, &policy, &error) == C89CBOR_AUTH);
   assert(sender.set_lonejson(&sender, &claims, "", 0, &error) == 0);
-  assert(sender.seal(&sender, &key, NULL, 0, f->wire.bytes,
-                     sizeof(f->wire.bytes), &length, &error) == 0);
-  assert(required_encryption.verify(&required_encryption, f->wire.bytes, length,
-                                    &key, NULL, &policy,
-                                    &error) == C89CBOR_AUTH);
+  assert(test_cwt_seal(&sender, &key, NULL, 0, f->wire.bytes,
+                       sizeof(f->wire.bytes), &length, &error) == 0);
+  assert(test_cwt_verify(&required_encryption, f->wire.bytes, length, &key,
+                         NULL, &policy, &error) == C89CBOR_AUTH);
   /* Fractional dates retain their bits and compare exactly to integer clocks.
    */
   {
@@ -431,36 +429,37 @@ static void cwt_policy_edges(fixture *f) {
         's',  'e', 'r',  'v', 'i', 'c', 'e', 4,   0xf9, 0x56, 0x48};
     assert(sender.set_claims(&sender, fractional, sizeof(fractional), &error) ==
            0);
-    assert(sender.seal(&sender, &key, NULL, 0, f->wire.bytes,
-                       sizeof(f->wire.bytes), &length, &error) == 0);
+    assert(test_cwt_seal(&sender, &key, NULL, 0, f->wire.bytes,
+                         sizeof(f->wire.bytes), &length, &error) == 0);
     policy.expected_nonce = policy.expected_azp = NULL;
     policy.required_claim_count = policy.required_scope_count = 0;
     policy.allowed_clock_skew = 0;
-    assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL,
+    assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL,
                            &policy, &error) == 0);
     assert(receiver.view_get(&receiver, &view) == 0 && view.claims->exp == 101);
     assert(view.encoded_length == sizeof(fractional) &&
            memcmp(view.encoded, fractional, sizeof(fractional)) == 0);
     policy.now = 101;
-    assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL,
+    assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL,
                            &policy, &error) == C89CBOR_AUTH);
     memcpy(f->input.bytes, fractional, sizeof(fractional));
     f->input.bytes[0] = 0xa4;
     memcpy(f->input.bytes + sizeof(fractional), "\x05\xf9\x56\x48", 4u);
     assert(sender.set_claims(&sender, f->input.bytes, sizeof(fractional) + 4u,
                              &error) == 0);
-    assert(sender.seal(&sender, &key, NULL, 0, f->wire.bytes,
-                       sizeof(f->wire.bytes), &length, &error) == 0);
+    assert(test_cwt_seal(&sender, &key, NULL, 0, f->wire.bytes,
+                         sizeof(f->wire.bytes), &length, &error) == 0);
     policy.now = 100;
-    assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL,
+    assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL,
                            &policy, &error) == C89CBOR_AUTH);
     policy.allowed_clock_skew = 1;
-    assert(receiver.verify(&receiver, f->wire.bytes, length, &key, NULL,
+    assert(test_cwt_verify(&receiver, f->wire.bytes, length, &key, NULL,
                            &policy, &error) == 0);
   }
-  assert(key.cleanup(&key) == 0);
+  assert(key.cleanup(&key) == C89CBOR_BUSY);
   assert(sender.cleanup(&sender) == 0 && receiver.cleanup(&receiver) == 0 &&
          required_encryption.cleanup(&required_encryption) == 0);
+  assert(key.cleanup(&key) == 0);
 }
 static void cwt_allocations(void) {
   cose_allocator_probe probe;
@@ -476,11 +475,11 @@ static void cwt_allocations(void) {
   config.allocator.alloc = cose_probe_alloc;
   config.allocator.free = cose_probe_free;
   assert(c89cbor_init(&runtime, &config, &error) == 0);
-  for (at = 1; at <= 6u; ++at) {
+  for (at = 1; at <= 8u; ++at) {
     probe.calls = 0;
     probe.fail_at = at;
     token = NULL;
-    if (at <= 5u) {
+    if (at <= 7u) {
       assert(runtime.cwt_create(&runtime, NULL, &token, &error) ==
              C89CBOR_NOMEM);
       assert(token == NULL && probe.live == 0 &&

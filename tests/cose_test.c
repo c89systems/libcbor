@@ -273,6 +273,7 @@ static void tamper(fixture *f) {
 }
 #include "cose_stream.inc.h"
 #include "cose_reference.inc.h"
+#include "wg_vectors.inc.h"
 #include "cose_security.inc.h"
 #include "cose_context.inc.h"
 #include "cose_lifetime.inc.h"
@@ -290,6 +291,7 @@ static void *run(void *unused) {
   prepare(f);
   vector(f);
   cose_reference(f);
+  cose_wg_vectors(f);
   cose_context_reference(f);
   for (encrypt = 0; encrypt < 2; ++encrypt)
     for (stream = 0; stream < 2; ++stream)

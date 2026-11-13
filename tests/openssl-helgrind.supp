@@ -1,0 +1,15 @@
+# OpenSSL 3.6.5: max_number uses tsan_load/tsan_store (relaxed atomics),
+# compiling to ordinary x86 loads/stores that Helgrind cannot identify as C
+# atomics. Limit to this read and the observed signature-fetch call chain.
+# https://github.com/openssl/openssl/blob/openssl-3.6.5/crypto/core_namemap.c
+# https://github.com/openssl/openssl/blob/openssl-3.6.5/include/internal/tsan_assist.h
+{
+   openssl-3.6.5-namemap-relaxed-atomic-signature-fetch
+   Helgrind:Race
+   fun:ossl_namemap_empty
+   fun:ossl_namemap_stored
+   fun:inner_evp_generic_fetch*
+   fun:evp_generic_fetch
+   fun:EVP_SIGNATURE_fetch
+   ...
+}

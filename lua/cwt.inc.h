@@ -109,29 +109,85 @@ static int cwt_set_lonejson(lua_State *L) {
   diagnostic_table(L, &error);
   return 2;
 }
+/* Bind keys once. A private snapshot keeps the actual owners alive even when
+ * callers subsequently mutate their recipient table. Replacement is atomic. */
+static int cwt_bind_keys(lua_State *L, int sealing) {
+  handle *h = checked(L, 1, CWT), *snapshot, *owner;
+  c89cbor_cose_key *keys[33];
+  c89cbor_error error;
+  size_t count = 0, recipients = 0, i;
+  int status, snapshot_index, pins;
+  lua_settop(L, 3);
+  if (!lua_isnil(L, 2)) {
+    keys[count++] = checked(L, 2, COSE_KEY)->ptr;
+  }
+  if (sealing && !lua_isnil(L, 3)) {
+    luaL_checktype(L, 3, LUA_TTABLE);
+    recipients = lua_rawlen(L, 3);
+    if (count == 0 || recipients == 0 || recipients > 32u)
+      return luaL_argerror(L, 3,
+                           "expected signing key and one to 32 recipients");
+    for (i = 0; i < recipients; ++i) {
+      lua_rawgeti(L, 3, (lua_Integer)i + 1);
+      keys[count++] = checked(L, -1, COSE_KEY)->ptr;
+      lua_pop(L, 1);
+    }
+  } else if (!sealing && !lua_isnil(L, 3)) {
+    if (count == 0)
+      return luaL_argerror(L, 2, "verification key is required");
+    keys[count++] = checked(L, 3, COSE_KEY)->ptr;
+  }
+  if (h->active)
+    return result(L, C89CBOR_BUSY);
+  snapshot = new_handle(L, KEY_PINS, (count + 1u) * sizeof(handle *));
+  snapshot->gc_pending = 1;
+  snapshot->key_parents = snapshot->ptr;
+  snapshot_index = lua_gettop(L);
+  lua_newtable(L);
+  pins = lua_gettop(L);
+  for (i = 0; i < count; ++i) {
+    if (i == 0)
+      lua_pushvalue(L, 2);
+    else if (sealing)
+      lua_rawgeti(L, 3, (lua_Integer)i);
+    else
+      lua_pushvalue(L, 3);
+    owner = checked(L, -1, COSE_KEY);
+    ++owner->borrowers;
+    snapshot->key_parents[snapshot->key_parent_count++] = owner;
+    lua_rawseti(L, pins, (lua_Integer)i + 1);
+  }
+  lua_setiuservalue(L, snapshot_index, 1);
+  h->active = 1;
+  status = sealing ? c89cbor_cwt_set_seal_keys(h->ptr, count ? keys[0] : NULL,
+                                               recipients ? keys + 1u : NULL,
+                                               recipients, &error)
+                   : c89cbor_cwt_set_verify_keys(h->ptr, count ? keys[0] : NULL,
+                                                 count > 1u ? keys[1] : NULL,
+                                                 &error);
+  h->active = 0;
+  if (status == 0)
+    cose_replace_pin(L, h, snapshot_index, sealing ? 3 : 4);
+  else
+    (void)release_handle(snapshot);
+  result(L, status);
+  diagnostic_table(L, &error);
+  return 2;
+}
+static int cwt_set_seal_keys(lua_State *L) { return cwt_bind_keys(L, 1); }
+static int cwt_set_verify_keys(lua_State *L) { return cwt_bind_keys(L, 0); }
+/* Return an owned output span. Converting it to a Lua string is explicit. */
 static int cwt_seal(lua_State *L) {
   handle *h = checked(L, 1, CWT);
   handle *wire;
   span *output;
-  c89cbor_cose_key *signing = checked(L, 2, COSE_KEY)->ptr, *keys[32];
   c89cbor_error error;
   unsigned char *bytes;
-  size_t count = 0, i, written, capacity;
+  size_t written, capacity;
   int status, wire_index;
-  if (!lua_isnoneornil(L, 3)) {
-    luaL_checktype(L, 3, LUA_TTABLE);
-    count = lua_rawlen(L, 3);
-    if (count == 0 || count > 32u)
-      return luaL_argerror(L, 3, "expected one to 32 encryption keys");
-    for (i = 0; i < count; ++i) {
-      lua_rawgeti(L, 3, (lua_Integer)i + 1);
-      keys[i] = checked(L, -1, COSE_KEY)->ptr;
-      lua_pop(L, 1);
-    }
-  }
-  capacity = size_arg(L, 4, h->count ? h->count : 6162u);
+  capacity = size_arg(L, 2, h->count ? h->count : 6162u);
   if (capacity > (size_t)-1 - sizeof(handle) - sizeof(span))
-    return luaL_argerror(L, 4, "output capacity is too large");
+    return luaL_argerror(L, 2, "output capacity is too large");
   if (h->active)
     return result(L, C89CBOR_BUSY);
   wire = new_handle(L, SPAN, sizeof(*output) + capacity);
@@ -140,8 +196,7 @@ static int cwt_seal(lua_State *L) {
   bytes = (unsigned char *)(output + 1);
   output->bytes = bytes;
   h->active = 1;
-  status = c89cbor_cwt_seal(h->ptr, signing, count ? keys : NULL, count, bytes,
-                            capacity, &written, &error);
+  status = c89cbor_cwt_seal(h->ptr, bytes, capacity, &written, &error);
   h->active = 0;
   result(L, status);
   if (status == 0) {
@@ -264,17 +319,13 @@ static int cwt_verify(lua_State *L) {
   handle *h = checked(L, 1, CWT);
   size_t length;
   const void *bytes = input(L, 2, &length);
-  c89cbor_cose_key *verification = checked(L, 3, COSE_KEY)->ptr;
-  c89cbor_cose_key *decryption =
-      lua_isnoneornil(L, 4) ? NULL : checked(L, 4, COSE_KEY)->ptr;
-  lonejson_jwt_claim_policy *policy = cwt_policy(L, 5);
+  lonejson_jwt_claim_policy *policy = cwt_policy(L, 3);
   c89cbor_error error;
   int status;
   if (h->active)
     return result(L, C89CBOR_BUSY);
   h->active = 1;
-  status = c89cbor_cwt_verify(h->ptr, bytes, length, verification, decryption,
-                              policy, &error);
+  status = c89cbor_cwt_verify(h->ptr, bytes, length, policy, &error);
   h->active = 0;
   result(L, status);
   diagnostic_table(L, &error);

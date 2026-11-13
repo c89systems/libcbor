@@ -21,6 +21,8 @@ typedef struct c89_cose_key_state {
 } c89_cose_key_state;
 int c89_cose_key_valid(const c89cbor_cose_key *key);
 int c89_cose_key_reserve(c89cbor_cose_key *key);
+int c89_cose_keys_hold(c89cbor_cose_key *const *, size_t, c89cbor_cose_key **);
+void c89_cose_keys_unhold(c89cbor_cose_key *const *, size_t);
 EVP_PKEY *c89_cose_p256_import(const void *, int);
 int c89_cose_auth_algorithm(c89cbor_cose_key_kind);
 void c89_cose_runtime_methods(c89cbor *runtime);
@@ -94,7 +96,13 @@ typedef struct c89_cose_state {
   c89cbor_encoder encoder;
   c89cbor_decoder framer;
   EVP_CIPHER_CTX *cipher_context;
+  EVP_MD_CTX *digest_context;
+  EVP_MAC *mac;
+  EVP_MAC_CTX *mac_context;
 } c89_cose_state;
+int c89_cose_workspace_init(c89_cose_state *);
+void c89_cose_workspace_cleanup(c89_cose_state *);
+void c89_cose_workspace_clear(c89_cose_state *);
 int c89_cose_cursor_init(c89_cose_cursor *, const void *, size_t);
 int c89_cose_next(c89_cose_cursor *);
 int c89_cose_skip(c89_cose_cursor *);

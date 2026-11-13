@@ -2,48 +2,56 @@
 #include <string.h>
 #include <limits.h>
 
-typedef struct memory {
-  const unsigned char *input;
-  unsigned char *output;
-  size_t length, offset, capacity;
-} memory;
-static int read_memory(void *context, void *bytes, size_t capacity,
-                       size_t *count) {
-  memory *buffer = context;
-  size_t take = buffer->length - buffer->offset;
-  if (take > capacity)
-    take = capacity;
-  if (take != 0)
-    memcpy(bytes, buffer->input + buffer->offset, take);
-  buffer->offset += take;
-  *count = take;
-  return C89CBOR_OK;
+/* These bounded memory operations reuse a private COSE engine. Key ownership
+ * changes only during setup, never in the concurrent token processing path. */
+static int crypt(c89_cwt_state *state, int seal, int auth,
+                 c89cbor_cose_key *const *keys, size_t count, const void *input,
+                 size_t length, void *output, size_t capacity, size_t bound,
+                 size_t *written) {
+  c89_cose_state *engine = &state->crypto;
+  int status;
+  *written = 0;
+  /* Constructor and the preceding call already cleared scratch and counters.
+   * Keep the single post-operation wipe on every success/failure path. */
+  engine->options = state->options.cose;
+  engine->options.record_bytes = bound;
+  if (auth)
+    engine->options.nonce = NULL;
+  engine->seal = seal;
+  engine->auth = auth;
+  engine->encrypt = auth ? 0 : state->options.cose.encrypt;
+  engine->seen_family = 0;
+  engine->key_count = count;
+  memcpy(engine->keys, keys, count * sizeof(*keys));
+  if (seal) {
+    memcpy(engine->plain, input, length);
+    engine->plain_length = length;
+  } else {
+    memcpy(engine->wire, input, length);
+    engine->wire_length = length;
+  }
+  status = auth   ? c89_cose_auth_record(engine)
+           : seal ? c89_cose_seal_record(engine)
+                  : c89_cose_open_record(engine);
+  if (status == 0 && engine->output_length > capacity)
+    status = C89CBOR_LIMIT;
+  if (status == 0) {
+    memcpy(output, engine->output, engine->output_length);
+    *written = engine->output_length;
+  }
+  c89_cose_workspace_clear(engine);
+  return status;
 }
-static int write_memory(void *context, const void *bytes, size_t length,
-                        size_t *count) {
-  memory *buffer = context;
-  *count = 0;
-  if (length > buffer->capacity - buffer->length)
-    return C89CBOR_LIMIT;
-  if (length != 0)
-    memcpy(buffer->output + buffer->length, bytes, length);
-  buffer->length += length;
-  *count = length;
+static int auth_key(c89cbor_cose_key *key, int seal) {
+  c89cbor_cose_key_kind kind;
+  if (!c89_cose_key_valid(key))
+    return C89CBOR_INVALID;
+  kind = ((c89_cose_key_state *)key->state)->info.kind;
+  if (c89_cose_auth_algorithm(kind) == 0 ||
+      (seal && (kind == C89CBOR_COSE_ED25519_PUBLIC ||
+                kind == C89CBOR_COSE_P256_PUBLIC)))
+    return C89CBOR_INVALID;
   return C89CBOR_OK;
-}
-static void endpoints(memory *input, memory *output, const void *bytes,
-                      size_t length, void *out, size_t capacity,
-                      c89cbor_source *source, c89cbor_sink *sink) {
-  memset(input, 0, sizeof(*input));
-  memset(output, 0, sizeof(*output));
-  input->input = bytes;
-  input->length = length;
-  output->output = out;
-  output->capacity = capacity;
-  source->context = input;
-  source->read = read_memory;
-  sink->context = output;
-  sink->write = write_memory;
 }
 c89cbor_cwt_options c89cbor_default_cwt_options(void) {
   c89cbor_cwt_options options;
@@ -86,6 +94,118 @@ static int finish(c89cbor_cwt *receiver, int status, c89cbor_error *error) {
     *error = receiver->lifetime.error;
   receiver->lifetime.busy = 0;
   return status;
+}
+static void untrust(c89_cwt_state *state) {
+  state->view.authenticated = 0;
+  state->view.algorithm = 0;
+}
+int c89cbor_cwt_set_seal_keys(c89cbor_cwt *receiver, c89cbor_cose_key *signing,
+                              c89cbor_cose_key *const *recipients, size_t count,
+                              c89cbor_error *error) {
+  c89cbor_cose_key *held[C89_COSE_MAX_RECIPIENTS + 1u];
+  c89_cwt_state *state;
+  c89cbor_cose_key_kind kind;
+  size_t i, total = 0;
+  int status = begin(receiver, error);
+  if (status != 0)
+    return status;
+  state = receiver->state;
+  if ((count != 0 && (recipients == NULL || signing == NULL)) ||
+      (count == 0 && recipients != NULL))
+    status = C89CBOR_INVALID;
+  else if (count > state->options.cose.recipients)
+    status = C89CBOR_LIMIT;
+  else if (signing != NULL)
+    status = auth_key(signing, 1);
+  if (status == 0 && !state->options.cose.encrypt && count > 1u)
+    status = C89CBOR_INVALID;
+  for (i = 0; status == 0 && i < count; ++i) {
+    if (!c89_cose_key_valid(recipients[i])) {
+      status = C89CBOR_INVALID;
+      break;
+    }
+    kind = ((c89_cose_key_state *)recipients[i]->state)->info.kind;
+    if ((!state->options.cose.encrypt && kind != C89CBOR_COSE_A256GCM) ||
+        (state->options.cose.encrypt && kind != C89CBOR_COSE_A256KW &&
+         kind != C89CBOR_COSE_X25519_PUBLIC))
+      status = C89CBOR_INVALID;
+  }
+  if (status == 0 && signing != NULL) {
+    status = c89_cose_keys_hold(&signing, 1u, held);
+    if (status == 0)
+      total = 1u;
+    if (status == 0 && count != 0) {
+      status = c89_cose_keys_hold(recipients, count, held + 1u);
+      if (status == 0)
+        total += count;
+    }
+  }
+  if (status == 0) {
+    EVP_MAC_CTX *mac = EVP_MAC_CTX_new(state->crypto.mac);
+    if (mac == NULL)
+      status = C89CBOR_NOMEM;
+    else {
+      EVP_MAC_CTX_free(state->crypto.mac_context);
+      state->crypto.mac_context = mac;
+      c89_cose_keys_unhold(state->seal_keys, state->seal_count);
+      memcpy(state->seal_keys, held, total * sizeof(*held));
+      state->seal_count = total;
+      total = 0;
+      untrust(state);
+    }
+  }
+  c89_cose_keys_unhold(held, total);
+  return finish(receiver, status, error);
+}
+int c89cbor_cwt_set_verify_keys(c89cbor_cwt *receiver,
+                                c89cbor_cose_key *verification,
+                                c89cbor_cose_key *decryption,
+                                c89cbor_error *error) {
+  c89cbor_cose_key *keys[2], *held[2];
+  c89_cwt_state *state;
+  c89cbor_cose_key_kind kind;
+  size_t count = verification == NULL ? 0u : decryption == NULL ? 1u : 2u;
+  int status = begin(receiver, error);
+  if (status != 0)
+    return status;
+  state = receiver->state;
+  if (verification != NULL)
+    status = auth_key(verification, 0);
+  else if (decryption != NULL)
+    status = C89CBOR_INVALID;
+  if (status == 0 && decryption != NULL) {
+    if (!c89_cose_key_valid(decryption))
+      status = C89CBOR_INVALID;
+    else {
+      kind = ((c89_cose_key_state *)decryption->state)->info.kind;
+      if (kind != C89CBOR_COSE_A256GCM && kind != C89CBOR_COSE_A256KW &&
+          kind != C89CBOR_COSE_X25519_PRIVATE)
+        status = C89CBOR_INVALID;
+    }
+  }
+  keys[0] = verification;
+  keys[1] = decryption;
+  if (status == 0 && count != 0)
+    status = c89_cose_keys_hold(keys, count, held);
+  else
+    count = 0;
+  if (status == 0) {
+    EVP_MAC_CTX *mac = EVP_MAC_CTX_new(state->crypto.mac);
+    if (mac == NULL)
+      status = C89CBOR_NOMEM;
+    else {
+      EVP_MAC_CTX_free(state->crypto.mac_context);
+      state->crypto.mac_context = mac;
+      c89_cose_keys_unhold(state->verify_keys, state->verify_count);
+      memcpy(state->verify_keys, held, count * sizeof(*held));
+      state->verify_count = count;
+      count = 0;
+      untrust(state);
+    }
+  } else
+    count = 0;
+  c89_cose_keys_unhold(held, count);
+  return finish(receiver, status, error);
 }
 int c89cbor_cwt_view_get(const c89cbor_cwt *receiver, c89cbor_cwt_view *view) {
   const c89_cwt_state *state;
@@ -139,16 +259,11 @@ int c89cbor_cwt_set_lonejson(c89cbor_cwt *receiver,
     c89_cwt_clear(state);
   return finish(receiver, status, error);
 }
-int c89cbor_cwt_seal(c89cbor_cwt *receiver, c89cbor_cose_key *signing,
-                     c89cbor_cose_key *const *recipients, size_t count,
-                     void *bytes, size_t capacity, size_t *written,
-                     c89cbor_error *error) {
+int c89cbor_cwt_seal(c89cbor_cwt *receiver, void *bytes, size_t capacity,
+                     size_t *written, c89cbor_error *error) {
   c89_cwt_state *state;
-  c89cbor_cose_options options;
   c89cbor_cose_key_info info;
-  c89cbor_source source;
-  c89cbor_sink sink;
-  memory input, output;
+  c89cbor_cose_key *signing;
   const unsigned char *token;
   size_t length;
   int status;
@@ -159,38 +274,22 @@ int c89cbor_cwt_seal(c89cbor_cwt *receiver, c89cbor_cose_key *signing,
     return status;
   state = receiver->state;
   if (written == NULL || bytes == NULL || state->view.encoded == NULL ||
-      !c89_cose_key_valid(signing) || (recipients == NULL && count != 0) ||
-      (recipients != NULL && count == 0))
+      state->seal_count == 0)
     return finish(receiver, C89CBOR_INVALID, error);
+  signing = state->seal_keys[0];
   status = signing->metadata(signing, &info);
   if (status != 0)
     return finish(receiver, status, error);
-  options = state->options.cose;
-  options.nonce = NULL;
-  endpoints(&input, &output, state->raw, state->view.encoded_length,
-            state->inner, state->token_capacity, &source, &sink);
-  status = (info.kind == C89CBOR_COSE_HMAC256
-                ? c89cbor_cose_mac0
-                : c89cbor_cose_sign1)(state->runtime, &source, &sink, signing,
-                                      &options, &receiver->lifetime.error);
+  status =
+      crypt(state, 1, info.kind == C89CBOR_COSE_HMAC256 ? 2 : 1, &signing, 1u,
+            state->raw, state->view.encoded_length, state->inner,
+            state->token_capacity, state->options.cose.record_bytes, &length);
   token = state->inner;
-  length = output.length;
-  if (status == 0 && recipients != NULL) {
-    options = state->options.cose;
-    options.record_bytes = state->token_capacity;
-    endpoints(&input, &output, state->inner, length, state->outer,
-              state->token_capacity, &source, &sink);
-    if (!options.encrypt && count != 1u)
-      status = C89CBOR_INVALID;
-    else if (options.encrypt)
-      status = c89cbor_cose_encrypt(state->runtime, &source, &sink, recipients,
-                                    count, &options, &receiver->lifetime.error);
-    else
-      status =
-          c89cbor_cose_encrypt0(state->runtime, &source, &sink, recipients[0],
-                                &options, &receiver->lifetime.error);
+  if (status == 0 && state->seal_count > 1u) {
+    status = crypt(state, 1, 0, state->seal_keys + 1u, state->seal_count - 1u,
+                   state->inner, length, state->outer, state->token_capacity,
+                   state->token_capacity, &length);
     token = state->outer;
-    length = output.length;
   }
   if (status == 0 && capacity < length + 2u)
     status = C89CBOR_LIMIT;
@@ -236,19 +335,14 @@ static int object(const void *bytes, size_t length, int outer, size_t *offset,
   return c89cbor_decoder_cleanup(&cursor.decoder);
 }
 int c89cbor_cwt_verify(c89cbor_cwt *receiver, const void *bytes, size_t length,
-                       c89cbor_cose_key *verification,
-                       c89cbor_cose_key *decryption,
                        const lonejson_jwt_claim_policy *policy,
                        c89cbor_error *error) {
   c89_cwt_state *state;
-  c89cbor_cose_options options;
   c89cbor_cose_key_info info;
-  c89cbor_source source;
-  c89cbor_sink sink;
+  c89cbor_cose_key *verification, *decryption;
   lonejson_jwt_header header;
   lonejson_error json_error;
   lonejson_status json_status;
-  memory input, output;
   const unsigned char *token = bytes;
   size_t offset, message_length;
   char name[8];
@@ -257,6 +351,8 @@ int c89cbor_cwt_verify(c89cbor_cwt *receiver, const void *bytes, size_t length,
     return status;
   state = receiver->state;
   c89_cwt_clear(state);
+  verification = state->verify_count ? state->verify_keys[0] : NULL;
+  decryption = state->verify_count > 1u ? state->verify_keys[1] : NULL;
   if (bytes == NULL || length == 0 || policy == NULL ||
       !c89_cose_key_valid(verification)) {
     status = C89CBOR_INVALID;
@@ -283,21 +379,16 @@ int c89cbor_cwt_verify(c89cbor_cwt *receiver, const void *bytes, size_t length,
     status = C89CBOR_AUTH;
     goto done;
   }
-  options = state->options.cose;
   if (tag == 16 || tag == 96) {
     if (!c89_cose_key_valid(decryption)) {
       status = C89CBOR_INVALID;
       goto done;
     }
-    options.record_bytes = state->token_capacity;
-    endpoints(&input, &output, token, length, state->inner,
-              state->token_capacity, &source, &sink);
-    status = c89cbor_cose_decrypt(state->runtime, &source, &sink, decryption,
-                                  &options, &receiver->lifetime.error);
+    status = crypt(state, 0, 0, &decryption, 1u, token, length, state->inner,
+                   state->token_capacity, state->token_capacity, &length);
     if (status != 0)
       goto done;
     token = state->inner;
-    length = output.length;
     status = object(token, length, 0, &offset, &tag);
     if (status != 0)
       goto done;
@@ -306,16 +397,12 @@ int c89cbor_cwt_verify(c89cbor_cwt *receiver, const void *bytes, size_t length,
     status = C89CBOR_AUTH;
     goto done;
   }
-  options = state->options.cose;
-  endpoints(&input, &output, token, length, state->raw,
-            state->options.cose.record_bytes, &source, &sink);
-  options.nonce = NULL;
-  status = (algorithm == 5 ? c89cbor_cose_verify_mac0 : c89cbor_cose_verify1)(
-      state->runtime, &source, &sink, verification, &options,
-      &receiver->lifetime.error);
+  status = crypt(state, 0, algorithm == 5 ? 2 : 1, &verification, 1u, token,
+                 length, state->raw, state->options.cose.record_bytes,
+                 state->options.cose.record_bytes, &length);
   if (status != 0)
     goto done;
-  status = c89_cwt_parse(state, output.length);
+  status = c89_cwt_parse(state, length);
   if (status != 0)
     goto done;
   memset(&header, 0, sizeof(header));
@@ -361,6 +448,8 @@ int c89cbor_cwt_diagnostic(const c89cbor_cwt *receiver, c89cbor_error *error) {
 int c89cbor_cwt_cleanup(c89cbor_cwt *receiver) {
   c89_cwt_state *state;
   c89cbor_allocator allocator;
+  c89cbor_cose_key *held[C89_COSE_MAX_RECIPIENTS + 3u];
+  size_t count = 0;
   if (receiver == NULL)
     return C89CBOR_OK;
   if (receiver->lifetime.magic != C89_LIFETIME_MAGIC)
@@ -372,6 +461,11 @@ int c89cbor_cwt_cleanup(c89cbor_cwt *receiver) {
   receiver->state = NULL;
   allocator = receiver->lifetime.allocator;
   if (state != NULL) {
+    count = state->seal_count + state->verify_count;
+    memcpy(held, state->seal_keys, state->seal_count * sizeof(*held));
+    memcpy(held + state->seal_count, state->verify_keys,
+           state->verify_count * sizeof(*held));
+    c89_cose_workspace_cleanup(&state->crypto);
     if (state->workspace != NULL) {
       OPENSSL_cleanse(state->workspace, state->workspace_size);
       allocator.free(allocator.context, state->workspace);
@@ -383,6 +477,7 @@ int c89cbor_cwt_cleanup(c89cbor_cwt *receiver) {
     OPENSSL_cleanse(state, sizeof(*state));
     allocator.free(allocator.context, state);
   }
+  c89_cose_keys_unhold(held, count);
   receiver->lifetime.busy = 0;
   return c89_lifetime_cleanup(&receiver->lifetime);
 }
@@ -411,6 +506,8 @@ int c89cbor_cwt_init(c89cbor *runtime, c89cbor_cwt *receiver,
   memset(receiver, 0, sizeof(*receiver));
   receiver->set_claims = c89cbor_cwt_set_claims;
   receiver->set_lonejson = c89cbor_cwt_set_lonejson;
+  receiver->set_seal_keys = c89cbor_cwt_set_seal_keys;
+  receiver->set_verify_keys = c89cbor_cwt_set_verify_keys;
   receiver->seal = c89cbor_cwt_seal;
   receiver->verify = c89cbor_cwt_verify;
   receiver->view_get = c89cbor_cwt_view_get;
@@ -474,6 +571,19 @@ int c89cbor_cwt_init(c89cbor *runtime, c89cbor_cwt *receiver,
     status =
         c89_allocate(runtime, NULL, resolved.audiences * sizeof(char *) * 2u,
                      (void **)&state->strings, &selected);
+  if (status == 0) {
+    state->crypto.runtime = runtime;
+    state->crypto.allocator = receiver->lifetime.allocator;
+    state->crypto.options = resolved.cose;
+    state->crypto.options.record_bytes = state->token_capacity;
+    state->crypto.auth = -1;
+    status = c89_cose_options_resolve(runtime, &state->crypto.options,
+                                      &state->crypto.options);
+    if (status == 0)
+      status = c89_cose_workspace_init(&state->crypto);
+    if (status == 0)
+      c89_cose_workspace_clear(&state->crypto);
+  }
   if (status == 0) {
     receiver->lifetime.busy = 0;
     return C89CBOR_OK;

@@ -123,7 +123,8 @@ done:
 static int authenticate(c89_cose_state *state, unsigned char *signature) {
   c89_cose_key_state *key = state->keys[0]->state;
   unsigned char der[80], mac[32];
-  EVP_MD_CTX *context = NULL;
+  EVP_MD_CTX *context = state->digest_context;
+  OSSL_PARAM parameters[2];
   size_t length = sizeof(der), mac_length = 0;
   int status = C89CBOR_CRYPTO, result;
   const char *digest = key->info.kind == C89CBOR_COSE_P256_PUBLIC ||
@@ -131,9 +132,15 @@ static int authenticate(c89_cose_state *state, unsigned char *signature) {
                            ? "SHA256"
                            : NULL;
   if (state->auth == 2) {
-    if (EVP_Q_mac(NULL, "HMAC", NULL, "SHA256", NULL, key->secret, 32u,
-                  state->aad, state->cipher_length, mac, sizeof(mac),
-                  &mac_length) == NULL ||
+    char digest_name[] = "SHA256";
+    parameters[0] =
+        OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, digest_name, 0);
+    parameters[1] = OSSL_PARAM_construct_end();
+    if (state->mac_context == NULL ||
+        EVP_MAC_init(state->mac_context, key->secret, 32u, parameters) != 1 ||
+        EVP_MAC_update(state->mac_context, state->aad, state->cipher_length) !=
+            1 ||
+        EVP_MAC_final(state->mac_context, mac, &mac_length, sizeof(mac)) != 1 ||
         mac_length != sizeof(mac))
       return C89CBOR_CRYPTO;
     if (state->seal)
@@ -147,9 +154,8 @@ static int authenticate(c89_cose_state *state, unsigned char *signature) {
     OPENSSL_cleanse(mac, sizeof(mac));
     return status;
   }
-  context = EVP_MD_CTX_new();
   if (context == NULL)
-    return C89CBOR_NOMEM;
+    return C89CBOR_CRYPTO;
   if (state->seal) {
     if (EVP_DigestSignInit_ex(context, NULL, digest, NULL, NULL, key->pkey,
                               NULL) == 1 &&
@@ -181,7 +187,7 @@ static int authenticate(c89_cose_state *state, unsigned char *signature) {
     }
   }
 done:
-  EVP_MD_CTX_free(context);
+  (void)EVP_MD_CTX_reset(context);
   return status;
 }
 static int expect_next(c89_cose_cursor *cursor, c89cbor_type type) {

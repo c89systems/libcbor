@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: @NAME@
+spec:
+  containers:
+    - name: reference
+      image: @IMAGE@
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 8080
+          hostPort: @PORT@
+          hostIP: 127.0.0.1
+      volumeMounts:
+        - name: state
+          mountPath: /state
+  volumes:
+    - name: state
+      hostPath:
+        path: @STATE@
+        type: Directory

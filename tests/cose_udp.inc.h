@@ -4,6 +4,8 @@
 /* Application datagram source fixture: recvmsg boundaries are validated before
  * any prefix is given to the byte-stream API. Silence is INPUT, never EOF. */
 typedef struct cose_datagram {
+  c89cbor_datagram receiver;
+  c89cbor_source source;
   int fd, deadline, injected_errno;
   unsigned char bytes[2048];
   size_t capacity, length, offset, calls;
@@ -54,7 +56,6 @@ static int cose_datagram_receive(int fd, void *bytes, size_t capacity,
 static int cose_datagram_source(void *context, void *bytes, size_t capacity,
                                 size_t *count) {
   cose_datagram *datagram = context;
-  size_t take;
   int status;
   ++datagram->calls;
   *count = 0;
@@ -62,25 +63,13 @@ static int cose_datagram_source(void *context, void *bytes, size_t capacity,
     errno = datagram->injected_errno;
     return C89CBOR_IO;
   }
-  if (datagram->offset == datagram->length) {
-    status = cose_datagram_receive(datagram->fd, datagram->bytes,
-                                   datagram->capacity, &datagram->length);
-    datagram->offset = 0;
-    if (status == C89CBOR_INPUT && datagram->deadline) {
-      errno = ETIMEDOUT;
-      return C89CBOR_IO;
-    }
-    if (status != 0)
-      return status;
+  status =
+      datagram->source.read(datagram->source.context, bytes, capacity, count);
+  if (status == C89CBOR_INPUT && datagram->deadline) {
+    errno = ETIMEDOUT;
+    return C89CBOR_IO;
   }
-  take = datagram->length - datagram->offset;
-  if (take > capacity)
-    take = capacity;
-  if (take != 0)
-    memcpy(bytes, datagram->bytes + datagram->offset, take);
-  datagram->offset += take;
-  *count = take;
-  return C89CBOR_OK;
+  return status;
 }
 static int cose_datagram_drive(c89cbor_cose_operation *operation) {
   c89cbor_error error;
@@ -169,6 +158,11 @@ static void cose_udp_failures(fixture *f) {
         memset(datagram, 0, sizeof(*datagram));
         datagram->fd = pair[1];
         datagram->capacity = sizeof(datagram->bytes);
+        assert(f->runtime.datagram_init(&f->runtime, &datagram->receiver,
+                                        pair[1], datagram->capacity,
+                                        &error) == 0);
+        assert(datagram->receiver.stream_source(&datagram->receiver,
+                                                &datagram->source) == 0);
         for (i = 0; i < 3u && packets[scenario][i] >= 0; ++i) {
           j = (size_t)packets[scenario][i];
           memcpy(f->output.bytes, f->wire.bytes + offsets[j], lengths[j]);
@@ -201,6 +195,7 @@ static void cose_udp_failures(fixture *f) {
                  error.system_errno == ETIMEDOUT);
         }
         assert(receiver.cleanup(&receiver) == 0);
+        assert(datagram->receiver.cleanup(&datagram->receiver) == 0);
         assert(close(pair[0]) == 0 && close(pair[1]) == 0);
         f->output.pause = 0;
       }

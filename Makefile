@@ -6,8 +6,9 @@ CONFIG ?= Debug
 VERSION ?=
 BUILD_JOBS ?= 2
 export BUILD_JOBS
-.PHONY: help build test lua lua-test check-native matrix format format-check shell-check benchmark benchmark-compare package package-verify package-source source-smoke valgrind fuzz-smoke prerelease clean release
+.PHONY: help build test lua lua-test check-native matrix format format-check shell-check benchmark benchmark-compare package package-verify package-source source-smoke valgrind fuzz-smoke fuzz-long sanitize e2e prerelease-hardening prerelease clean release
 help:
+	@printf '%s\n' 'e2e / sanitize / fuzz-long: explicit prerelease hardening; see docs/hardening.md' 'prerelease-hardening: normal checks, native memory/sanitizers, reference peer and long fuzz'
 	@printf '%s\n' 'build / test / lua / lua-test: TARGET=<triple> CONFIG=Debug|Release VERSION=<candidate>' 'check-native: native Debug C and installed-SDK Lua checks' 'matrix: build all seven targets, execute six Linux targets with QEMU where needed' 'format / format-check / shell-check: source and shell checks' 'benchmark / benchmark-compare: native Release C/Lua/transport measurements' 'package / package-verify / package-source / source-smoke: SDK and source evidence' 'valgrind / fuzz-smoke: native memory and instrumented fuzz checks' 'prerelease: complete local preparation (no signing, tags or publication)' 'release: signed default-branch/tag gate; see docs/delivery.md' 'clean: remove this checkout build/, dist/, .cache/ and editor database'
 build:
 	@scripts/build.sh core "$(TARGET)" "$(CONFIG)" "$(VERSION)"
@@ -42,6 +43,18 @@ valgrind:
 	@scripts/hardening.sh valgrind "$(VERSION)"
 fuzz-smoke:
 	@scripts/hardening.sh fuzz "$(VERSION)"
+fuzz-long:
+	@scripts/hardening.sh fuzz-long "$(VERSION)"
+sanitize:
+	@scripts/hardening.sh sanitize "$(VERSION)"
+e2e:
+	@scripts/e2e.sh
+prerelease-hardening:
+	@$(MAKE) check-native VERSION="$(VERSION)"
+	@$(MAKE) sanitize VERSION="$(VERSION)"
+	@$(MAKE) valgrind VERSION="$(VERSION)"
+	@$(MAKE) e2e VERSION="$(VERSION)"
+	@$(MAKE) fuzz-long VERSION="$(VERSION)"
 prerelease:
 	@$(MAKE) check-native VERSION="$(VERSION)"
 	@$(MAKE) matrix VERSION="$(VERSION)"

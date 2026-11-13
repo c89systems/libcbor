@@ -158,12 +158,17 @@ callback/context; Lua does not implement a hidden replay database.
 - `token:set_claims(encoded_map)` copies local CBOR claims.
 - `token:set_lonejson(native_claims,cti=nil)` encodes a typed native lonejson
   JWT claim pointer directly; no JSON serialization is involved.
-- `token:seal(signing_key,encryption_keys=nil,capacity=receiver_default)` returns
+- `token:set_seal_keys(signing_key,encryption_keys=nil)` and
+  `token:set_verify_keys(verification_key,decryption_key=nil)` prepare key
+  policies and retain snapshots of actual owners. Mutating a caller recipient
+  table cannot change the binding. Successful replacement clears prior trust;
+  failed replacement preserves it. Nil keys unbind.
+- `token:seal(capacity=receiver_default)` returns
   `status,wire_span,error`. The owned native span passes directly to native
   consumers and `verify`; `wire_span:string()` explicitly requests a Lua copy.
   Borrowed native CWT handles default to a 6162-byte output capacity; supply
   capacity explicitly when their configured bounds are larger.
-- `token:verify(wire,verification_key,decryption_key=nil,policy)` returns
+- `token:verify(wire,policy)` returns
   `status,error`. Policy can be a native lonejson policy handle or a table with
   native field names. Tables require an explicit integer `now`. Lists and their
   strings are snapshotted for the call. Algorithm names are Ed25519/ES256/HS256.
@@ -184,3 +189,11 @@ and jwt_policy. Native CWT consumers can read `view_get` directly without copyin
 records into Lua tables. These typed handles borrow storage and pin their owner,
 without an FFI dependency. The [CWT specification](sign1-cwt.md) defines trust,
 size, nesting, clock and replay contracts.
+
+`datagram_init`/`datagram_create` on the module and root construct bounded
+complete-packet receivers over borrowed sockets. Methods and native binding
+push/check pairs cover the full [datagram API](hardening.md#datagram-integration).
+Receive returns `status,{bytes=span,peer=span},error`; peer is absent for unnamed
+senders. Borrowed spans expire at the next receive/reset/continuous-source read.
+Endpoints return `status,source_or_sink` and keep the shell alive. Lua does not
+copy datagram bytes into strings unless the application explicitly asks.

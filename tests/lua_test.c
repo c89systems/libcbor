@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 typedef int (*binding_init_fn)(c89cbor_lua *, lua_State *,
                                const c89cbor_allocator *, c89cbor_error *);
@@ -220,6 +223,8 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   c89cbor_cose_operation cose_operation;
   c89cbor_cose_options cose_options = c89cbor_default_cose_options();
   c89cbor_cwt cwt;
+  c89cbor_datagram datagram;
+  int datagram_pair[2];
   c89cbor_cwt_options cwt_options = c89cbor_default_cwt_options();
   lonejson_jwt_claims jwt_claims;
   lonejson_jwt_claim_policy jwt_policy;
@@ -275,6 +280,10 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   CHECK_BRIDGE(cose_operation, cose_operation);
   CHECK_BRIDGE(cose_options, cose_options);
   assert(runtime.cwt_init(&runtime, &cwt, &cwt_options, &error) == 0);
+  assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, datagram_pair) == 0);
+  assert(runtime.datagram_init(&runtime, &datagram, datagram_pair[0], 0,
+                               &error) == 0);
+  CHECK_BRIDGE(datagram, datagram);
   memset(&jwt_claims, 0, sizeof(jwt_claims));
   memset(&jwt_policy, 0, sizeof(jwt_policy));
   CHECK_BRIDGE(cwt, cwt);
@@ -300,6 +309,8 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   assert(cose_operation.cleanup(&cose_operation) == 0);
   assert(cose_key.cleanup(&cose_key) == 0);
   assert(cwt.cleanup(&cwt) == 0);
+  assert(datagram.cleanup(&datagram) == 0);
+  assert(close(datagram_pair[0]) == 0 && close(datagram_pair[1]) == 0);
   assert(descriptor.cleanup(&descriptor) == 0 && reader.cleanup(&reader) == 0);
   assert(decoder.cleanup(&decoder) == 0 && encoder.cleanup(&encoder) == 0 &&
          runtime.cleanup(&runtime) == 0);
@@ -356,7 +367,7 @@ static void *run(void *ctx) {
   native_stream stream;
   c89cbor_source source;
   c89cbor_sink sink;
-  int rc;
+  int rc, datagram_pair[2];
   struct timespec begin, end, cpu_begin, cpu_end;
   if (module == NULL)
     fprintf(stderr, "dlopen: %s\n", dlerror());
@@ -375,6 +386,13 @@ static void *run(void *ctx) {
   luaL_openlibs(L);
   lua_pushstring(L, c89cbor_version(NULL));
   lua_setglobal(L, "expected_version");
+  assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, datagram_pair) == 0);
+  assert(fcntl(datagram_pair[0], F_SETFL, O_NONBLOCK) == 0);
+  assert(fcntl(datagram_pair[1], F_SETFL, O_NONBLOCK) == 0);
+  lua_pushinteger(L, datagram_pair[0]);
+  lua_setglobal(L, "datagram_fd_a");
+  lua_pushinteger(L, datagram_pair[1]);
+  lua_setglobal(L, "datagram_fd_b");
   luaL_requiref(L, "cbor", opener, 1);
   lua_pop(L, 1);
   assert(binding_init(&binding, L, NULL, &error) == 0);
@@ -434,6 +452,7 @@ static void *run(void *ctx) {
   assert(binding.cleanup(&binding) == 0 &&
          binding.check_runtime(&binding, 1) == NULL);
   lua_close(L);
+  assert(close(datagram_pair[0]) == 0 && close(datagram_pair[1]) == 0);
   assert(fixture.live == 0);
   if (strstr(args->script, "lua_test.lua") != NULL) {
     assert(fixture.output.id == 42 &&

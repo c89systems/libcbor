@@ -119,9 +119,12 @@ return require('cbor')
 -- require_encryption=false}; native options also carry replay admission hooks.
 -- token:set_claims(encoded_map) -> status,error; bounded local CBOR copy.
 -- token:set_lonejson(native_claims,cti=nil) -> status,error; direct native fields.
--- token:seal(signing_key,encryption_keys=nil,capacity=default) -> status,wire_span,error.
+-- token:set_seal_keys(signing_key,encryption_keys=nil) -> status,error.
+-- token:set_verify_keys(verification_key,decryption_key=nil) -> status,error.
+-- Bind once; nil keys unbind. Replacement snapshots and retains actual owners.
+-- token:seal(capacity=default) -> status,wire_span,error.
 -- The owned span passes native bytes; wire_span:string() explicitly copies to Lua.
--- token:verify(wire,verification_key,decryption_key=nil,policy) -> status,error.
+-- token:verify(wire,policy) -> status,error.
 -- Policy accepts native lonejson pointers or a table, requiring explicit now;
 -- accepted_algs names are Ed25519/ES256/HS256. No JSON round trip occurs.
 -- token:view_get() -> status,{encoded,cti,claim_count,authenticated,algorithm,claims}
@@ -131,3 +134,19 @@ return require('cbor')
 -- Verification failure removes prior claims. Local claims are unauthenticated.
 -- Native binding push/check pairs cover cwt,cwt_options,jwt_claims,jwt_policy.
 -- CWT is bounded; use COSE record operations for unbounded logical streams.
+-- root/module.datagram_init(root,fd,capacity=2048), datagram_create(...) ->
+-- handle or nil,status,error. Root methods omit the root argument. Socket is
+-- borrowed; caller configures readiness, deadlines, bind/connect and ownership.
+-- datagram:receive() -> status,{bytes=span,peer=span},error or status,nil,error.
+-- Receive admits exactly one bounded CBOR item; malformed/truncated packets can
+-- be followed by another receive. INPUT is kernel would-block. Borrowed spans
+-- expire on next receive/reset/stream-source read; copy explicitly if needed.
+-- datagram:send(bytes,peer=nil) -> status,error. OUTPUT retries an atomic send.
+-- datagram:set_peer(peer=nil) -> status; snapshot raw sockaddr bytes.
+-- datagram:source(), stream_source(), sink() -> status,native endpoint.
+-- Scoped source ends at current packet; continuous source never synthesizes EOF.
+-- Sink accepts the final byte only once its bounded item has been sent.
+-- datagram:reset() -> status; cancel partial work, preserving traffic totals.
+-- datagram:progress() -> status,{input,output,received,sent,rejected}.
+-- diagnostic(), cleanup(), destroy(), close() follow normal ownership rules.
+-- Native binding push/check_datagram passes the C shell without VM data shuffles.
