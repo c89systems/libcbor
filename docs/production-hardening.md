@@ -85,9 +85,10 @@ Mac0 and signed/MACed encrypted CWTs in both directions. Exercise external AAD,
 recipient fanout, wrong keys, tampering and native claim policy. Supplement with
 applicable pinned COSE working-group examples. Record any upstream incompatibility
 as a failing scoped test and diagnose it before claiming interoperability.
-Python-CWT 4.0.0 cannot exchange the X25519 key-wrap form: its ECDH-ES code
-hard-codes EC2. Test that form separately with independent cryptography
-primitives, identifying it as fixture verification rather than COSE-library
+Python-CWT 4.0.0 supports X25519 key derivation, but cannot exchange our
+X25519 ECDH-ES+A256KW (`-31`) form: its OKP key validation rejects `-31` and
+its wrapping encoder hard-codes EC2 ephemeral keys. Test that form separately
+with independent cryptography primitives, identifying it as fixture verification rather than COSE-library
 interoperability. Retain exact applicable COSE WG vectors as offline proof.
 
 Ship a documented standalone C client/server example using only public APIs,

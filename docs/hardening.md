@@ -58,8 +58,12 @@ recipient fanout, mutation rejection and native CWT expiration. These exchanges
 exercise COSE/CWT encoding and cryptography; lonejson remains the native claim
 policy validator in libcbor.
 
-Python-CWT 4.0.0 hard-codes EC2 for ECDH-ES key wrapping, including ephemeral
-construction and public-key parsing. It cannot exchange our X25519 form.
+Python-CWT 4.0.0 supports X25519 key derivation, but cannot exchange our selected
+X25519 ECDH-ES+A256KW (`-31`) form. Its
+[OKP key validation](https://github.com/dajiaji/python-cwt/blob/v4.0.0/cwt/algs/okp.py)
+rejects `-31`, and its
+[wrapping encoder](https://github.com/dajiaji/python-cwt/blob/v4.0.0/cwt/recipient_algs/ecdh_aes_key_wrap.py)
+always constructs an EC2 ephemeral key, which rejects the X25519 curve.
 The fixture therefore identifies X25519 separately: an RFC 9053 bounded fixture
 uses cryptography's X25519, HKDF-SHA256, AES-KW and AES-GCM primitives and cbor2.
 Those bidirectional checks provide an independent primitive/encoding check,
