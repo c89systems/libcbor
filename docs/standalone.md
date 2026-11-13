@@ -72,7 +72,8 @@ The server rejects a repeat of its most recently admitted ID within this process
 This intentionally small, single-peer replay window is an example, not a durable
 replay store. Applications admitting multiple outstanding requests need their
 own bounded replay policy and persistence/lifetime rules. Expiration is 60
-seconds. Socket inactivity and accept deadlines are three seconds; they produce an error rather
+seconds. Both peers require `exp`; an otherwise valid authenticated token without
+it is rejected. Socket inactivity and accept deadlines are three seconds; they produce an error rather
 than retransmission. Complete UDP packets may arrive out of order; this example
 has one request outstanding and does not implement reliable UDP.
 
@@ -84,7 +85,8 @@ is acted on before decryption, signature, claim policy and replay admission.
 ## Executable proof
 
 `standalone-peer` in CTest executes the actual keygen, server and client programs.
-It covers all four transports, trusted/wrong peer keys, wrong AAD, ciphertext
+It covers all four transports, trusted/wrong peer keys, wrong AAD, missing
+expiration in authenticated requests and responses, ciphertext
 mutation, malformed/empty/oversized datagrams, duplicate token replay, truncated
 and invalid stream frames, connection failure and missing-input deadlines.
 Debug child processes inherit the test-only 128 KiB default worker-stack setup.

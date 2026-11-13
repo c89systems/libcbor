@@ -256,7 +256,8 @@ static int seal(peer *p, const char *message, size_t *written) {
 static int verify(peer *p, const void *bytes, size_t length) {
   static const char *const algorithms[] = {"Ed25519"},
                            *const server[] = {"server"},
-                           *const client[] = {"client"};
+                           *const client[] = {"client"},
+                           *const required[] = {"exp"};
   lonejson_jwt_claim_policy policy;
   c89cbor_error error;
   memset(&policy, 0, sizeof(policy));
@@ -267,6 +268,8 @@ static int verify(peer *p, const void *bytes, size_t length) {
   policy.accepted_issuer_count = 1;
   policy.accepted_audiences = p->server ? server : client;
   policy.accepted_audience_count = 1;
+  policy.required_claims = required;
+  policy.required_claim_count = 1;
   return p->token.verify(&p->token, bytes, length, &policy, &error);
 }
 static int exact(int fd, void *bytes, size_t length, int writing) {

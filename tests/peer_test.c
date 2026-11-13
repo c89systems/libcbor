@@ -93,33 +93,30 @@ static int connect_socket(const char *address, int type) {
          0);
   return fd;
 }
-static size_t token(unsigned char *wire, int bad_aad) {
+static void import_key(c89cbor *root, c89cbor_cose_key *key,
+                       c89cbor_cose_key_kind kind, const char *path) {
+  unsigned char raw[32];
+  c89cbor_error error;
+  FILE *file = fopen(path, "rb");
+  assert(file != NULL && fread(raw, 1u, 32u, file) == 32u && fclose(file) == 0);
+  assert(root->cose_key_init(root, key, kind, raw, 32u, NULL, 0, &error) == 0);
+  memset(raw, 0, sizeof(raw));
+}
+static size_t token(unsigned char *wire, int bad_aad, int omit_exp,
+                    int response, const void *id) {
   c89cbor root;
   c89cbor_cose_key sign, recipient, *keys[1];
   c89cbor_cwt cwt;
   c89cbor_cwt_options options;
   c89cbor_error error;
   lonejson_jwt_claims claims;
-  unsigned char raw[32];
-  FILE *file;
-  size_t i, length;
-  c89cbor_cose_key *handles[2];
-  const char *paths[2];
+  size_t length;
   char issuer[] = "client", audience[] = "server";
   assert(c89cbor_init(&root, NULL, &error) == 0);
-  handles[0] = &sign;
-  handles[1] = &recipient;
-  paths[0] = files[0][0];
-  paths[1] = files[1][3];
-  for (i = 0; i < 2u; ++i) {
-    file = fopen(paths[i], "rb");
-    assert(file != NULL && fread(raw, 1u, 32u, file) == 32u &&
-           fclose(file) == 0);
-    assert(root.cose_key_init(&root, handles[i],
-                              i == 0 ? C89CBOR_COSE_ED25519_PRIVATE
-                                     : C89CBOR_COSE_X25519_PUBLIC,
-                              raw, 32u, NULL, 0, &error) == 0);
-  }
+  import_key(&root, &sign, C89CBOR_COSE_ED25519_PRIVATE,
+             files[response ? 1 : 0][0]);
+  import_key(&root, &recipient, C89CBOR_COSE_X25519_PUBLIC,
+             files[response ? 0 : 1][3]);
   options = root.default_cwt_options(&root);
   options.cose.encrypt = 1;
   options.cose.record_bytes = options.cose.header_bytes = 256;
@@ -129,15 +126,86 @@ static size_t token(unsigned char *wire, int bad_aad) {
   keys[0] = &recipient;
   assert(cwt.set_seal_keys(&cwt, &sign, keys, 1u, &error) == 0);
   memset(&claims, 0, sizeof(claims));
-  claims.iss = issuer;
-  claims.aud = audience;
+  claims.iss = response ? audience : issuer;
+  claims.aud = response ? issuer : audience;
   claims.exp = (int64_t)time(NULL) + 60;
-  claims.has_exp = 1;
-  assert(cwt.set_lonejson(&cwt, &claims, "0123456789abcdef", 16u, &error) == 0);
+  claims.has_exp = !omit_exp;
+  assert(cwt.set_lonejson(&cwt, &claims, id, 16u, &error) == 0);
   assert(cwt.seal(&cwt, wire, 1200u, &length, &error) == 0);
   assert(cwt.cleanup(&cwt) == 0 && recipient.cleanup(&recipient) == 0 &&
          sign.cleanup(&sign) == 0 && root.cleanup(&root) == 0);
   return length;
+}
+/* Authenticate a real request before correlating the test reply, so its keys,
+ * AAD and ID are valid and missing exp is the only admission failure. */
+static void request_id(const void *bytes, size_t length, unsigned char *id) {
+  static const char *const algorithms[] = {"Ed25519"},
+                           *const issuers[] = {"client"},
+                           *const audiences[] = {"server"};
+  c89cbor root;
+  c89cbor_cwt cwt;
+  c89cbor_cose_key verify, decrypt;
+  c89cbor_cwt_options options;
+  c89cbor_cwt_view view;
+  c89cbor_error error;
+  lonejson_jwt_claim_policy policy;
+  assert(c89cbor_init(&root, NULL, &error) == 0);
+  import_key(&root, &verify, C89CBOR_COSE_ED25519_PUBLIC, files[0][1]);
+  import_key(&root, &decrypt, C89CBOR_COSE_X25519_PRIVATE, files[1][2]);
+  options = root.default_cwt_options(&root);
+  options.cose.record_bytes = options.cose.header_bytes = 256;
+  options.cose.aad = "libcbor-peer";
+  options.cose.aad_length = 12;
+  options.require_cti = options.require_encryption = 1;
+  assert(root.cwt_init(&root, &cwt, &options, &error) == 0);
+  assert(cwt.set_verify_keys(&cwt, &verify, &decrypt, &error) == 0);
+  memset(&policy, 0, sizeof(policy));
+  policy.now = (int64_t)time(NULL);
+  policy.accepted_algs = algorithms;
+  policy.accepted_alg_count = 1;
+  policy.accepted_issuers = issuers;
+  policy.accepted_issuer_count = 1;
+  policy.accepted_audiences = audiences;
+  policy.accepted_audience_count = 1;
+  assert(cwt.verify(&cwt, bytes, length, &policy, &error) == 0);
+  assert(cwt.view_get(&cwt, &view) == 0 && view.claims->has_exp &&
+         view.cti_length == 16u);
+  memcpy(id, view.cti, 16u);
+  assert(cwt.cleanup(&cwt) == 0 && verify.cleanup(&verify) == 0 &&
+         decrypt.cleanup(&decrypt) == 0 && root.cleanup(&root) == 0);
+}
+static void missing_response_expiration(void) {
+  struct sockaddr_in address, remote;
+  struct timeval timeout;
+  socklen_t size = sizeof(address), remote_size = sizeof(remote);
+  unsigned char request[1200], reply[1200], id[16];
+  char port[16];
+  pid_t child;
+  size_t length;
+  ssize_t received;
+  int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  assert(fd >= 0);
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  assert(inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) == 1);
+  assert(bind(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
+  assert(getsockname(fd, (struct sockaddr *)&address, &size) == 0);
+  timeout.tv_sec = 3;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  assert(snprintf(port, sizeof(port), "%u", (unsigned)ntohs(address.sin_port)) >
+         0);
+  child = start("client", "udp", port, NULL, -1, 0);
+  received = recvfrom(fd, request, sizeof(request), 0,
+                      (struct sockaddr *)&remote, &remote_size);
+  assert(received > 0);
+  request_id(request, (size_t)received, id);
+  length = token(reply, 0, 1, 1, id);
+  assert(sendto(fd, reply, length, 0, (struct sockaddr *)&remote,
+                remote_size) == (ssize_t)length);
+  waited(child, 0);
+  assert(close(fd) == 0);
 }
 int main(int argc, char **argv) {
   static const char *const transports[] = {"tcp", "udp", "unix", "unixgram"};
@@ -177,11 +245,12 @@ int main(int argc, char **argv) {
     waited(client, 0);
     waited(pid, 1); /* server succeeded; client distrusted reply */
   }
+  missing_response_expiration();
   /* UDP failure modes use actual application sockets and crypto. */
-  for (i = 0; i < 6u; ++i) {
+  for (i = 0; i < 7u; ++i) {
     pid = server("udp", i == 3u ? 2 : 1, address);
     fd = connect_socket(address, SOCK_DGRAM);
-    length = token(wire, i == 1u);
+    length = token(wire, i == 1u, i == 6u, 0, "0123456789abcdef");
     if (i == 0) {
       wire[0] = 0;
       length = 2;
@@ -199,8 +268,8 @@ int main(int argc, char **argv) {
       assert(recv(fd, reply, sizeof(reply), 0) > 0);
       assert(send(fd, wire, length, 0) == (ssize_t)length); /* replay */
     }
-    assert(close(fd) == 0);
     waited(pid, 0);
+    assert(close(fd) == 0);
   }
   for (i = 0; i < 3u; ++i) {
     pid = server("tcp", 1, address);
