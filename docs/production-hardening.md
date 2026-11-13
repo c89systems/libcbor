@@ -63,6 +63,11 @@ from steady-state processing with the same fixtures and validation work.
 
 ## Independent peer and examples
 
+Run E2E only on native x86_64 Linux glibc (`x86_64-linux-gnu`). Keep unit tests
+across all SDK targets on their declared runners; SDK compilation, ABI and
+package verification remain target-specific. Other targets do not require E2E
+execution, including native Darwin.
+
 Use Python-CWT 4.0.0 as a bounded reference service in rootless Podman Kube. Pin
 the base image by digest and every Python wheel by version and SHA-256. Python
 only serves bounded fixture transformations using upstream APIs; CTest and C

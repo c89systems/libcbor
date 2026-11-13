@@ -90,6 +90,7 @@ expiration in authenticated requests and responses, ciphertext
 mutation, malformed/empty/oversized datagrams, duplicate token replay, truncated
 and invalid stream frames, connection failure and missing-input deadlines.
 Debug child processes inherit the test-only 128 KiB default worker-stack setup.
-Linux x86_64 glibc/musl execute the child-process suite; other SDK targets compile
-and link the application, with their library/socket tests run on the declared
-runners. QEMU parent execution is not claimed as child-process execution proof.
+Only native x86_64 Linux glibc executes this E2E child-process suite. Other SDK
+targets compile and link the application, with their library/socket tests run
+on the declared runners. E2E execution on other targets is outside the selected
+test scope.

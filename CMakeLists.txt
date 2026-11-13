@@ -140,17 +140,21 @@ if(BUILD_TESTING AND NOT C89CBOR_DISABLE_TESTS)
   target_compile_options(peer_test PRIVATE -UNDEBUG)
   target_link_libraries(peer_test PRIVATE c89cbor_static Threads::Threads)
   c89_runtime(peer_test)
-  if(NOT CMAKE_CROSSCOMPILING OR C89CBOR_TARGET STREQUAL "x86_64-linux-gnu" OR C89CBOR_TARGET STREQUAL "x86_64-linux-musl")
-    add_test(NAME standalone-peer COMMAND peer_test "$<TARGET_FILE:cbor-peer>")
-    set_tests_properties(standalone-peer PROPERTIES TIMEOUT 45 LABELS "e2e;offline")
-  endif()
   add_executable(reference_peer_test tests/e2e_test.c tests/stack.c)
   c89_owned(reference_peer_test)
   target_compile_options(reference_peer_test PRIVATE -UNDEBUG)
   target_link_libraries(reference_peer_test PRIVATE c89cbor_static Threads::Threads)
   c89_runtime(reference_peer_test)
-  add_test(NAME reference-peer COMMAND reference_peer_test)
-  set_tests_properties(reference-peer PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "e2e;podman")
+  # E2E fixtures run once in the declared native host context. Unit tests and
+  # compilation/linking of the example and drivers retain the full SDK matrix.
+  if(C89CBOR_TARGET STREQUAL "x86_64-linux-gnu" AND
+     CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    add_test(NAME standalone-peer COMMAND peer_test "$<TARGET_FILE:cbor-peer>")
+    set_tests_properties(standalone-peer PROPERTIES TIMEOUT 45 LABELS "e2e;offline")
+    add_test(NAME reference-peer COMMAND reference_peer_test)
+    set_tests_properties(reference-peer PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "e2e;podman")
+  endif()
   include(cmake/ApiInventory.cmake)
   if(C89CBOR_TARGET STREQUAL "x86_64-linux-gnu")
     add_test(NAME fuzz-retained-findings COMMAND ${CMAKE_COMMAND}

@@ -4,6 +4,12 @@ Use the [production-hardening specification](production-hardening.md) for the
 accepted behavior and [standalone application](standalone.md) for local peers.
 These checks prepare an unreleased ABI 0; they do not release or migrate cai.
 
+Unit tests cover the full SDK target matrix using the declared runners. E2E
+tests (`standalone-peer` and `reference-peer`) run only in the native x86_64
+Linux glibc host context (`x86_64-linux-gnu`), rather than once per SDK target.
+Other targets retain compilation/linking and unit, ABI and package checks;
+they have no deferred E2E runner requirement.
+
 ```sh
 make check-native        # normal C/Lua, formatting and shell checks
 make sanitize            # native ASan + UBSan, including child applications
