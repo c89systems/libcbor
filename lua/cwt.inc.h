@@ -222,43 +222,49 @@ static lonejson_jwt_claim_policy *cwt_policy(lua_State *L, int index) {
   const char **arrays;
   const char *value;
   size_t counts[6], total = 0, offset = 0, i, j;
+  lonejson_int64 now;
   int object, pins;
   index = lua_absindex(L, index);
   if (policy != NULL)
     return policy;
   luaL_checktype(L, index, LUA_TTABLE);
   lua_getfield(L, index, "now");
-  (void)luaL_checkinteger(L, -1);
+  now = (lonejson_int64)luaL_checkinteger(L, -1);
   lua_pop(L, 1);
+  lua_newtable(L);
+  pins = lua_gettop(L);
   for (i = 0; i < 6u; ++i) {
     lua_getfield(L, index, names[i]);
     if (!lua_isnil(L, -1))
       luaL_checktype(L, -1, LUA_TTABLE);
     counts[i] = lua_isnil(L, -1) ? 0 : lua_rawlen(L, -1);
-    lua_pop(L, 1);
     if (counts[i] >
         ((size_t)INT_MAX - sizeof(*policy)) / sizeof(char *) - total)
       luaL_argerror(L, index, "policy is too large");
+    /* Copy each array's immutable strings before another getter can replace
+     * the table or mutate entries whose length we have already measured. */
+    for (j = 0; j < counts[i]; ++j) {
+      lua_rawgeti(L, -1, (lua_Integer)j + 1);
+      value = luaL_checkstring(L, -1);
+      if (strlen(value) != lua_rawlen(L, -1))
+        luaL_argerror(L, index, "policy strings cannot contain NUL");
+      lua_rawseti(L, pins, (lua_Integer)(total + j + 1u));
+    }
+    lua_pop(L, 1);
     total += counts[i];
   }
   snapshot =
       new_handle(L, JWT_POLICY, sizeof(*policy) + total * sizeof(char *));
   object = lua_gettop(L);
   policy = snapshot->ptr;
+  policy->now = now;
   arrays = (const char **)(policy + 1);
-  lua_newtable(L);
-  pins = lua_gettop(L);
   for (i = 0; i < 6u; ++i) {
-    lua_getfield(L, index, names[i]);
     for (j = 0; j < counts[i]; ++j) {
-      lua_rawgeti(L, -1, (lua_Integer)j + 1);
-      value = luaL_checkstring(L, -1);
-      if (strlen(value) != lua_rawlen(L, -1))
-        luaL_argerror(L, index, "policy strings cannot contain NUL");
-      arrays[offset + j] = value;
-      lua_rawseti(L, pins, (lua_Integer)(offset + j + 1u));
+      lua_rawgeti(L, pins, (lua_Integer)(offset + j + 1u));
+      arrays[offset + j] = lua_tostring(L, -1);
+      lua_pop(L, 1);
     }
-    lua_pop(L, 1);
     switch (i) {
     case 0:
       policy->accepted_algs = arrays + offset;
@@ -292,7 +298,6 @@ static lonejson_jwt_claim_policy *cwt_policy(lua_State *L, int index) {
   policy->field =                                                              \
       lua_isnil(L, -1) ? 0 : (lonejson_int64)luaL_checkinteger(L, -1);         \
   lua_pop(L, 1)
-  POLICY_TIME(now);
   POLICY_TIME(allowed_clock_skew);
 #undef POLICY_TIME
 #define POLICY_BOOL(field)                                                     \
@@ -313,6 +318,7 @@ static lonejson_jwt_claim_policy *cwt_policy(lua_State *L, int index) {
   POLICY_STRING(expected_nonce, 1);
   POLICY_STRING(expected_azp, 2);
 #undef POLICY_STRING
+  lua_pushvalue(L, pins);
   lua_setiuservalue(L, object, 1);
   return policy;
 }

@@ -316,8 +316,8 @@ static int close_at(lua_State *L, int index) {
 }
 typedef struct constructor_probe {
   lua_State *state;
-  const char *reentry;
-  size_t calls, fail_at, live;
+  const char *reentry, *free_reentry;
+  size_t calls, fail_at, live, frees;
   int armed, finalized;
 } constructor_probe;
 typedef struct key_input_owner {
@@ -335,7 +335,8 @@ static void *constructor_allocate(void *context, size_t size) {
   void *memory;
   if (probe->armed) {
     ++probe->calls;
-    assert(luaL_dostring(probe->state, probe->reentry) == LUA_OK);
+    if (probe->reentry != NULL)
+      assert(luaL_dostring(probe->state, probe->reentry) == LUA_OK);
     assert(probe->finalized == 0);
     if (probe->calls == probe->fail_at)
       return NULL;
@@ -348,10 +349,109 @@ static void *constructor_allocate(void *context, size_t size) {
 static void constructor_free(void *context, void *memory) {
   constructor_probe *probe = context;
   if (memory != NULL) {
+    if (probe->armed && probe->free_reentry != NULL)
+      assert(luaL_dostring(probe->state, probe->free_reentry) == LUA_OK);
     assert(probe->live != 0);
     --probe->live;
+    ++probe->frees;
     free(memory);
   }
+}
+typedef struct allocator_observer {
+  constructor_probe *probe;
+  size_t calls, frees;
+  int finalized;
+} allocator_observer;
+typedef struct allocator_owner {
+  allocator_observer *observer;
+  c89cbor_allocator allocator;
+  c89cbor_config config;
+} allocator_owner;
+static int finalize_allocator_owner(lua_State *L) {
+  allocator_owner *owner = lua_touserdata(L, 1);
+  allocator_observer *observer = owner->observer;
+  assert(observer->probe != NULL && observer->probe->live == 0);
+  observer->calls = observer->probe->calls;
+  observer->frees = observer->probe->frees;
+  free(observer->probe);
+  observer->probe = NULL;
+  ++observer->finalized;
+  return 0;
+}
+static int arm_allocator_probe(lua_State *L) {
+  allocator_observer *observer = luaL_checkudata(L, 1, "allocator probe");
+  constructor_probe *probe = observer->probe;
+  luaL_argcheck(L, probe != NULL, 1, "allocator owner was finalized");
+  probe->reentry = lua_isnoneornil(L, 2) ? NULL : luaL_checkstring(L, 2);
+  probe->free_reentry = lua_isnoneornil(L, 3) ? NULL : luaL_checkstring(L, 3);
+  probe->fail_at = (size_t)luaL_optinteger(L, 4, 0);
+  probe->calls = probe->frees = 0;
+  probe->armed = 1;
+  lua_pushvalue(L, 2);
+  lua_setiuservalue(L, 1, 1);
+  lua_pushvalue(L, 3);
+  lua_setiuservalue(L, 1, 2);
+  return 0;
+}
+static int allocator_probe_state(lua_State *L) {
+  allocator_observer *observer = luaL_checkudata(L, 1, "allocator probe");
+  constructor_probe *probe = observer->probe;
+  lua_newtable(L);
+  lua_pushinteger(L, observer->finalized);
+  lua_setfield(L, -2, "finalized");
+  lua_pushinteger(L, (lua_Integer)(probe ? probe->calls : observer->calls));
+  lua_setfield(L, -2, "calls");
+  lua_pushinteger(L, (lua_Integer)(probe ? probe->frees : observer->frees));
+  lua_setfield(L, -2, "frees");
+  lua_pushinteger(L, (lua_Integer)(probe ? probe->live : 0));
+  lua_setfield(L, -2, "live");
+  return 1;
+}
+static int native_allocator_case(lua_State *L) {
+  c89cbor_lua *binding = lua_touserdata(L, lua_upvalueindex(1));
+  int invalid = lua_toboolean(L, 1);
+  allocator_observer *observer = lua_newuserdatauv(L, sizeof(*observer), 2);
+  allocator_owner *owner;
+  int observer_index = lua_gettop(L), owner_index;
+  memset(observer, 0, sizeof(*observer));
+  observer->probe = calloc(1, sizeof(*observer->probe));
+  assert(observer->probe != NULL);
+  observer->probe->state = L;
+  if (luaL_newmetatable(L, "allocator probe")) {
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
+    lua_pushcfunction(L, arm_allocator_probe);
+    lua_setfield(L, -2, "arm");
+    lua_pushcfunction(L, allocator_probe_state);
+    lua_setfield(L, -2, "state");
+  }
+  lua_setmetatable(L, observer_index);
+  owner = lua_newuserdatauv(L, sizeof(*owner), 1);
+  owner_index = lua_gettop(L);
+  owner->observer = observer;
+  owner->allocator.context = observer->probe;
+  owner->allocator.alloc = constructor_allocate;
+  owner->allocator.free = invalid ? NULL : constructor_free;
+  owner->config = c89cbor_default_config();
+  owner->config.allocator = owner->allocator;
+  lua_pushvalue(L, observer_index);
+  lua_setiuservalue(L, owner_index, 1);
+  lua_newtable(L);
+  lua_pushcfunction(L, finalize_allocator_owner);
+  lua_setfield(L, -2, "__gc");
+  lua_setmetatable(L, owner_index);
+  assert(binding->push_allocator(binding, &owner->allocator, owner_index) == 0);
+  lua_pushvalue(L, observer_index);
+  return 2;
+}
+static int native_config_case(lua_State *L) {
+  c89cbor_lua *binding = lua_touserdata(L, lua_upvalueindex(1));
+  allocator_owner *owner;
+  assert(binding->check_allocator(binding, 1) != NULL);
+  assert(lua_getiuservalue(L, 1, 1) == LUA_TUSERDATA);
+  owner = lua_touserdata(L, -1);
+  assert(binding->push_config(binding, &owner->config, 1) == 0);
+  return 1;
 }
 static void push_key_input(c89cbor_lua *binding, constructor_probe *probe,
                            const char *name) {
@@ -695,6 +795,12 @@ static void *run(void *ctx) {
   lua_pop(L, 1);
   assert(binding_init(&binding, L, NULL, &error) == 0);
   prepare_fixture(&fixture, &binding);
+  lua_pushlightuserdata(L, &binding);
+  lua_pushcclosure(L, native_allocator_case, 1);
+  lua_setglobal(L, "native_allocator_case");
+  lua_pushlightuserdata(L, &binding);
+  lua_pushcclosure(L, native_config_case, 1);
+  lua_setglobal(L, "native_config_case");
   if (strstr(args->script, "lua_test.lua") != NULL) {
     synchronous_reentry(&binding);
     key_import_reentry(&binding);

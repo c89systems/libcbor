@@ -43,6 +43,11 @@ if(BUILD_TESTING)
   target_compile_definitions(lua_test PRIVATE _POSIX_C_SOURCE=200809L)
   c89_runtime(lua_test)
   add_test(NAME lua-api COMMAND lua_test "${CMAKE_CURRENT_BINARY_DIR}/cbor${CMAKE_SHARED_MODULE_SUFFIX}" "${source_root}/tests/lua_test.lua")
+  foreach(group codec runtime policy)
+    add_test(NAME lua-lifetime-${group} COMMAND lua_test "$<TARGET_FILE:cbor>" "${source_root}/tests/lua_lifetime_test.lua")
+    set_tests_properties(lua-lifetime-${group} PROPERTIES TIMEOUT 30 LABELS "lua;integration;lifetime"
+      ENVIRONMENT "GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0;C89CBOR_LUA_LIFETIME_CASE=${group}")
+  endforeach()
   add_test(NAME lua-exports COMMAND ${CMAKE_COMMAND} "-DNM=${CMAKE_NM}" "-DMODULE=$<TARGET_FILE:cbor>"
     "-DHEADER=${source_root}/include/c89cbor/lua.h" "-DDARWIN=${APPLE}"
     "-DINSPECT=$<IF:$<BOOL:${APPLE}>,${CMAKE_OTOOL},${CMAKE_READELF}>" -P "${source_root}/tests/lua_exports.cmake")

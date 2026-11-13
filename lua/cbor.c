@@ -573,6 +573,14 @@ static int codec_init(lua_State *L, int encoder, int create) {
     result(L, C89CBOR_BUSY);
     return 2;
   }
+  lua_settop(L, 2 + base);
+  h = new_handle(L, encoder ? ENC : DEC,
+                 create    ? 0
+                 : encoder ? sizeof(c89cbor_encoder)
+                           : sizeof(c89cbor_decoder));
+  /* Creating Lua userdata can run finalizers. Check owners after that point. */
+  if (base)
+    runtime = checked(L, 1, ROOT)->ptr;
   if (!lua_isnoneornil(L, 1 + base)) {
     if (create) {
       a = checked(L, 1 + base, ALLOC);
@@ -583,10 +591,12 @@ static int codec_init(lua_State *L, int encoder, int create) {
         return luaL_argerror(L, 1, "frames already in use");
     }
   }
-  h = new_handle(L, encoder ? ENC : DEC,
-                 create    ? 0
-                 : encoder ? sizeof(c89cbor_encoder)
-                           : sizeof(c89cbor_decoder));
+  /* Both allocation and destruction callbacks must retain their context. */
+  if (frames != NULL || a != NULL)
+    pin(L, h, 1 + base, 1);
+  if (base)
+    pin(L, h, 1, 3);
+  h->active = 1;
   if (base)
     checked(L, 1, ROOT)->active = 1;
   if (create) {
@@ -611,11 +621,9 @@ static int codec_init(lua_State *L, int encoder, int create) {
                               frames == NULL ? 0 : frames->count, chunk);
   if (base)
     checked(L, 1, ROOT)->active = 0;
-  if (frames != NULL || a != NULL)
-    pin(L, h, 1 + base, 1);
-  if (base)
-    pin(L, h, 1, 3);
+  h->active = 0;
   if (rc < 0) {
+    (void)release_handle(h);
     lua_pop(L, 1);
     lua_pushnil(L);
     result(L, rc);
@@ -1169,27 +1177,24 @@ static int default_allocator(lua_State *L) {
 }
 static void config_from_lua(lua_State *L, int index, c89cbor_config *config) {
   c89cbor_config *native = check_config(L, index);
-  c89cbor_allocator *allocator;
   int child;
   *config = c89cbor_default_config();
   if (native != NULL) {
     *config = *native;
+    lua_pushnil(L);
     return;
   }
-  if (lua_isnoneornil(L, index))
+  if (lua_isnoneornil(L, index)) {
+    lua_pushnil(L);
     return;
+  }
   luaL_checktype(L, index, LUA_TTABLE);
   config->step_input = table_size(L, index, "step_input", 0);
   config->step_output = table_size(L, index, "step_output", 0);
   config->step_events = table_size(L, index, "step_events", 0);
+  /* Keep the exact allocator value on the stack. Later getters may replace or
+   * close it; copy and borrow it only after all configuration callbacks. */
   lua_getfield(L, index, "allocator");
-  if (!lua_isnil(L, -1)) {
-    allocator = check_allocator(L, -1);
-    if (allocator == NULL)
-      luaL_argerror(L, index, "allocator must be a live native allocator");
-    config->allocator = *allocator;
-  }
-  lua_pop(L, 1);
   lua_getfield(L, index, "json_config");
   if (!lua_isnil(L, -1)) {
     luaL_checktype(L, -1, LUA_TTABLE);
@@ -1231,12 +1236,24 @@ static int default_config(lua_State *L) {
 }
 static int runtime_factory(lua_State *L, int create) {
   c89cbor_config config;
+  c89cbor_allocator *allocator;
   c89cbor_error error;
   c89cbor *runtime = NULL;
   handle *h;
   int status;
-  config_from_lua(L, 1, &config);
+  lua_settop(L, 1);
   h = new_handle(L, ROOT, create ? 0 : sizeof(c89cbor));
+  config_from_lua(L, 1, &config);
+  lua_insert(L, -2); /* config, captured allocator, runtime wrapper */
+  if (!lua_isnil(L, 2)) {
+    allocator = check_allocator(L, 2);
+    if (allocator == NULL)
+      return luaL_argerror(L, 1, "allocator must be a live native allocator");
+    config.allocator = *allocator;
+  }
+  pin(L, h, 1, 1);
+  pin(L, h, 2, 2);
+  h->active = 1;
   if (create)
     status = c89cbor_create(&config, &runtime, &error);
   else {
@@ -1245,25 +1262,14 @@ static int runtime_factory(lua_State *L, int create) {
   }
   h->ptr = runtime;
   h->heap_kind = create ? 6 : -6;
+  h->active = 0;
   if (status != 0) {
+    (void)release_handle(h);
     lua_pop(L, 1);
     lua_pushnil(L);
     result(L, status);
     diagnostic_table(L, &error);
     return 3;
-  }
-  pin(L, h, 1, 1);
-  if (lua_type(L, 1) == LUA_TTABLE) {
-    lua_getfield(L, 1, "allocator");
-    if (!lua_isnil(L, -1)) {
-      lua_pushvalue(L, -1);
-      lua_setiuservalue(L, -3, 2);
-      if (any_handle(L, -1) != NULL) {
-        h->parent[1] = any_handle(L, -1);
-        ++h->parent[1]->borrowers;
-      }
-    }
-    lua_pop(L, 1);
   }
   return 1;
 }
