@@ -52,6 +52,7 @@ static int cwt_factory(lua_State *L, int create) {
     return 2;
   }
   h = new_handle(L, CWT, create ? 0 : sizeof(*receiver));
+  root = checked(L, 1, ROOT);
   pin(L, h, 1, 1);
   pin(L, h, option_index, 2);
   root->active = h->active = 1;
@@ -318,10 +319,12 @@ static lonejson_jwt_claim_policy *cwt_policy(lua_State *L, int index) {
 static int cwt_verify(lua_State *L) {
   handle *h = checked(L, 1, CWT);
   size_t length;
-  const void *bytes = input(L, 2, &length);
+  const void *bytes;
   lonejson_jwt_claim_policy *policy = cwt_policy(L, 3);
   c89cbor_error error;
   int status;
+  h = checked(L, 1, CWT);
+  bytes = input(L, 2, &length);
   if (h->active)
     return result(L, C89CBOR_BUSY);
   h->active = 1;

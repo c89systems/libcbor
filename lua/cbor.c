@@ -1356,7 +1356,7 @@ enum conversion_kind { JSON_CBOR, CBOR_JSON, ENCODE_MAP, DECODE_MAP };
 static int runtime_conversion(lua_State *L, enum conversion_kind kind,
                               int synchronous) {
   handle *root = checked(L, 1, ROOT), *h;
-  c89cbor *runtime = root->ptr;
+  c89cbor *runtime;
   c89cbor_source *source = NULL;
   c89cbor_sink *sink = NULL;
   lonejson_record_view *view = NULL;
@@ -1376,17 +1376,21 @@ static int runtime_conversion(lua_State *L, enum conversion_kind kind,
     source_index = 2;
     view_index = 3;
   }
+  options_from_lua(L, 4, &options);
+  /* Borrow before any native allocation or endpoint callback. Synchronous
+   * calls need the same owner pins as retained conversion operations. */
+  h = new_handle(L, CONVERSION,
+                 synchronous == 2 ? sizeof(c89cbor_conversion) : 0);
+  /* Option metamethods may close arguments. Revalidate before capturing native
+   * pointers or acquiring borrows, so Lua option errors need no unwind. */
+  root = checked(L, 1, ROOT);
+  runtime = root->ptr;
   if (source_index)
     source = checked(L, source_index, SOURCE)->ptr;
   if (sink_index)
     sink = checked(L, sink_index, SINK)->ptr;
   if (view_index)
     view = checked(L, view_index, VIEW)->ptr;
-  options_from_lua(L, 4, &options);
-  /* Borrow before any native allocation or endpoint callback. Synchronous
-   * calls need the same owner pins as retained conversion operations. */
-  h = new_handle(L, CONVERSION,
-                 synchronous == 2 ? sizeof(c89cbor_conversion) : 0);
   pin(L, h, 1, 1);
   pin(L, h, source_index ? source_index : view_index, 2);
   pin(L, h, sink_index ? sink_index : view_index, 3);

@@ -183,9 +183,9 @@ enum cose_kind {
  * recipient snapshot pins each wrapper even if the input table is mutated. */
 static int runtime_cose(lua_State *L, enum cose_kind kind, int mode) {
   handle *root = checked(L, 1, ROOT), *h;
-  c89cbor *runtime = root->ptr;
-  c89cbor_source *source = checked(L, 2, SOURCE)->ptr;
-  c89cbor_sink *sink = checked(L, 3, SINK)->ptr;
+  c89cbor *runtime;
+  c89cbor_source *source;
+  c89cbor_sink *sink;
   c89cbor_cose_key *keys[32];
   handle *parents[32];
   size_t count = 1u, i;
@@ -209,16 +209,28 @@ static int runtime_cose(lua_State *L, enum cose_kind kind, int mode) {
       lua_rawgeti(L, 4, (lua_Integer)i + 1);
     else
       lua_pushvalue(L, 4);
-    parents[i] = checked(L, -1, COSE_KEY);
-    keys[i] = parents[i]->ptr;
     lua_rawseti(L, snapshot, (lua_Integer)i + 1);
   }
-  options = cose_options_snapshot(L, 5);
+  (void)cose_options_snapshot(L, 5);
   option_index = lua_gettop(L);
   h = new_handle(L, COSE_OPERATION,
                  sizeof(*operation) + count * sizeof(handle *));
   h->key_parents = (handle **)((unsigned char *)(h + 1) + sizeof(*operation));
   h->heap_kind = 0;
+  /* Options may invoke Lua and close arguments or mutate the recipient table.
+   * Validate the captured wrappers after those callbacks, before any borrows.
+   */
+  root = checked(L, 1, ROOT);
+  runtime = root->ptr;
+  source = checked(L, 2, SOURCE)->ptr;
+  sink = checked(L, 3, SINK)->ptr;
+  options = checked(L, option_index, COSE_OPTIONS)->ptr;
+  for (i = 0; i < count; ++i) {
+    lua_rawgeti(L, snapshot, (lua_Integer)i + 1);
+    parents[i] = checked(L, -1, COSE_KEY);
+    keys[i] = parents[i]->ptr;
+    lua_pop(L, 1);
+  }
   pin(L, h, 1, 1);
   pin(L, h, 2, 2);
   pin(L, h, 3, 3);
@@ -430,12 +442,13 @@ static int cose_operation_next(lua_State *L) {
   c89cbor_error error;
   int option_index = 0, status;
   lua_settop(L, 3);
-  if (!lua_isnil(L, 2))
-    sink = checked(L, 2, SINK)->ptr;
   if (!lua_isnil(L, 3)) {
     options = cose_options_snapshot(L, 3);
     option_index = lua_gettop(L);
   }
+  h = checked(L, 1, COSE_OPERATION);
+  if (!lua_isnil(L, 2))
+    sink = checked(L, 2, SINK)->ptr;
   if (h->active)
     return result(L, C89CBOR_BUSY);
   h->active = 1;

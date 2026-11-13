@@ -26,10 +26,131 @@ local function complete(operation)
   end
   error('conversion stalled')
 end
+-- Option lookups can execute Lua. Closed arguments must be rejected before
+-- native construction, including keys in the private recipient snapshot.
+do
+  local function closes_argument(invoke, close, defaults, expected)
+    local called = false
+    local options = setmetatable(defaults or {}, {__index=function()
+      if not called then
+        called = true
+        close()
+        collectgarbage('collect')
+      end
+    end})
+    local ok, err = pcall(invoke, options)
+    assert(called and not ok and tostring(err):find(expected or 'handle is closed', 1, true), tostring(err))
+  end
+  local function rejects_bad_options(invoke)
+    for _, raises in ipairs({false, true}) do
+      local marker = {}
+      local options = setmetatable({}, {__index=function()
+        if raises then error(marker, 0) end
+        return 'invalid size'
+      end})
+      local ok, err = pcall(invoke, options)
+      assert(not ok and (not raises or err == marker))
+    end
+  end
+  for mode, name in ipairs({'json_to_cbor', 'cbor_to_json', 'encode_map', 'decode_map'}) do
+    for _, suffix in ipairs({'_init', '_open', ''}) do
+      for target=1,3 do
+        local root = c.create({allocator=counting_allocator})
+        local first, second = native_case(mode, false)
+        local arguments = {first, second, root}
+        closes_argument(function(options)
+          return root[name..suffix](root, first, second, options)
+        end, function() assert(arguments[target]:close() == c.OK) end)
+        assert(first:close() == c.OK and second:close() == c.OK and root:close() == c.OK)
+      end
+      local root = c.create({allocator=counting_allocator})
+      local first, second = native_case(mode, false)
+      rejects_bad_options(function(options)
+        return root[name..suffix](root, first, second, options)
+      end)
+      assert(first:close() == c.OK and second:close() == c.OK and root:close() == c.OK)
+    end
+  end
+  -- Closing a source also releases its heap-owned fd callback context.
+  for _, suffix in ipairs({'_init', '_open', ''}) do
+    local root = c.create({allocator=counting_allocator})
+    local fd = root:fd_create(0)
+    local source = fd:source()
+    local unused, sink = native_case(1, false)
+    closes_argument(function(options)
+      return root['cbor_to_json'..suffix](root, source, sink, options)
+    end, function()
+      assert(source:close() == c.OK and fd:close() == c.OK)
+    end)
+    assert(unused:close() == c.OK and sink:close() == c.OK and root:close() == c.OK)
+  end
+  for _, recipients in ipairs({false, true}) do
+    local name = recipients and 'cose_encrypt' or 'cose_encrypt0'
+    local kind = recipients and c.COSE_A256KW or c.COSE_A256GCM
+    for _, suffix in ipairs({'_init', '_open', ''}) do
+      for target=1,(recipients and 5 or 4) do
+        local root = c.create({allocator=counting_allocator})
+        local source, sink = native_case(1, false)
+        -- Independent keys allow the options callback to close the runtime too.
+        local keys = {c.cose_key_create(kind, string.rep('k',32)),
+                      c.cose_key_create(kind, string.rep('l',32))}
+        local arguments = {source, sink, root, keys[1], keys[2]}
+        local key = recipients and {keys[1], keys[2]} or keys[1]
+        closes_argument(function(options)
+          return root[name..suffix](root, source, sink, key, options)
+        end, function()
+          assert(arguments[target]:close() == c.OK)
+          if recipients and target >= 4 then
+            key[target-3] = keys[6-target]
+          end
+        end)
+        assert(source:close() == c.OK and sink:close() == c.OK)
+        assert(keys[1]:close() == c.OK and keys[2]:close() == c.OK and root:close() == c.OK)
+      end
+      local root = c.create({allocator=counting_allocator})
+      local source, sink = native_case(1, false)
+      local key = c.cose_key_create(kind, string.rep('k',32))
+      rejects_bad_options(function(options)
+        return root[name..suffix](root, source, sink, recipients and {key} or key, options)
+      end)
+      assert(source:close() == c.OK and sink:close() == c.OK)
+      assert(key:close() == c.OK and root:close() == c.OK)
+    end
+  end
+  for target=1,2 do
+    local root = c.create({allocator=counting_allocator})
+    local source, sink = native_case(1, false)
+    local unused, replacement = native_case(2, false)
+    local key = root:cose_key_init(c.COSE_A256GCM, string.rep('k',32))
+    local op = root:cose_encrypt0_init(source, sink, key)
+    closes_argument(function(options) return op:next(replacement, options) end,
+                    function() assert((target == 1 and op or replacement):close() == c.OK) end)
+    assert(op:close() == c.OK and replacement:close() == c.OK)
+    assert(source:close() == c.OK and sink:close() == c.OK and unused:close() == c.OK)
+    assert(key:close() == c.OK and root:close() == c.OK)
+  end
+  for _, name in ipairs({'cwt_init', 'cwt_create'}) do
+    local root = c.create({allocator=counting_allocator})
+    closes_argument(function(options) return root[name](root, options) end,
+                    function() assert(root:close() == c.OK) end)
+  end
+  for target=1,2 do
+    local root = c.create({allocator=counting_allocator})
+    local token = root:cwt_create()
+    local bytes = c.span('invalid token')
+    closes_argument(function(policy) return token:verify(bytes, policy) end,
+                    function() assert((target == 1 and token or bytes):close() == c.OK) end,
+                    {now=100}, target == 2 and 'string expected' or nil)
+    assert(token:close() == c.OK and bytes:close() == c.OK and root:close() == c.OK)
+  end
+end
 for _, name in ipairs({'json_to_cbor', 'cbor_to_json', 'encode_map', 'decode_map'}) do
   local mode = name == 'json_to_cbor' and 1 or name == 'cbor_to_json' and 2 or name == 'encode_map' and 3 or 4
   local first, second = native_case(mode)
-  local operation, status, diagnostic = runtime[name .. '_init'](runtime, first, second, {chunk=1, step_events=2})
+  local lookups = 0
+  local options = setmetatable({chunk=1, step_events=2}, {__index=function() lookups=lookups+1 end})
+  local operation, status, diagnostic = runtime[name .. '_init'](runtime, first, second, options)
+  assert(lookups > 0)
   assert(operation, diagnostic and diagnostic.message)
   assert(first:close() == c.INVALID and second:close() == c.INVALID and runtime:close() == c.INVALID)
   complete(operation)
@@ -297,7 +418,9 @@ do
       if stream then seal=seal..'_stream'; verify=verify..'_stream' end
       for _, mode in ipairs({'','_init','_open'}) do
         local source, sink = native_case(1, mode ~= '')
-        local options = {record_bytes=stream and 16 or 2048, aad='context'}
+        local lookups = 0
+        local options = setmetatable({record_bytes=stream and 16 or 2048, aad='context'},
+                                     {__index=function() lookups=lookups+1 end})
         if mode == '' then assert(root[seal](root,source,sink,key,options) == c.OK)
         else
           local op = assert(root[seal..mode](root,source,sink,key,options))
@@ -305,6 +428,7 @@ do
           repeat local status,err=op:run(); assert(status>=0,err.message) until status==c.DONE
           assert(op:close()==c.OK)
         end
+        assert(lookups > 0)
         assert(source:close()==c.OK and sink:close()==c.OK)
         source,sink = native_case(2, mode ~= '')
         if mode == '' then assert(root[verify](root,source,sink,verify_key,options)==c.OK)
