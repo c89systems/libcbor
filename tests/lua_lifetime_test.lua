@@ -331,6 +331,71 @@ elseif group == 'policy' then
     end)
   end
   assert(token:close() == c.OK and key:close() == c.OK and root:close() == c.OK)
+elseif group == 'gc' then
+  collectgarbage('incremental')
+  local pause = collectgarbage('param', 'pause', 0)
+  local stepmul = collectgarbage('param', 'stepmul', 10000)
+  local stepsize = collectgarbage('param', 'stepsize', 0)
+  for _, method in ipairs({'source', 'sink'}) do
+    for _, ctor in ipairs({'fd_create', 'fd'}) do
+      for _, rooted in ipairs({false, true}) do
+        for _, borrowed in ipairs({false, true}) do
+          for _, pending in ipairs({1, 100}) do
+            case(method..' '..ctor..' rooted='..tostring(rooted)..
+                 ' borrowed='..tostring(borrowed)..' pending='..pending, function()
+              collectgarbage('collect')
+              local root = rooted and c.init() or nil
+              local fd = root and root[ctor](root,0) or c[ctor](0)
+              local construct = fd[method]
+              local first = borrowed and construct(fd) or nil
+              local active, inside, closed, blocked = false, 0, 0, 0
+              collectgarbage('stop')
+              for i=1,pending do
+                setmetatable({}, {__gc=function()
+                  if not active then return end
+                  -- Assert the GC callback occurs in the native constructor,
+                  -- rather than before the call or after it returns.
+                  local constructing = false
+                  for level=2,16 do
+                    local info = debug.getinfo(level,'f')
+                    if not info then break end
+                    if info.func == construct then constructing=true; break end
+                  end
+                  if constructing then
+                    inside = inside + 1
+                    local status = fd:close()
+                    if status == c.OK then closed=closed+1
+                    elseif status == c.INVALID then blocked=blocked+1 end
+                  end
+                end})
+              end
+              collectgarbage('restart')
+              active = true
+              local ok, endpoint = pcall(construct,fd)
+              active = false
+              assert(inside > 0, 'GC did not run inside endpoint construction')
+              assert(closed + blocked == inside, 'unexpected finalizer error or close status')
+              if borrowed then
+                assert(closed == 0 and ok and endpoint)
+                assert(fd:close() == c.INVALID)
+                assert(first:close() == c.OK and fd:close() == c.INVALID)
+                assert(endpoint:close() == c.OK)
+              else
+                assert(closed > 0)
+                assert(not ok and tostring(endpoint):find('handle is closed',1,true), tostring(endpoint))
+              end
+              assert(fd:close() == c.OK)
+              if root then assert(root:close() == c.OK) end
+              collectgarbage('collect')
+            end)
+          end
+        end
+      end
+    end
+  end
+  collectgarbage('param', 'pause', pause)
+  collectgarbage('param', 'stepmul', stepmul)
+  collectgarbage('param', 'stepsize', stepsize)
 else
   error('unknown lifetime group: '..group)
 end

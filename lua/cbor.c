@@ -943,18 +943,22 @@ static int fd_factory(lua_State *L, int create) {
 }
 static int new_fd(lua_State *L) { return fd_factory(L, 0); }
 static int create_fd(lua_State *L) { return fd_factory(L, 1); }
+/* Allocating an endpoint can run finalizers that close its owner. Revalidate
+ * and borrow the wrapper before accessing the native descriptor. */
 static int fd_source(lua_State *L) {
-  c89cbor_fd *fd = checked(L, 1, FD)->ptr;
+  handle *owner;
   handle *h = new_handle(L, SOURCE, sizeof(c89cbor_source));
-  (void)c89cbor_fd_source(fd, h->ptr);
+  owner = checked(L, 1, FD);
   pin(L, h, 1, 1);
+  (void)c89cbor_fd_source(owner->ptr, h->ptr);
   return 1;
 }
 static int fd_sink(lua_State *L) {
-  c89cbor_fd *fd = checked(L, 1, FD)->ptr;
+  handle *owner;
   handle *h = new_handle(L, SINK, sizeof(c89cbor_sink));
-  (void)c89cbor_fd_sink(fd, h->ptr);
+  owner = checked(L, 1, FD);
   pin(L, h, 1, 1);
+  (void)c89cbor_fd_sink(owner->ptr, h->ptr);
   return 1;
 }
 static int transfer_factory(lua_State *L, int create) {
