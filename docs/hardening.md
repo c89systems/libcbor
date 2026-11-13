@@ -5,8 +5,8 @@ accepted behavior and [standalone application](standalone.md) for local peers.
 These checks prepare an unreleased ABI 0; they do not release or migrate cai.
 
 Unit tests cover the full SDK target matrix using the declared runners. E2E
-tests (`standalone-peer` and `reference-peer`) run only in the native x86_64
-Linux glibc host context (`x86_64-linux-gnu`), rather than once per SDK target.
+tests (`standalone-peer`, `reference-peer` and `cose-c-peer`) run only in the
+native x86_64 Linux glibc host context (`x86_64-linux-gnu`), rather than once per SDK target.
 Other targets retain compilation/linking and unit, ABI and package checks;
 they have no deferred E2E runner requirement.
 
@@ -38,16 +38,18 @@ On x86_64 those become plain load/store instructions which Helgrind cannot
 identify as C atomics. The suppression matches that exact upstream function and
 fetch call chain; it does not suppress libcbor accesses or general provider races.
 
-## Reference peer
+## Reference peers
 
-The selected independent implementation is
-[Python-CWT 4.0.0](https://pypi.org/project/cwt/4.0.0/).
+The independent implementations are
+[Python-CWT 4.0.0](https://pypi.org/project/cwt/4.0.0/) and
+[COSE-C](https://github.com/cose-wg/COSE-C/tree/97d1805e71b7a6770093c5e6790d46611680d563).
 [tests/e2e/pod.yaml.in](../tests/e2e/pod.yaml.in) declares the single fixture
 service. Its Python 3.12 Alpine base is pinned by digest; all six wheel artifacts
 are pinned by version, URL and SHA-256 in
 [tests/e2e/wheels.lock](../tests/e2e/wheels.lock). Dependencies are downloaded only
 into this checkout's `.cache/e2e`. This fixture currently targets a native
-x86_64 Linux Podman host. It requires rootless Podman, curl and sha256sum.
+x86_64 Linux Podman host. It requires rootless Podman, curl, sha256sum, tar,
+CMake, Ninja and the prepared lifecycle x86_64 musl C/C++ toolchain.
 No live provider, credentials, privileged cleanup or broker is used.
 
 Python only transforms bounded fixture bytes through library APIs. The compiled
@@ -71,6 +73,40 @@ Those bidirectional checks provide an independent primitive/encoding check,
 are never rewritten to emulate another algorithm. This upstream limitation is
 not an unresolved libcbor test failure and is not hidden as a passed library test.
 
+The separate `cose-c-peer` test closes that library-interoperability gap for
+Encrypt/A256GCM with X25519 ECDH-ES+A256KW (`-31`). COSE-C commit
+`97d1805e71b7a6770093c5e6790d46611680d563` and cn-cbor commit
+`f713bf67bcf3e076d47e474ce060252ef8be48c7` are pinned by archive URL and SHA-256 in
+[tests/e2e/sources.lock](../tests/e2e/sources.lock). CMake builds the bounded C89
+adapter and the unmodified upstream libraries using the lifecycle's musl
+toolchain and cpkt 0.7.0's OpenSSL 3.6.5. The static executable is copied into
+the same pinned container; the image needs no compiler or extra Alpine packages.
+These are test-only dependencies, absent from shipped libcbor SDKs.
+COSE-C is C++ internally; its language settings do not change libcbor's C89 API.
+
+The fixture uses upstream public APIs for recipient construction, ephemeral key
+generation, KDF context, key wrapping, CBOR encoding and authenticated decryption.
+CTest exchanges payloads of 0, 1, 31, 32, 255, 4096 and 15360 bytes, including
+native recipient fanout, and requires wrong keys, wrong external AAD, changed
+ciphertext and truncated objects to fail in both directions. The native test
+explicitly raises its bounded object budget above the default record size;
+these fixtures are buffered objects, not record-stream interoperability tests.
+
+COSE-C's public `COSE_Enveloped_GetContent` is declared but has no definition.
+Consequently libcbor-to-COSE-C checks require successful authenticated decryption
+(HTTP 204 with no body); COSE-C-to-libcbor checks additionally compare recovered
+plaintext byte-for-byte. No private struct access or replacement getter is used.
+Adapter crashes, timeouts and execution failures return HTTP 500, distinct from
+expected rejection (422). The test requires the exact status for each case.
+Both libraries use OpenSSL, so this establishes independent COSE processing,
+not an independent cryptographic backend.
+
+The upstream build needs CMake's compatibility policy baseline for cn-cbor and
+`-fpermissive` solely on COSE-C's `openssl.cpp`: an EC branch declares the
+OpenSSL 3 const key pointer mutable but only reads it. Our adapter retains strict
+warnings and `-std=c89`; upstream sources are not patched. Python-CWT is also
+unmodified, with no upstream patch or PR required.
+
 Offline tests additionally consume exact COSE WG Encrypt0/A256GCM and
 Mac0/HMAC256 examples from commit
 `53c9d634333bb4f529d78f5980fffa2667ee2c12` of
@@ -82,8 +118,12 @@ The script renders only known placeholders into `build/e2e/pod.yaml`, with a
 checkout-specific pod name, loopback port and writable owned state. A bounded
 HTTP readiness probe verifies protocol startup. Container/host writes and
 unprivileged deletion are tested. EXIT teardown stops only that manifest's
-resources. Logs, rendered manifest and image ID remain in `build/e2e/`; normal
-success removes the mutable marker files. No container is retained after a run.
+resources; successful teardown additionally checks that its pod and container
+no longer exist. The fixture handles SIGTERM explicitly as container PID 1.
+Logs, rendered manifest, COSE-C configure/build logs and image ID
+remain in `build/e2e/`; CTest owns the exchange results under the native Debug
+build's `Testing/Temporary/`. Normal success removes the mutable marker files.
+No container is retained after a run.
 `make clean` removes generated state and local caches under normal job ownership.
 
 ## Fuzz campaigns

@@ -1,12 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname -- "$0")/workspace.sh"
-for tool in podman curl sha256sum; do command -v "$tool" >/dev/null; done
+for tool in podman curl sha256sum cmake ninja tar; do command -v "$tool" >/dev/null; done
 [[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]] || { printf 'E2E requires rootless Podman\n' >&2; exit 1; }
 [[ $(uname -m) == x86_64 && $(uname -s) == Linux ]] || { printf 'Reference wheels require native x86_64 Linux\n' >&2; exit 1; }
 state=build/e2e
 c89_owned_path "$state"
 mkdir -p "$state/state" .cache/e2e/wheels
+mkdir -p "$state/sources" .cache/e2e/sources
+while IFS=$'\t' read -r filename checksum url; do
+  [[ $filename != */* && $checksum =~ ^[0-9a-f]{64}$ && $url == https://codeload.github.com/* ]] || exit 1
+  destination=.cache/e2e/sources/$filename
+  if [[ ! -f $destination ]]; then
+    curl --fail --location --retry 2 "$url" -o "$destination.part"
+    printf '%s  %s\n' "$checksum" "$destination.part" | sha256sum -c -
+    mv -- "$destination.part" "$destination"
+  fi
+  printf '%s  %s\n' "$checksum" "$destination" | sha256sum -c -
+  if [[ ! -d $state/sources/${filename%.tar.gz} ]]; then
+    tar -xzf "$destination" -C "$state/sources"
+  fi
+done <tests/e2e/sources.lock
+lifecycle=${CPKT_LIFECYCLE_SCRIPTS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/pkt-systems-cmake-lifecycle/scripts}
+scripts/deps.sh x86_64-linux-musl cpkt
+cmake -S tests/e2e/cose-c -B "$state/cose-c" -G Ninja \
+  "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake" \
+  "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DC89CBOR_TARGET=x86_64-linux-musl \
+  -DCMAKE_BUILD_TYPE=Release \
+  "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-musl/lib/cmake/CpktCore" \
+  "-DCOSE_C_SOURCE_DIR=$root/$state/sources/COSE-C-97d1805e71b7a6770093c5e6790d46611680d563" \
+  "-DFETCHCONTENT_SOURCE_DIR_PROJECT_CN_CBOR=$root/$state/sources/cn-cbor-f713bf67bcf3e076d47e474ce060252ef8be48c7" \
+  >"$state/cose-c-configure.log" 2>&1
+cmake --build "$state/cose-c" --parallel "${BUILD_JOBS:-2}" >"$state/cose-c-build.log" 2>&1
+cp "$state/cose-c/cose-c-peer" .cache/e2e/cose-c-peer
 while IFS=$'\t' read -r filename checksum url; do
   [[ $filename != */* && $checksum =~ ^[0-9a-f]{64}$ && $url == https://files.pythonhosted.org/* ]] || exit 1
   destination=.cache/e2e/wheels/$filename
@@ -47,9 +73,20 @@ done
 [[ $(cat "$state/state/container-write") == python-cwt/4.0.0 ]]
 printf 'host write\n' >"$state/state/host-write"
 scripts/build.sh core x86_64-linux-gnu Debug
-C89CBOR_E2E_PORT=$port ctest --test-dir build/x86_64-linux-gnu-debug --output-on-failure --stop-on-failure --no-tests=error -R '^reference-peer$'
+C89CBOR_E2E_PORT=$port ctest --test-dir build/x86_64-linux-gnu-debug --output-on-failure --stop-on-failure --no-tests=error -R '^(reference-peer|cose-c-peer)$'
 podman logs "$name-reference" >"$state/peer.log" 2>&1
 podman kube down "$manifest" >"$state/down.log" 2>&1
+for kind in pod container; do
+  resource=$name
+  [[ $kind == pod ]] || resource=$name-reference
+  if podman "$kind" exists "$resource"; then
+    printf 'Reference %s remains after teardown: %s\n' "$kind" "$resource" >&2
+    exit 1
+  else
+    status=$?
+    ((status == 1)) || exit "$status"
+  fi
+done
 started=0
 rm -- "$state/state/container-write" "$state/state/host-write"
 printf 'Rootless reference peer stopped; host reset verified\n'

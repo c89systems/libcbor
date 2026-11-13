@@ -68,8 +68,11 @@ across all SDK targets on their declared runners; SDK compilation, ABI and
 package verification remain target-specific. Other targets do not require E2E
 execution, including native Darwin.
 
-Use Python-CWT 4.0.0 as a bounded reference service in rootless Podman Kube. Pin
-the base image by digest and every Python wheel by version and SHA-256. Python
+Use Python-CWT 4.0.0 and COSE-C as bounded reference peers in rootless Podman Kube.
+Pin the base image by digest, every Python wheel by version and SHA-256, and
+COSE-C/cn-cbor source archives by commit, URL and SHA-256. Build the independent
+COSE-C adapter with the pinned lifecycle toolchain and cpkt OpenSSL provider;
+keep all peer dependencies test-only. Python
 only serves bounded fixture transformations using upstream APIs; CTest and C
 executables own test assertions and expected failures. Do not emulate unsupported
 wire algorithms by rewriting protected headers or adding production aliases.
@@ -88,8 +91,15 @@ as a failing scoped test and diagnose it before claiming interoperability.
 Python-CWT 4.0.0 supports X25519 key derivation, but cannot exchange our
 X25519 ECDH-ES+A256KW (`-31`) form: its OKP key validation rejects `-31` and
 its wrapping encoder hard-codes EC2 ephemeral keys. Test that form separately
-with independent cryptography primitives, identifying it as fixture verification rather than COSE-library
-interoperability. Retain exact applicable COSE WG vectors as offline proof.
+with independent cryptography primitives, identifying it as fixture verification
+rather than COSE-library interoperability. Add a separate COSE-C library test
+for that exact form: COSE-C authenticates native objects, and native decryption
+compares COSE-C-generated plaintext byte-for-byte. Test empty and larger bounded
+payloads, wrong keys/AAD, tampering and truncation in both directions. COSE-C's
+missing public Encrypt plaintext getter limits that direction to authenticated
+acceptance; do not emulate it through private structs or replacement functions.
+Distinguish adapter execution failures from expected authentication rejection.
+Retain exact applicable COSE WG vectors as offline proof.
 
 Ship a documented standalone C client/server example using only public APIs,
 explicit key files, TCP/Unix framing and bounded UDP/Unix datagrams. Authenticate

@@ -3,5 +3,6 @@ COPY wheels /wheels
 COPY requirements.txt /requirements.txt
 RUN python -m pip install --no-index --no-cache-dir --require-hashes --find-links=/wheels -r /requirements.txt && rm -rf /wheels
 COPY peer.py /peer.py
+COPY cose-c-peer /cose-c-peer
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 CMD ["python", "/peer.py"]

@@ -1,12 +1,16 @@
-"""Bounded data fixture: Python-CWT does COSE, CTest owns all assertions.
+"""Bounded data fixture: Python-CWT and COSE-C do COSE; CTest owns assertions.
 
 The X25519 fixture uses independent cryptography primitives because Python-CWT
 4.0.0 hard-codes EC2 in ECDH-ES key-wrap. It is deliberately identified separately
 from library interoperability, with no protected-header rewriting or aliases.
+The cose-c-x route invokes the independent native COSE-C adapter. Its open
+operation reports authenticated acceptance without a plaintext response body.
 Keys below are public test vectors, never application defaults.
 """
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
+import signal
+import subprocess
 import traceback
 import cbor2
 from cwt import COSE, COSEKey, Recipient
@@ -19,6 +23,24 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 RAW = bytes(31) + b'\x01'
 AAD = b'libcbor-e2e'
 COSE_ENGINE = COSE.new()
+
+class CoseCPeerError(RuntimeError):
+    """An adapter failure, distinct from a COSE authentication rejection."""
+
+def cose_c_fixture(data, action, aad):
+    args = ['/cose-c-peer', 'seal' if action == 'seal' else 'open', aad.hex()]
+    if action == 'open-wrong-key':
+        args.append('wrong-key')
+    try:
+        completed = subprocess.run(args, input=data, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CoseCPeerError('COSE-C adapter failed') from error
+    if completed.returncode == 2:
+        raise ValueError('COSE-C rejected input: ' + completed.stderr.decode('utf-8', errors='replace'))
+    if completed.returncode != 0 or len(completed.stdout) > 16384:
+        raise CoseCPeerError('COSE-C adapter failed: ' + repr(completed.stderr))
+    return completed.stdout
 
 def key(family):
     if family in ('gcm', 'kw', 'hmac'):
@@ -94,7 +116,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             action, family = self.path.strip('/').split('/')
-            if action not in ('seal', 'open'):
+            if action not in ('seal', 'open', 'open-wrong-key') or (action == 'open-wrong-key' and family != 'cose-c-x'):
                 raise ValueError('unknown action')
             length = int(self.headers.get('Content-Length', '-1'))
             if not 0 <= length <= 16384:
@@ -103,16 +125,26 @@ class Handler(BaseHTTPRequestHandler):
             if len(data) != length:
                 raise ValueError('short input')
             aad = bytes.fromhex(self.headers.get('X-AAD', AAD.hex()))
-            result = transform(family, data, action == 'seal', aad)
+            result = (cose_c_fixture(data, action, aad) if family == 'cose-c-x'
+                      else transform(family, data, action == 'seal', aad))
             if len(result) > 16384:
                 raise ValueError('fixture output bound')
-            self.send_response(200)
+            self.send_response(204 if family == 'cose-c-x' and action != 'seal' else 200)
             self.send_header('Content-Length', str(len(result)))
             self.end_headers(); self.wfile.write(result)
+        except CoseCPeerError:
+            traceback.print_exc()
+            self.send_error(500, 'COSE-C adapter failure')
         except Exception:
             traceback.print_exc()
             self.send_error(422, 'fixture rejected input')
 
+def terminate(signum, frame):
+    # Python is PID 1 in the fixture; explicitly handle Podman's normal stop.
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, terminate)
 with open('/state/container-write', 'w', encoding='ascii') as marker:
     marker.write('python-cwt/4.0.0\n')
-HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+with HTTPServer(('0.0.0.0', 8080), Handler) as server:
+    server.serve_forever()

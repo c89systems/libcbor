@@ -97,7 +97,7 @@ static int peer(fixture *f, int port, const char *action, const char *family,
 }
 static int native(fixture *f, int family, int seal, c89cbor_cose_key *key,
                   c89cbor_cose_key *const *recipients, buffer *input,
-                  buffer *output) {
+                  buffer *output, int wrong_aad) {
   c89cbor_source source;
   c89cbor_sink sink;
   c89cbor_cose_options options;
@@ -109,8 +109,11 @@ static int native(fixture *f, int family, int seal, c89cbor_cose_key *key,
   input->offset = 0;
   output->length = output->offset = 0;
   options = f->root.default_cose_options(&f->root);
-  options.aad = "libcbor-e2e";
-  options.aad_length = 11;
+  /* This bounded object fixture deliberately exercises sizes above the
+   * production default record budget; it does not claim message streaming. */
+  options.record_bytes = sizeof(input->bytes);
+  options.aad = wrong_aad ? "incorrect" : "libcbor-e2e";
+  options.aad_length = wrong_aad ? 9 : 11;
   if (family < 3) {
     if (!seal)
       return f->root.cose_decrypt(&f->root, &source, &sink, key, &options,
@@ -145,7 +148,63 @@ static void tamper(buffer *wire) {
   assert(blobs == 3u);
   assert(decoder.cleanup(&decoder) == 0);
 }
-int main(void) {
+static void cose_c_checks(fixture *f, int port, c89cbor_cose_key *key,
+                          c89cbor_cose_key *public_key) {
+  static const size_t lengths[] = {0, 1, 31, 32, 255, 4096, 15360};
+  c89cbor_cose_key wrong_key, *recipients[2];
+  c89cbor_error error;
+  unsigned char raw[32];
+  size_t i, j;
+  memset(raw, 0, sizeof(raw));
+  raw[0] = 8;
+  raw[31] = 1;
+  assert(f->root.cose_key_init(&f->root, &wrong_key,
+                               C89CBOR_COSE_X25519_PRIVATE, raw, sizeof(raw),
+                               NULL, 0, &error) == 0);
+  recipients[0] = recipients[1] = public_key;
+  for (i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
+    f->input.length = lengths[i];
+    for (j = 0; j < f->input.length; ++j)
+      f->input.bytes[j] = (unsigned char)(j * 37u + i);
+    assert(native(f, 2, 1, key, recipients, &f->input, &f->wire, 0) == 0);
+    /* COSE-C's public API reports authenticated decryption, but its declared
+     * Encrypt plaintext getter has no implementation. A 204 carries no body.
+     */
+    assert(peer(f, port, "open", "cose-c-x", &f->wire, &f->output, 0) == 204 &&
+           f->output.length == 0);
+    assert(peer(f, port, "open", "cose-c-x", &f->wire, &f->output, 1) == 422);
+    assert(peer(f, port, "open-wrong-key", "cose-c-x", &f->wire, &f->output,
+                0) == 422);
+    tamper(&f->wire);
+    assert(peer(f, port, "open", "cose-c-x", &f->wire, &f->output, 0) == 422);
+    tamper(&f->wire);
+    --f->wire.length;
+    assert(peer(f, port, "open", "cose-c-x", &f->wire, &f->output, 0) == 422);
+    assert(peer(f, port, "seal", "cose-c-x", &f->input, &f->wire, 0) == 200);
+    assert(native(f, 2, 0, key, NULL, &f->wire, &f->output, 0) == 0);
+    assert(f->output.length == f->input.length &&
+           memcmp(f->output.bytes, f->input.bytes, f->input.length) == 0);
+    assert(native(f, 2, 0, key, NULL, &f->wire, &f->output, 1) ==
+               C89CBOR_AUTH &&
+           f->output.length == 0);
+    assert(native(f, 2, 0, &wrong_key, NULL, &f->wire, &f->output, 0) ==
+               C89CBOR_AUTH &&
+           f->output.length == 0);
+    tamper(&f->wire);
+    assert(native(f, 2, 0, key, NULL, &f->wire, &f->output, 0) ==
+               C89CBOR_AUTH &&
+           f->output.length == 0);
+    tamper(&f->wire);
+    --f->wire.length;
+    assert(native(f, 2, 0, key, NULL, &f->wire, &f->output, 0) < 0 &&
+           f->output.length == 0);
+  }
+  assert(wrong_key.cleanup(&wrong_key) == 0);
+  puts("COSE-C X25519/A256KW: 7 payload sizes, authenticated exchanges in both "
+       "directions; wrong key/AAD, mutation and truncation rejected");
+}
+
+int main(int argc, char **argv) {
   static const char *const names[] = {"gcm", "kw", "x", "ed", "p256", "hmac"};
   static const c89cbor_cose_key_kind kinds[] = {
       C89CBOR_COSE_A256GCM,        C89CBOR_COSE_A256KW,
@@ -183,11 +242,16 @@ int main(void) {
   assert(f->root.cose_key_init(&f->root, &public_key,
                                C89CBOR_COSE_X25519_PUBLIC, public_bytes, length,
                                NULL, 0, &error) == 0);
+  assert(argc == 1 || (argc == 2 && strcmp(argv[1], "cose-c") == 0));
+  if (argc == 2) {
+    cose_c_checks(f, port, &keys[2], &public_key);
+    goto cleanup;
+  }
   f->input.length = sizeof(claims);
   memcpy(f->input.bytes, claims, sizeof(claims));
   for (i = 0; i < 6u; ++i) {
     recipients[0] = recipients[1] = i == 2 ? &public_key : &keys[i];
-    assert(native(f, (int)i, 1, &keys[i], recipients, &f->input, &f->wire) ==
+    assert(native(f, (int)i, 1, &keys[i], recipients, &f->input, &f->wire, 0) ==
            0);
     assert(peer(f, port, "open", names[i], &f->wire, &f->output, 0) == 200);
     assert(f->output.length == f->input.length &&
@@ -196,11 +260,11 @@ int main(void) {
     tamper(&f->wire);
     assert(peer(f, port, "open", names[i], &f->wire, &f->output, 0) == 422);
     assert(peer(f, port, "seal", names[i], &f->input, &f->wire, 0) == 200);
-    assert(native(f, (int)i, 0, &keys[i], NULL, &f->wire, &f->output) == 0);
+    assert(native(f, (int)i, 0, &keys[i], NULL, &f->wire, &f->output, 0) == 0);
     assert(f->output.length == f->input.length &&
            memcmp(f->input.bytes, f->output.bytes, f->input.length) == 0);
     tamper(&f->wire);
-    assert(native(f, (int)i, 0, &keys[i], NULL, &f->wire, &f->output) < 0 &&
+    assert(native(f, (int)i, 0, &keys[i], NULL, &f->wire, &f->output, 0) < 0 &&
            f->output.length == 0);
   }
   memset(&policy, 0, sizeof(policy));
@@ -239,11 +303,12 @@ int main(void) {
       policy.now = 1700000000;
       assert(token.cleanup(&token) == 0);
     }
+  puts("COSE/CWT bidirectional Python peer and rejection checks passed");
+cleanup:
   assert(public_key.cleanup(&public_key) == 0);
   for (i = 0; i < 6u; ++i)
     assert(keys[i].cleanup(&keys[i]) == 0);
   assert(f->root.cleanup(&f->root) == 0);
   free(f);
-  puts("COSE/CWT bidirectional peer and rejection checks passed");
   return 0;
 }
