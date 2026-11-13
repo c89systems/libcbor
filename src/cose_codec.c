@@ -281,13 +281,14 @@ static int header_map(c89_cose_cursor *cursor, c89_cose_header *header,
          cursor->token.type != C89CBOR_END) {
     status = read_label(cursor, &key, arena);
     key.protected_value = protected_value;
-    key.known = key.type != C89CBOR_TEXT &&
-                ((key.type == C89CBOR_UINT &&
-                  (key.argument == 1u || key.argument == 2u ||
-                   key.argument == 4u || (!recipient && key.argument == 5u))) ||
-                 (recipient && key.type == C89CBOR_NEGATIVE &&
-                  (key.argument == 0u ||
-                   (key.argument >= 19u && key.argument <= 25u))));
+    key.known =
+        key.type != C89CBOR_TEXT &&
+        ((key.type == C89CBOR_UINT &&
+          (key.argument == 1u || key.argument == 2u || key.argument == 4u ||
+           (recipient == 0 && key.argument == 5u))) ||
+         (recipient == 1 && key.type == C89CBOR_NEGATIVE &&
+          (key.argument == 0u ||
+           (key.argument >= 19u && key.argument <= 25u))));
     if (status == 0)
       status = insert_label(labels, &key);
     if (status == 0)
@@ -337,25 +338,25 @@ static int header_map(c89_cose_cursor *cursor, c89_cose_header *header,
                           &header->id_length);
       if (status != 0 || header->id_length > 64u)
         return status != 0 ? status : C89CBOR_LIMIT;
-    } else if (label_number(&key, 5)) {
+    } else if (recipient == 0 && label_number(&key, 5)) {
       status = c89_cose_blob(cursor, C89CBOR_BYTES, header->nonce, 12u, &index);
       if (status != 0 || index != 12u)
         return status != 0 ? status : C89CBOR_MALFORMED;
       header->have_nonce = 1;
-    } else if (label_number(&key, -1)) {
+    } else if (recipient == 1 && label_number(&key, -1)) {
       status = ephemeral(cursor, header->ephemeral, arena);
       if (status == C89CBOR_UNSUPPORTED)
         header->unsupported = 1;
       else if (status != 0)
         return status;
       header->have_ephemeral = 1;
-    } else if (label_number(&key, -20)) {
+    } else if (recipient == 1 && label_number(&key, -20)) {
       status = blob_arena(cursor, C89CBOR_BYTES, arena, &header->salt,
                           &header->salt_length);
       if (status != 0)
         return status;
-    } else if (key.type == C89CBOR_NEGATIVE && key.argument >= 20u &&
-               key.argument <= 25u) {
+    } else if (recipient == 1 && key.type == C89CBOR_NEGATIVE &&
+               key.argument >= 20u && key.argument <= 25u) {
       number = (int)key.argument - 20;
       index = (size_t)number % 3u;
       party = &header->party[(size_t)number / 3u][index];

@@ -5,11 +5,15 @@ typedef struct cose_allocator_probe {
   size_t calls, fail_at, live;
   c89cbor_cose_operation *operation;
   c89cbor_cose_key *key;
+  c89cbor_cwt *token;
   int reenter;
+  int pin_on_allocate;
 } cose_allocator_probe;
 static void *cose_probe_alloc(void *context, size_t length) {
   cose_allocator_probe *probe = context;
   void *bytes;
+  if (probe->pin_on_allocate && probe->key != NULL)
+    assert(probe->key->cleanup(probe->key) == C89CBOR_BUSY);
   if (++probe->calls == probe->fail_at)
     return NULL;
   bytes = malloc(length);
@@ -24,12 +28,47 @@ static void cose_probe_free(void *context, void *bytes) {
       assert(probe->operation->cleanup(probe->operation) == C89CBOR_BUSY);
     if (probe->key != NULL)
       assert(probe->key->cleanup(probe->key) == C89CBOR_BUSY);
+    if (probe->token != NULL)
+      assert(probe->token->cleanup(probe->token) == C89CBOR_BUSY);
   }
   if (bytes != NULL) {
     assert(probe->live > 0);
     --probe->live;
     free(bytes);
   }
+}
+static void cose_factory_reentry(fixture *f) {
+  cose_allocator_probe probe;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor runtime;
+  c89cbor_cose_operation caller, *operation;
+  c89cbor_error error;
+  int allocated;
+  memset(&probe, 0, sizeof(probe));
+  config.allocator.context = &probe;
+  config.allocator.alloc = cose_probe_alloc;
+  config.allocator.free = cose_probe_free;
+  assert(c89cbor_init(&runtime, &config, &error) == 0);
+  probe.key = &f->content;
+  for (allocated = 0; allocated < 2; ++allocated) {
+    endpoints(f, &f->input, &f->wire);
+    probe.pin_on_allocate = 1;
+    if (allocated)
+      assert(runtime.cose_encrypt0_open(&runtime, &f->source, &f->sink,
+                                        &f->content, NULL, &operation,
+                                        &error) == 0);
+    else {
+      operation = &caller;
+      assert(runtime.cose_encrypt0_init(&runtime, operation, &f->source,
+                                        &f->sink, &f->content, NULL,
+                                        &error) == 0);
+    }
+    probe.pin_on_allocate = 0;
+    assert((allocated ? operation->destroy(operation)
+                      : operation->cleanup(operation)) == 0);
+    assert(probe.live == 0);
+  }
+  assert(runtime.cleanup(&runtime) == 0);
 }
 static int cose_bad_read(void *context, void *bytes, size_t capacity,
                          size_t *count) {

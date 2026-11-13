@@ -15,6 +15,7 @@ int c89_conversion_prepare(c89cbor *runtime, c89cbor_conversion *conversion,
                            c89cbor_error *error);
 int c89_conversion_run(c89cbor_conversion *conversion, c89cbor_error *error);
 void c89_cose_runtime_methods(c89cbor *runtime);
+void c89_cwt_runtime_methods(c89cbor *runtime);
 int c89_json_encode_init(c89cbor *runtime, c89cbor_conversion *conversion,
                          const c89cbor_source *source, const c89cbor_sink *sink,
                          const c89cbor_options *options,

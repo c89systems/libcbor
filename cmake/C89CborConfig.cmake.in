@@ -1,6 +1,6 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
-find_dependency(lonejson 0.50.0 EXACT CONFIG)
+find_dependency(lonejson 0.50.0 EXACT CONFIG COMPONENTS jwt)
 find_dependency(CpktCore 0.7.0 CONFIG)
 list(APPEND CMAKE_FIND_ROOT_PATH "${CpktCore_PREFIX}")
 list(APPEND CMAKE_PREFIX_PATH "${CpktCore_PREFIX}")

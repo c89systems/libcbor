@@ -72,8 +72,9 @@ interpret or expose an application's media-type policy.
 Wire key IDs select candidates; they do not establish trusted identities.
 Applications provision trusted keys and authorize their use. Public-recipient
 encryption alone does not authenticate a sender: anyone holding the recipient's
-public key can create an encrypted message. Signatures and CWT claim validation
-are separate layers, with no implied implementation in this milestone.
+public key can create an encrypted message. Use the implemented
+[Sign1/Mac0 and CWT interfaces](sign1-cwt.md) for sender authentication and
+explicit native claim policy.
 
 ## Authenticated delivery and bounds
 
@@ -98,7 +99,7 @@ the complete logical stream arrived.
 Default limits are 2 KiB plaintext per record, 2 KiB encoded header material per
 object, eight recipients, 64 bytes per key ID and 2 KiB external application AAD.
 One operation allocates a state block, a byte workspace of
-`3 * record_bytes + 8 * header_bytes + 432`, and a bounded recipient array.
+`4 * record_bytes + 8 * header_bytes + 592`, and a bounded recipient array.
 An allocating constructor adds its shell allocation. Drive performs no further
 libcbor allocator calls. OpenSSL's provider allocations are separate.
 Byte/event drive budgets retain the native runtime defaults. Check all arithmetic,

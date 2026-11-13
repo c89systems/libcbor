@@ -252,6 +252,106 @@ do
   assert(wrap:close() == c.OK and content:close() == c.OK and owner:close() == c.OK)
 end
 -- Exercise deferred finalization of keys, options, endpoints and both shell
+-- Sign1/Mac0 use the same native flow, including all constructor modes.
+do
+  local root = c.create({allocator=counting_allocator})
+  local raw = string.rep('\0',31)..'\1'
+  for _, kind in ipairs({c.COSE_ED25519_PRIVATE, c.COSE_P256_PRIVATE, c.COSE_HMAC256}) do
+    local key = assert(root:cose_key_create(kind, raw))
+    local verify_key = key
+    if kind ~= c.COSE_HMAC256 then
+      local status, public = key:public_key()
+      assert(status == c.OK and #public == (kind == c.COSE_P256_PRIVATE and 65 or 32))
+      verify_key = assert(root:cose_key_init(kind == c.COSE_P256_PRIVATE and c.COSE_P256_PUBLIC or c.COSE_ED25519_PUBLIC, public))
+    end
+    for _, stream in ipairs({false,true}) do
+      local seal = kind == c.COSE_HMAC256 and 'cose_mac0' or 'cose_sign1'
+      local verify = kind == c.COSE_HMAC256 and 'cose_verify_mac0' or 'cose_verify1'
+      if stream then seal=seal..'_stream'; verify=verify..'_stream' end
+      for _, mode in ipairs({'','_init','_open'}) do
+        local source, sink = native_case(1, mode ~= '')
+        local options = {record_bytes=stream and 16 or 2048, aad='context'}
+        if mode == '' then assert(root[seal](root,source,sink,key,options) == c.OK)
+        else
+          local op = assert(root[seal..mode](root,source,sink,key,options))
+          assert(key:close() == c.INVALID)
+          repeat local status,err=op:run(); assert(status>=0,err.message) until status==c.DONE
+          assert(op:close()==c.OK)
+        end
+        assert(source:close()==c.OK and sink:close()==c.OK)
+        source,sink = native_case(2, mode ~= '')
+        if mode == '' then assert(root[verify](root,source,sink,verify_key,options)==c.OK)
+        else
+          local op = assert(root[verify..mode](root,source,sink,verify_key,options))
+          repeat local status,err=op:run(); assert(status>=0,err.message) until status==c.DONE
+          if stream then
+            local status,info=op:stream_info()
+            assert(status==c.OK and info.tag==(kind==c.COSE_HMAC256 and 17 or 18))
+            assert(info.algorithm==(kind==c.COSE_HMAC256 and 5 or kind==c.COSE_P256_PRIVATE and -9 or -19))
+          end
+          assert(op:close()==c.OK)
+        end
+        assert(source:close()==c.OK and sink:close()==c.OK)
+      end
+    end
+    if verify_key~=key then assert(verify_key:close()==c.OK) end
+    assert(key:close()==c.OK)
+  end
+  assert(root:close()==c.OK)
+end
+
+-- Tokens are explicitly bounded. Native claims and policies cross as pointers;
+-- Lua strings/tables are convenience surfaces for callers that want copies.
+do
+  local root=c.create({allocator=counting_allocator})
+  assert(root:default_cwt_options().claims==64)
+  local native_claims,native_policy=native_cwt_case()
+  local policy={accepted_algs={'Ed25519','ES256','HS256'}, accepted_issuers={'issuer'},
+                accepted_audiences={'service'}, required_claims={'sub','exp'}, now=100}
+  local raw=string.rep('\0',31)..'\1'
+  local content=root:cose_key_init(c.COSE_A256GCM,raw)
+  local wrapping=root:cose_key_init(c.COSE_A256KW,raw)
+  for _,kind in ipairs({c.COSE_ED25519_PRIVATE,c.COSE_P256_PRIVATE,c.COSE_HMAC256}) do
+    local key=root:cose_key_init(kind,raw)
+    for _,encrypt in ipairs({false,true}) do
+      for _,ctor in ipairs({'cwt_init','cwt_create'}) do
+        local token=assert(root[ctor](root,{require_cti=true,cose={encrypt=encrypt}}))
+        assert(token:view_get()==c.INPUT)
+        assert(token:set_lonejson(native_claims,'\0id')==c.OK)
+        assert(not pcall(function() token:seal(key,nil,-1) end))
+        local status,view=token:view_get()
+        assert(status==c.OK and not view.authenticated and view.cti=='\0id')
+        assert(token:set_claims(view.encoded)==c.OK)
+        local rc,issuer=token:claim(1)
+        assert(rc==c.OK and issuer=='\x66issuer')
+        assert(token:claim('absent')==c.INPUT)
+        for _,encrypted in ipairs({false,true}) do
+          local enc_key=encrypt and wrapping or content
+          local result,wire,err=token:seal(key,encrypted and {enc_key} or nil)
+          assert(result==c.OK,err.message)
+          assert(wire:length()>0 and wire:string():sub(1,2)=='\xd8\x3d')
+          assert(token:seal(key,nil,1)==c.LIMIT)
+          assert(token:verify(wire,key,encrypted and enc_key or nil,native_policy)==c.OK)
+          local why,verified=token:view_get()
+          assert(why==c.OK and verified.authenticated and verified.claims.iss=='issuer')
+          assert(token:verify(wire,key,encrypted and enc_key or nil,policy)==c.OK)
+          policy.now=1000
+          assert(token:verify(wire,key,encrypted and enc_key or nil,policy)==c.AUTH)
+          assert(token:view_get()==c.INPUT)
+          policy.now=100
+          assert(token:set_lonejson(native_claims,'\0id')==c.OK)
+          assert(wire:close()==c.OK)
+        end
+        assert(token:close()==c.OK)
+      end
+    end
+    assert(key:close()==c.OK)
+  end
+  assert(native_claims:close()==c.OK and native_policy:close()==c.OK)
+  assert(content:close()==c.OK and wrapping:close()==c.OK and root:close()==c.OK)
+end
+
+-- Exercise deferred finalization of keys, options, endpoints and both shell
 -- ownership modes without explicit close or a stable user recipient table.
 do
   local root = c.create({allocator=counting_allocator})

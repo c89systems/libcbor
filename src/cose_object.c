@@ -8,8 +8,8 @@ static void empty_header(c89_cose_header *header) {
     for (j = 0; j < 3u; ++j)
       header->party[i][j].type = C89CBOR_NULL;
 }
-static int make_protected(c89_cose_state *state, c89_cose_header *header,
-                          int algorithm, const c89cbor_cose_key_info *id) {
+int c89_cose_make_protected(c89_cose_state *state, c89_cose_header *header,
+                            int algorithm, const c89cbor_cose_key_info *id) {
   c89_cose_writer writer;
   int status;
   header->algorithm = algorithm;
@@ -38,7 +38,7 @@ static int make_protected(c89_cose_state *state, c89_cose_header *header,
   }
   return status;
 }
-static int make_aad(c89_cose_state *state, int encrypt) {
+int c89_cose_make_aad(c89_cose_state *state, int encrypt) {
   static const char domain[] = "c89.systems/cbor-stream";
   const void *external = state->options.aad;
   size_t external_length = state->options.aad_length;
@@ -62,12 +62,21 @@ static int make_aad(c89_cose_state *state, int encrypt) {
   }
   c89_cose_writer_init(&writer, &state->encoder, state->aad,
                        state->aad_capacity);
-  c89_cose_emit(&writer, C89CBOR_ARRAY, 3);
-  c89_cose_bytes(&writer, C89CBOR_TEXT, encrypt ? "Encrypt" : "Encrypt0",
-                 encrypt ? 7u : 8u);
+  c89_cose_emit(&writer, C89CBOR_ARRAY, state->auth ? 4u : 3u);
+  c89_cose_bytes(&writer, C89CBOR_TEXT,
+                 state->auth == 1   ? "Signature1"
+                 : state->auth == 2 ? "MAC0"
+                 : encrypt          ? "Encrypt"
+                                    : "Encrypt0",
+                 state->auth == 1   ? 10u
+                 : state->auth == 2 ? 4u
+                 : encrypt          ? 7u
+                                    : 8u);
   c89_cose_bytes(&writer, C89CBOR_BYTES, state->body.protected_bytes,
                  state->body.protected_length);
   c89_cose_bytes(&writer, C89CBOR_BYTES, external, external_length);
+  if (state->auth)
+    c89_cose_bytes(&writer, C89CBOR_BYTES, state->plain, state->plain_length);
   c89_cose_emit(&writer, C89CBOR_END, C89CBOR_ARRAY);
   status = c89_cose_writer_finish(&writer);
   state->cipher_length = writer.length;
@@ -84,9 +93,9 @@ static int make_recipient(c89_cose_state *state, size_t index,
   empty_header(&recipient->header);
   recipient->header.id = key->info.key_id;
   recipient->header.id_length = key->info.key_id_length;
-  status =
-      make_protected(state, &recipient->header,
-                     key->info.kind == C89CBOR_COSE_A256KW ? -5 : -31, NULL);
+  status = c89_cose_make_protected(
+      state, &recipient->header,
+      key->info.kind == C89CBOR_COSE_A256KW ? -5 : -31, NULL);
   if (status != 0)
     return status;
   if (key->info.kind == C89CBOR_COSE_A256KW)
@@ -182,10 +191,10 @@ int c89_cose_seal_record(c89_cose_state *state) {
     OPENSSL_cleanse(content_key, sizeof(content_key));
     return C89CBOR_CRYPTO;
   }
-  status = make_protected(state, &state->body, 3,
-                          state->encrypt ? NULL : &first->info);
+  status = c89_cose_make_protected(state, &state->body, 3,
+                                   state->encrypt ? NULL : &first->info);
   if (status == 0)
-    status = make_aad(state, state->encrypt);
+    status = c89_cose_make_aad(state, state->encrypt);
   aad_length = state->cipher_length;
   if (status == 0)
     status =
@@ -466,7 +475,7 @@ int c89_cose_open_record(c89_cose_state *state) {
   if (status != 0)
     return status;
   cipher_length = state->cipher_length;
-  status = make_aad(state, state->encrypt);
+  status = c89_cose_make_aad(state, state->encrypt);
   aad_length = state->cipher_length;
   state->cipher_length = cipher_length;
   if (status != 0)

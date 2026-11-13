@@ -701,3 +701,7 @@ baseline.
 
 Follow the [delivery lifecycle](delivery.md) for the signed release
 boundary and artifact inventory.
+
+The [COSE profile](cose.md) and [Sign1/Mac0/CWT extension](sign1-cwt.md)
+specify the transport-independent security layers, bounded tokens, native
+lonejson claim-policy integration and their verification requirements.

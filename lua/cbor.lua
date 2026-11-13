@@ -73,11 +73,11 @@
 return require('cbor')
 --
 -- COSE: runtime:cose_key_init(kind,bytes,id=nil) and cose_key_create import
--- copied 32-byte keys, returning a key or nil,status,error. These constructors
+-- copied keys (32 bytes; P-256 public 65), returning a key or nil,status,error.
 -- also exist on the module with the default allocator. Key kinds are
 -- COSE_A256GCM, COSE_A256KW, COSE_X25519_PUBLIC and COSE_X25519_PRIVATE.
 -- key:metadata() -> status,{kind,key_id}; key:public_key() -> status,string
--- for X25519 only. Secret export is unavailable. close/cleanup/destroy and
+-- for asymmetric key families. Secret export is unavailable. close/cleanup/destroy and
 -- diagnostic follow the normal handle ownership rules.
 -- runtime:cose_encrypt0(source,sink,key,options=nil),
 -- cose_encrypt(source,sink,recipient_keys,options=nil),
@@ -108,3 +108,26 @@ return require('cbor')
 -- record, including from a native sink callback. INPUT means not yet verified;
 -- standalone/sealing operations return UNSUPPORTED. Empty streams expose ID at
 -- DONE. Applications use it for replay admission; libcbor keeps no replay DB.
+-- Signing keys add COSE_ED25519_PUBLIC/PRIVATE, COSE_P256_PUBLIC/PRIVATE,
+-- and COSE_HMAC256. P-256 public imports/exports are 65-byte SEC1 points;
+-- Ed25519 public imports/exports and all secret imports are 32 bytes.
+-- root:cose_sign1/verify1/mac0/verify_mac0(source,sink,key,options=nil)
+-- have _init/_open and _stream[_init|_open] variants with normal native I/O.
+-- Stream metadata also has tag (18/17) and algorithm (-19/-9/5).
+-- root:cwt_init(options=nil), cwt_create(options=nil) -> token or nil,status,error.
+-- root/module.default_cwt_options() -> {cose,claims,audiences,require_cti=false,
+-- require_encryption=false}; native options also carry replay admission hooks.
+-- token:set_claims(encoded_map) -> status,error; bounded local CBOR copy.
+-- token:set_lonejson(native_claims,cti=nil) -> status,error; direct native fields.
+-- token:seal(signing_key,encryption_keys=nil,capacity=default) -> status,wire_span,error.
+-- The owned span passes native bytes; wire_span:string() explicitly copies to Lua.
+-- token:verify(wire,verification_key,decryption_key=nil,policy) -> status,error.
+-- Policy accepts native lonejson pointers or a table, requiring explicit now;
+-- accepted_algs names are Ed25519/ES256/HS256. No JSON round trip occurs.
+-- token:view_get() -> status,{encoded,cti,claim_count,authenticated,algorithm,claims}
+-- or INPUT,nil. The Lua view is an explicit copy; native consumers use C pointers.
+-- token:claim(integer_or_text_or_token) -> status,encoded_value or INPUT,nil.
+-- token:diagnostic(), close/cleanup/destroy follow normal ownership rules.
+-- Verification failure removes prior claims. Local claims are unauthenticated.
+-- Native binding push/check pairs cover cwt,cwt_options,jwt_claims,jwt_policy.
+-- CWT is bounded; use COSE record operations for unbounded logical streams.

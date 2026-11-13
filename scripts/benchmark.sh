@@ -46,7 +46,7 @@ for round in 0 1 2 3 4 5; do
   result=$(build/lua-x86_64-linux-gnu-release/lua_test "$PWD/build/lua-x86_64-linux-gnu-release/cbor.so" --native)
   if [[ $round != 0 ]]; then printf '%s\n' "$result"; fi
 done | tee build/bench/c-native.jsonl
-for profile in gcm kw x25519 multi; do
+for profile in gcm kw x25519 multi ed25519 p256 hmac; do
   for mode in object stream; do
     build/x86_64-linux-gnu-release/cose_benchmark "$profile" "$mode" "${COSE_BENCH_REPETITIONS:-1000}" | tee "build/bench/cose-$profile-$mode.jsonl"
   done
@@ -54,5 +54,14 @@ for profile in gcm kw x25519 multi; do
     module=()
     if [[ $implementation == lua ]]; then module=("$root/build/lua-x86_64-linux-gnu-release/cbor.so"); fi
     build/lua-x86_64-linux-gnu-release/cose_lua_benchmark "$profile" stream "${COSE_BENCH_REPETITIONS:-1000}" "${module[@]}" | tee "build/bench/cose-$profile-$implementation.jsonl"
+  done
+done
+for profile in ed25519 p256 hmac; do
+  for implementation in static shared lua; do
+    command=(build/x86_64-linux-gnu-release/cose_benchmark)
+    module=()
+    if [[ $implementation != static ]]; then command=(build/lua-x86_64-linux-gnu-release/cose_lua_benchmark); fi
+    if [[ $implementation == lua ]]; then module=("$root/build/lua-x86_64-linux-gnu-release/cbor.so"); fi
+    "${command[@]}" "$profile" cwt "${COSE_BENCH_REPETITIONS:-1000}" "${module[@]}" | tee "build/bench/cwt-$profile-$implementation.jsonl"
   done
 done

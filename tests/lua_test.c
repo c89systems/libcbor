@@ -42,8 +42,37 @@ typedef struct conversion_fixture {
   c89cbor_sink sink;
   test_buffer json_input, wire, json_output;
   c89cbor_allocator allocator;
+  lonejson_jwt_claims jwt_claims;
+  lonejson_jwt_claim_policy jwt_policy;
   size_t live;
 } conversion_fixture;
+static int native_cwt_case(lua_State *L) {
+  static char issuer[] = "issuer", subject[] = "subject",
+              audience[] = "service";
+  static const char *const algorithms[] = {"Ed25519", "ES256", "HS256"};
+  static const char *const issuers[] = {"issuer"}, *const audiences[] = {
+                                                       "service"};
+  conversion_fixture *fixture = lua_touserdata(L, lua_upvalueindex(1));
+  memset(&fixture->jwt_claims, 0, sizeof(fixture->jwt_claims));
+  fixture->jwt_claims.iss = issuer;
+  fixture->jwt_claims.sub = subject;
+  fixture->jwt_claims.aud = audience;
+  fixture->jwt_claims.exp = 1000;
+  fixture->jwt_claims.has_exp = 1;
+  memset(&fixture->jwt_policy, 0, sizeof(fixture->jwt_policy));
+  fixture->jwt_policy.accepted_algs = algorithms;
+  fixture->jwt_policy.accepted_alg_count = 3u;
+  fixture->jwt_policy.accepted_issuers = issuers;
+  fixture->jwt_policy.accepted_issuer_count = 1u;
+  fixture->jwt_policy.accepted_audiences = audiences;
+  fixture->jwt_policy.accepted_audience_count = 1u;
+  fixture->jwt_policy.now = 100;
+  assert(fixture->binding->push_jwt_claims(fixture->binding,
+                                           &fixture->jwt_claims, 0) == 0);
+  assert(fixture->binding->push_jwt_policy(fixture->binding,
+                                           &fixture->jwt_policy, 0) == 0);
+  return 2;
+}
 static void *count_allocate(void *context, size_t size) {
   conversion_fixture *fixture = context;
   void *memory = malloc(size);
@@ -159,6 +188,9 @@ static void prepare_fixture(conversion_fixture *fixture, c89cbor_lua *binding) {
   lua_pushlightuserdata(binding->state, fixture);
   lua_pushcclosure(binding->state, native_case, 1);
   lua_setglobal(binding->state, "native_case");
+  lua_pushlightuserdata(binding->state, fixture);
+  lua_pushcclosure(binding->state, native_cwt_case, 1);
+  lua_setglobal(binding->state, "native_cwt_case");
   fixture->allocator.context = fixture;
   fixture->allocator.alloc = count_allocate;
   fixture->allocator.free = count_free;
@@ -187,6 +219,10 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   c89cbor_cose_key cose_key;
   c89cbor_cose_operation cose_operation;
   c89cbor_cose_options cose_options = c89cbor_default_cose_options();
+  c89cbor_cwt cwt;
+  c89cbor_cwt_options cwt_options = c89cbor_default_cwt_options();
+  lonejson_jwt_claims jwt_claims;
+  lonejson_jwt_claim_policy jwt_policy;
   unsigned char key[32] = {0};
   c89cbor_config config = c89cbor_default_config();
   c89cbor_options options = c89cbor_default_options();
@@ -238,6 +274,13 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
   CHECK_BRIDGE(cose_key, cose_key);
   CHECK_BRIDGE(cose_operation, cose_operation);
   CHECK_BRIDGE(cose_options, cose_options);
+  assert(runtime.cwt_init(&runtime, &cwt, &cwt_options, &error) == 0);
+  memset(&jwt_claims, 0, sizeof(jwt_claims));
+  memset(&jwt_policy, 0, sizeof(jwt_policy));
+  CHECK_BRIDGE(cwt, cwt);
+  CHECK_BRIDGE(cwt_options, cwt_options);
+  CHECK_BRIDGE(jwt_claims, jwt_claims);
+  CHECK_BRIDGE(jwt_policy, jwt_policy);
 #undef CHECK_BRIDGE
   assert(binding->push_record_view(binding, &fixture->input_view, owner) == 0);
   assert(binding->check_record_view(binding, -1)->record == &fixture->input);
@@ -256,6 +299,7 @@ static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
          transfer.cleanup(&transfer) == 0);
   assert(cose_operation.cleanup(&cose_operation) == 0);
   assert(cose_key.cleanup(&cose_key) == 0);
+  assert(cwt.cleanup(&cwt) == 0);
   assert(descriptor.cleanup(&descriptor) == 0 && reader.cleanup(&reader) == 0);
   assert(decoder.cleanup(&decoder) == 0 && encoder.cleanup(&encoder) == 0 &&
          runtime.cleanup(&runtime) == 0);

@@ -6,10 +6,14 @@ lonejson 0.50.0 types. Initialize a caller-owned root with `c89cbor_init`, or
 allocate it with `c89cbor_create`. Its factories construct native children.
 Every child exposes receiver-first operation, cleanup, destruction and
 diagnostic methods. Free-function twins share the same implementation.
-Native initializers and constructors take the optional runtime first.
-NULL selects native defaults. Keep a configured root alive until its
+Native codec/I/O and key initializers accept NULL for native allocator defaults.
+Conversion, COSE operation and CWT factories require an initialized runtime.
+Keep a configured root alive until its
 children have been cleaned up.
 All declarations have editor documentation, ownership rules and status semantics.
+The root/CWT headers require lonejson's `jwt` public interface component. The
+installed CMake targets and pkg-config metadata propagate its compile definition;
+manual builds must also define `LONEJSON_WITH_JWT` consistently for every consumer.
 The [API inventory](api-inventory.md) maps each export to its receiver and Lua
 surface. Compiled parity assertions and export checks guard that inventory.
 Initialize contexts; never memcpy an active context. NULL frames with capacity 0

@@ -32,20 +32,25 @@ int c89cbor_cose_key_metadata(const c89cbor_cose_key *key,
 int c89cbor_cose_key_public_key(const c89cbor_cose_key *key, void *bytes,
                                 size_t capacity, size_t *written) {
   const c89_cose_key_state *state;
-  size_t length = 32u;
+  size_t length;
   if (written != NULL)
     *written = 0;
   if (!c89_cose_key_valid(key) || written == NULL ||
       (bytes == NULL && capacity != 0))
     return C89CBOR_INVALID;
   state = key->state;
-  if (state->info.kind == C89CBOR_COSE_A256GCM ||
-      state->info.kind == C89CBOR_COSE_A256KW)
+  if (state->pkey == NULL)
     return C89CBOR_UNSUPPORTED;
+  length = state->info.kind == C89CBOR_COSE_P256_PUBLIC ||
+                   state->info.kind == C89CBOR_COSE_P256_PRIVATE
+               ? 65u
+               : 32u;
   if (capacity < length)
     return C89CBOR_LIMIT;
-  if (EVP_PKEY_get_raw_public_key(state->pkey, bytes, &length) != 1 ||
-      length != 32u)
+  if ((length == 65u
+           ? EVP_PKEY_get_octet_string_param(
+                 state->pkey, OSSL_PKEY_PARAM_PUB_KEY, bytes, capacity, &length)
+           : EVP_PKEY_get_raw_public_key(state->pkey, bytes, &length)) != 1)
     return C89CBOR_CRYPTO;
   *written = length;
   return C89CBOR_OK;
@@ -112,9 +117,10 @@ int c89cbor_cose_key_init(c89cbor *runtime, c89cbor_cose_key *key,
       error->status = status;
     return status;
   }
-  if (kind < C89CBOR_COSE_A256GCM || kind > C89CBOR_COSE_X25519_PRIVATE ||
-      bytes == NULL || length != 32u || id_length > 64u ||
-      (id == NULL && id_length != 0)) {
+  if (kind < C89CBOR_COSE_A256GCM || kind > C89CBOR_COSE_HMAC256 ||
+      bytes == NULL ||
+      length != (kind == C89CBOR_COSE_P256_PUBLIC ? 65u : 32u) ||
+      id_length > 64u || (id == NULL && id_length != 0)) {
     (void)c89cbor_cose_key_cleanup(key);
     if (error != NULL)
       error->status = C89CBOR_INVALID;
@@ -131,7 +137,8 @@ int c89cbor_cose_key_init(c89cbor *runtime, c89cbor_cose_key *key,
     state->info.key_id_length = id_length;
     if (id_length != 0)
       memcpy(state->info.key_id, id, id_length);
-    memcpy(state->secret, bytes, 32u);
+    if (kind != C89CBOR_COSE_P256_PUBLIC)
+      memcpy(state->secret, bytes, 32u);
     state->gcm = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL);
     state->wrap = EVP_CIPHER_fetch(NULL, "AES-256-WRAP", NULL);
     state->hkdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
@@ -148,8 +155,20 @@ int c89cbor_cose_key_init(c89cbor *runtime, c89cbor_cose_key *key,
     else if (kind == C89CBOR_COSE_X25519_PRIVATE)
       state->pkey =
           EVP_PKEY_new_raw_private_key_ex(NULL, "X25519", NULL, bytes, length);
+    else if (kind == C89CBOR_COSE_ED25519_PUBLIC)
+      state->pkey =
+          EVP_PKEY_new_raw_public_key_ex(NULL, "ED25519", NULL, bytes, length);
+    else if (kind == C89CBOR_COSE_ED25519_PRIVATE)
+      state->pkey =
+          EVP_PKEY_new_raw_private_key_ex(NULL, "ED25519", NULL, bytes, length);
+    else if (kind == C89CBOR_COSE_P256_PUBLIC ||
+             kind == C89CBOR_COSE_P256_PRIVATE)
+      state->pkey =
+          c89_cose_p256_import(bytes, kind == C89CBOR_COSE_P256_PRIVATE);
     if ((kind == C89CBOR_COSE_X25519_PUBLIC ||
-         kind == C89CBOR_COSE_X25519_PRIVATE) &&
+         kind == C89CBOR_COSE_X25519_PRIVATE ||
+         (kind >= C89CBOR_COSE_ED25519_PUBLIC &&
+          kind <= C89CBOR_COSE_P256_PRIVATE)) &&
         state->pkey == NULL)
       status = C89CBOR_CRYPTO;
   }

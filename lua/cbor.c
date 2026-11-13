@@ -19,6 +19,10 @@ typedef char
 #define COSE_KEY "c89cbor.cose_key"
 #define COSE_OPERATION "c89cbor.cose_operation"
 #define COSE_OPTIONS "c89cbor.cose_options"
+#define CWT "c89cbor.cwt"
+#define CWT_OPTIONS "c89cbor.cwt_options"
+#define JWT_CLAIMS "c89cbor.jwt_claims"
+#define JWT_POLICY "c89cbor.jwt_policy"
 
 #define DEC "c89cbor.decoder"
 #define ENC "c89cbor.encoder"
@@ -97,6 +101,7 @@ static handle *new_handle(lua_State *L, const char *kind, size_t bytes) {
                    : strcmp(kind, CONVERSION) == 0     ? -7
                    : strcmp(kind, COSE_KEY) == 0       ? -8
                    : strcmp(kind, COSE_OPERATION) == 0 ? -9
+                   : strcmp(kind, CWT) == 0            ? -10
                                                        : 0;
   }
   luaL_setmetatable(L, kind);
@@ -104,10 +109,10 @@ static handle *new_handle(lua_State *L, const char *kind, size_t bytes) {
 }
 static handle *any_handle(lua_State *L, int index) {
   static const char *const kinds[] = {
-      DEC,      ENC,      READER,         SOURCE,      SINK,
-      TRANSFER, ALLOC,    TOKEN,          SPAN,        FRAMES,
-      FD,       ROOT,     CONVERSION,     VIEW,        OPTIONS,
-      CONFIG,   COSE_KEY, COSE_OPERATION, COSE_OPTIONS};
+      DEC,          ENC,   READER,      SOURCE,     SINK,      TRANSFER,
+      ALLOC,        TOKEN, SPAN,        FRAMES,     FD,        ROOT,
+      CONVERSION,   VIEW,  OPTIONS,     CONFIG,     COSE_KEY,  COSE_OPERATION,
+      COSE_OPTIONS, CWT,   CWT_OPTIONS, JWT_CLAIMS, JWT_POLICY};
   size_t i;
   for (i = 0; i < sizeof(kinds) / sizeof(kinds[0]); ++i) {
     handle *h = luaL_testudata(L, index, kinds[i]);
@@ -212,6 +217,12 @@ static int release_handle(handle *h) {
     case -9:
       status = c89cbor_cose_operation_cleanup(h->ptr);
       break;
+    case 10:
+      status = c89cbor_cwt_destroy(h->ptr);
+      break;
+    case -10:
+      status = c89cbor_cwt_cleanup(h->ptr);
+      break;
     default:
       break;
     }
@@ -275,6 +286,10 @@ BRIDGE(config, c89cbor_config, CONFIG)
 BRIDGE(cose_key, c89cbor_cose_key, COSE_KEY)
 BRIDGE(cose_operation, c89cbor_cose_operation, COSE_OPERATION)
 BRIDGE(cose_options, c89cbor_cose_options, COSE_OPTIONS)
+BRIDGE(cwt, c89cbor_cwt, CWT)
+BRIDGE(cwt_options, c89cbor_cwt_options, CWT_OPTIONS)
+BRIDGE(jwt_claims, lonejson_jwt_claims, JWT_CLAIMS)
+BRIDGE(jwt_policy, lonejson_jwt_claim_policy, JWT_POLICY)
 static int valid_record_view(const lonejson_record_view *view) {
   return view != NULL && view->size >= sizeof(*view) &&
          view->abi_version == LONEJSON_VIEW_ABI_VERSION && view->flags == 0 &&
@@ -371,6 +386,14 @@ int c89cbor_lua_init(c89cbor_lua *binding, lua_State *state,
   binding->check_cose_operation = c89cbor_lua_check_cose_operation;
   binding->push_cose_options = c89cbor_lua_push_cose_options;
   binding->check_cose_options = c89cbor_lua_check_cose_options;
+  binding->push_cwt = c89cbor_lua_push_cwt;
+  binding->check_cwt = c89cbor_lua_check_cwt;
+  binding->push_cwt_options = c89cbor_lua_push_cwt_options;
+  binding->check_cwt_options = c89cbor_lua_check_cwt_options;
+  binding->push_jwt_claims = c89cbor_lua_push_jwt_claims;
+  binding->check_jwt_claims = c89cbor_lua_check_jwt_claims;
+  binding->push_jwt_policy = c89cbor_lua_push_jwt_policy;
+  binding->check_jwt_policy = c89cbor_lua_check_jwt_policy;
   binding->check_span = c89cbor_lua_check_span;
   binding->cleanup = c89cbor_lua_cleanup;
   binding->destroy = c89cbor_lua_destroy;
@@ -484,6 +507,10 @@ BINDING_BRIDGE(config, c89cbor_config)
 BINDING_BRIDGE(cose_key, c89cbor_cose_key)
 BINDING_BRIDGE(cose_operation, c89cbor_cose_operation)
 BINDING_BRIDGE(cose_options, c89cbor_cose_options)
+BINDING_BRIDGE(cwt, c89cbor_cwt)
+BINDING_BRIDGE(cwt_options, c89cbor_cwt_options)
+BINDING_BRIDGE(jwt_claims, lonejson_jwt_claims)
+BINDING_BRIDGE(jwt_policy, lonejson_jwt_claim_policy)
 #undef BINDING_BRIDGE
 int c89cbor_lua_push_span(c89cbor_lua *binding, const void *bytes,
                           size_t length, int owner) {
@@ -1028,6 +1055,7 @@ static int diagnostic_handle(lua_State *L) {
     DIAGNOSTIC(TRANSFER, c89cbor_transfer, c89cbor_transfer_diagnostic);
     DIAGNOSTIC(FD, c89cbor_fd, c89cbor_fd_diagnostic);
     DIAGNOSTIC(COSE_KEY, c89cbor_cose_key, c89cbor_cose_key_diagnostic);
+    DIAGNOSTIC(CWT, c89cbor_cwt, c89cbor_cwt_diagnostic);
     DIAGNOSTIC(COSE_OPERATION, c89cbor_cose_operation,
                c89cbor_cose_operation_diagnostic);
 #undef DIAGNOSTIC
@@ -1432,6 +1460,7 @@ static int decode_map_init(lua_State *L) {
   return runtime_conversion(L, DECODE_MAP, 2);
 }
 #include "cose.inc.h"
+#include "cwt.inc.h"
 static void metatable(lua_State *L, const char *name, const luaL_Reg *methods) {
   luaL_newmetatable(L, name);
   lua_pushvalue(L, -1);
@@ -1453,6 +1482,13 @@ static void metatable(lua_State *L, const char *name, const luaL_Reg *methods) {
   lua_pop(L, 1);
 }
 int luaopen_cbor(lua_State *L) {
+  static const luaL_Reg cwt[] = {{"set_claims", cwt_set_claims},
+                                 {"set_lonejson", cwt_set_lonejson},
+                                 {"seal", cwt_seal},
+                                 {"verify", cwt_verify},
+                                 {"view_get", cwt_view_get},
+                                 {"claim", cwt_claim},
+                                 {NULL, NULL}};
   static const luaL_Reg dec[] = {{"next", next_decoder},
                                  {"next_tag", next_tag},
                                  {"finish", finish_decoder},
@@ -1504,6 +1540,9 @@ int luaopen_cbor(lua_State *L) {
       {"encoder", new_encoder},
       {"default_cose_options", default_cose_options},
       {"cose_key_init", cose_key_init},
+      {"cwt_init", cwt_init},
+      {"cwt_create", cwt_create},
+      {"default_cwt_options", default_cwt_options},
       {"cose_key_create", cose_key_create},
       {"cose_encrypt0", cose_encrypt0},
       {"cose_encrypt0_init", cose_encrypt0_init},
@@ -1512,6 +1551,30 @@ int luaopen_cbor(lua_State *L) {
       {"cose_encrypt_init", cose_encrypt_init},
       {"cose_encrypt_open", cose_encrypt_open},
       {"cose_decrypt", cose_decrypt},
+      {"cose_sign1", cose_sign1},
+      {"cose_sign1_init", cose_sign1_init},
+      {"cose_sign1_open", cose_sign1_open},
+      {"cose_verify1", cose_verify1},
+      {"cose_verify1_init", cose_verify1_init},
+      {"cose_verify1_open", cose_verify1_open},
+      {"cose_mac0", cose_mac0},
+      {"cose_mac0_init", cose_mac0_init},
+      {"cose_mac0_open", cose_mac0_open},
+      {"cose_verify_mac0", cose_verify_mac0},
+      {"cose_verify_mac0_init", cose_verify_mac0_init},
+      {"cose_verify_mac0_open", cose_verify_mac0_open},
+      {"cose_sign1_stream", cose_sign1_stream},
+      {"cose_sign1_stream_init", cose_sign1_stream_init},
+      {"cose_sign1_stream_open", cose_sign1_stream_open},
+      {"cose_verify1_stream", cose_verify1_stream},
+      {"cose_verify1_stream_init", cose_verify1_stream_init},
+      {"cose_verify1_stream_open", cose_verify1_stream_open},
+      {"cose_mac0_stream", cose_mac0_stream},
+      {"cose_mac0_stream_init", cose_mac0_stream_init},
+      {"cose_mac0_stream_open", cose_mac0_stream_open},
+      {"cose_verify_mac0_stream", cose_verify_mac0_stream},
+      {"cose_verify_mac0_stream_init", cose_verify_mac0_stream_init},
+      {"cose_verify_mac0_stream_open", cose_verify_mac0_stream_open},
       {"cose_decrypt_init", cose_decrypt_init},
       {"cose_decrypt_open", cose_decrypt_open},
       {"cose_encrypt_stream", cose_encrypt_stream},
@@ -1562,6 +1625,7 @@ int luaopen_cbor(lua_State *L) {
       {"length32", length32},
       {NULL, NULL}};
   static const luaL_Reg module[] = {
+      {"default_cwt_options", default_cwt_options},
       {"version", version},
       {"default_cose_options", default_cose_options},
       {"cose_key_init", cose_key_init},
@@ -1602,6 +1666,10 @@ int luaopen_cbor(lua_State *L) {
   metatable(L, COSE_KEY, ck);
   metatable(L, COSE_OPERATION, co);
   metatable(L, COSE_OPTIONS, NULL);
+  metatable(L, CWT, cwt);
+  metatable(L, CWT_OPTIONS, NULL);
+  metatable(L, JWT_CLAIMS, NULL);
+  metatable(L, JWT_POLICY, NULL);
   metatable(L, ENC, enc);
   metatable(L, TOKEN, tok);
   metatable(L, SPAN, sp);
@@ -1640,6 +1708,11 @@ int luaopen_cbor(lua_State *L) {
   CONSTANT(COSE_A256KW);
   CONSTANT(COSE_X25519_PUBLIC);
   CONSTANT(COSE_X25519_PRIVATE);
+  CONSTANT(COSE_ED25519_PUBLIC);
+  CONSTANT(COSE_ED25519_PRIVATE);
+  CONSTANT(COSE_P256_PUBLIC);
+  CONSTANT(COSE_P256_PRIVATE);
+  CONSTANT(COSE_HMAC256);
   CONSTANT(SINGLE);
   CONSTANT(SEQUENCE);
   CONSTANT(LENGTH32);

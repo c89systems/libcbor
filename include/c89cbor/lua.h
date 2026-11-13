@@ -18,6 +18,22 @@ struct lua_State;
  */
 typedef struct c89cbor_lua c89cbor_lua;
 struct c89cbor_lua {
+  int (*push_cwt)(c89cbor_lua *, c89cbor_cwt *,
+                  int); /**< Borrow native cwt, pin owner. */
+  c89cbor_cwt *(*check_cwt)(c89cbor_lua *,
+                            int); /**< Check live typed cwt or NULL. */
+  int (*push_cwt_options)(c89cbor_lua *, c89cbor_cwt_options *,
+                          int); /**< Borrow native cwt_options, pin owner. */
+  c89cbor_cwt_options *(*check_cwt_options)(
+      c89cbor_lua *, int); /**< Check live typed cwt_options or NULL. */
+  int (*push_jwt_claims)(c89cbor_lua *, lonejson_jwt_claims *,
+                         int); /**< Borrow native jwt_claims, pin owner. */
+  lonejson_jwt_claims *(*check_jwt_claims)(
+      c89cbor_lua *, int); /**< Check live typed jwt_claims or NULL. */
+  int (*push_jwt_policy)(c89cbor_lua *, lonejson_jwt_claim_policy *,
+                         int); /**< Borrow native jwt_policy, pin owner. */
+  lonejson_jwt_claim_policy *(*check_jwt_policy)(
+      c89cbor_lua *, int); /**< Check live typed jwt_policy or NULL. */
   int (*push_cose_key)(c89cbor_lua *, c89cbor_cose_key *, int);
   /**< Push borrowed immutable key and pin its Lua owner. */
   c89cbor_cose_key *(*check_cose_key)(c89cbor_lua *, int);
@@ -95,6 +111,32 @@ struct c89cbor_lua {
   int owned;                          /**< Private ownership flag. */
 };
 /** Standard Lua module opener; bootstrap exception to receiver parity. */
+/** Borrow native cwt; preserve its storage/pointers until close. */
+C89CBOR_API int c89cbor_lua_push_cwt(c89cbor_lua *, c89cbor_cwt *,
+                                     int owner_index);
+/** Check live typed cwt, returning NULL without raising on mismatch. */
+C89CBOR_API c89cbor_cwt *c89cbor_lua_check_cwt(c89cbor_lua *, int index);
+/** Borrow native cwt_options; preserve its storage/pointers until close. */
+C89CBOR_API int c89cbor_lua_push_cwt_options(c89cbor_lua *,
+                                             c89cbor_cwt_options *,
+                                             int owner_index);
+/** Check live typed cwt_options, returning NULL without raising on mismatch. */
+C89CBOR_API c89cbor_cwt_options *c89cbor_lua_check_cwt_options(c89cbor_lua *,
+                                                               int index);
+/** Borrow native jwt_claims; preserve its storage/pointers until close. */
+C89CBOR_API int c89cbor_lua_push_jwt_claims(c89cbor_lua *,
+                                            lonejson_jwt_claims *,
+                                            int owner_index);
+/** Check live typed jwt_claims, returning NULL without raising on mismatch. */
+C89CBOR_API lonejson_jwt_claims *c89cbor_lua_check_jwt_claims(c89cbor_lua *,
+                                                              int index);
+/** Borrow native jwt_policy; preserve its storage/pointers until close. */
+C89CBOR_API int c89cbor_lua_push_jwt_policy(c89cbor_lua *,
+                                            lonejson_jwt_claim_policy *,
+                                            int owner_index);
+/** Check live typed jwt_policy, returning NULL without raising on mismatch. */
+C89CBOR_API lonejson_jwt_claim_policy *
+c89cbor_lua_check_jwt_policy(c89cbor_lua *, int index);
 C89CBOR_API int luaopen_cbor(struct lua_State *state);
 /** Borrow a native key; no secret copy or ownership transfer. Pin owner_index
  * until close/GC; zero selects caller-managed native lifetime. */

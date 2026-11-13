@@ -21,7 +21,11 @@ typedef struct c89_cose_key_state {
 } c89_cose_key_state;
 int c89_cose_key_valid(const c89cbor_cose_key *key);
 int c89_cose_key_reserve(c89cbor_cose_key *key);
+EVP_PKEY *c89_cose_p256_import(const void *, int);
+int c89_cose_auth_algorithm(c89cbor_cose_key_kind);
 void c89_cose_runtime_methods(c89cbor *runtime);
+int c89_cose_options_resolve(c89cbor *, const c89cbor_cose_options *,
+                             c89cbor_cose_options *);
 typedef struct c89_cose_cursor {
   c89cbor_decoder decoder;
   const unsigned char *bytes;
@@ -70,7 +74,7 @@ typedef struct c89_cose_state {
   c89cbor_cose_options options;
   c89cbor_cose_key *keys[C89_COSE_MAX_RECIPIENTS];
   size_t key_count;
-  int seal, stream, encrypt, seen_family, have_id, record_final;
+  int seal, stream, encrypt, auth, seen_family, have_id, record_final;
   int eof, ready, after_output, finished, require_eof;
   unsigned char stream_id[16], record_id[16], input[C89CBOR_CHUNK];
   unsigned char stream_key[32];
@@ -113,4 +117,8 @@ int c89_cose_derive(c89_cose_key_state *, EVP_PKEY *, EVP_PKEY *,
                     size_t, unsigned char *);
 int c89_cose_seal_record(c89_cose_state *);
 int c89_cose_open_record(c89_cose_state *);
+int c89_cose_auth_record(c89_cose_state *);
+int c89_cose_make_protected(c89_cose_state *, c89_cose_header *, int,
+                            const c89cbor_cose_key_info *);
+int c89_cose_make_aad(c89_cose_state *, int);
 #endif

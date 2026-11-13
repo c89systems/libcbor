@@ -41,7 +41,7 @@ else
   rg -q 'SONAME.*libcbor.so.0' "$stage/dependencies"
   if rg 'RPATH|RUNPATH' "$stage/dependencies"; then printf 'Unexpected SDK RPATH\n' >&2; exit 1; fi
 fi
-rg --no-filename -o 'c89cbor_[a-zA-Z0-9_]+\(' include/c89cbor/cbor.h include/c89cbor/io.h include/c89cbor/cose.h include/c89cbor/lonejson.h | sed 's/($//' | sort -u > "$stage/expected-exports"
+rg --no-filename -o 'c89cbor_[a-zA-Z0-9_]+\(' include/c89cbor/cbor.h include/c89cbor/io.h include/c89cbor/cose.h include/c89cbor/cwt.h include/c89cbor/lonejson.h | sed 's/($//' | sort -u > "$stage/expected-exports"
 diff -u "$stage/expected-exports" "$stage/exports"
 lifecycle=${CPKT_LIFECYCLE_SCRIPTS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/pkt-systems-cmake-lifecycle/scripts}
 cmake -S tests/consumer -B "$stage/consumer" -G Ninja \

@@ -7,6 +7,7 @@
 #define C89CBOR_LONEJSON_H
 #include <c89cbor/io.h>
 #include <c89cbor/cose.h>
+#include <c89cbor/cwt.h>
 #include <lonejson.h>
 #ifdef __cplusplus
 extern "C" {
@@ -72,6 +73,121 @@ typedef struct c89cbor_config {
  * Configuration is fixed. Serialize factories and lifecycle on a shared root.
  */
 struct c89cbor {
+  c89cbor_cwt_options (*default_cwt_options)(
+      c89cbor *); /**< Default token bounds. */
+  int (*cwt_init)(c89cbor *, c89cbor_cwt *, const c89cbor_cwt_options *,
+                  c89cbor_error *); /**< Initialize caller token storage. */
+  int (*cwt_create)(c89cbor *, const c89cbor_cwt_options *, c89cbor_cwt **,
+                    c89cbor_error *); /**< Allocate bounded token receiver. */
+  int (*cose_sign1)(c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+                    c89cbor_cose_key *, const c89cbor_cose_options *,
+                    c89cbor_error *); /**< Create one bounded object; borrow the
+                                         explicitly typed key. */
+  int (*cose_sign1_open)(c89cbor *, const c89cbor_source *,
+                         const c89cbor_sink *, c89cbor_cose_key *,
+                         const c89cbor_cose_options *,
+                         c89cbor_cose_operation **,
+                         c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_sign1_init)(c89cbor *, c89cbor_cose_operation *,
+                         const c89cbor_source *, const c89cbor_sink *,
+                         c89cbor_cose_key *, const c89cbor_cose_options *,
+                         c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_verify1)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Authenticate one bounded object; release payload
+                           only after authentication. */
+  int (*cose_verify1_open)(c89cbor *, const c89cbor_source *,
+                           const c89cbor_sink *, c89cbor_cose_key *,
+                           const c89cbor_cose_options *,
+                           c89cbor_cose_operation **,
+                           c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_verify1_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_mac0)(c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+                   c89cbor_cose_key *, const c89cbor_cose_options *,
+                   c89cbor_error *); /**< Create one bounded object; borrow the
+                                        explicitly typed key. */
+  int (*cose_mac0_open)(c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+                        c89cbor_cose_key *, const c89cbor_cose_options *,
+                        c89cbor_cose_operation **,
+                        c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_mac0_init)(c89cbor *, c89cbor_cose_operation *,
+                        const c89cbor_source *, const c89cbor_sink *,
+                        c89cbor_cose_key *, const c89cbor_cose_options *,
+                        c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_verify_mac0)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Authenticate one bounded object; release payload
+                           only after authentication. */
+  int (*cose_verify_mac0_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_verify_mac0_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_sign1_stream)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Create ordered bounded records; borrow the
+                           explicitly typed key. */
+  int (*cose_sign1_stream_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_sign1_stream_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_verify1_stream)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Authenticate ordered bounded records; release
+                           payload only after authentication. */
+  int (*cose_verify1_stream_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_verify1_stream_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_mac0_stream)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Create ordered bounded records; borrow the
+                           explicitly typed key. */
+  int (*cose_mac0_stream_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_mac0_stream_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Initialize caller operation. */
+  int (*cose_verify_mac0_stream)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Authenticate ordered bounded records; release
+                           payload only after authentication. */
+  int (*cose_verify_mac0_stream_open)(
+      c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+      c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_cose_operation **,
+      c89cbor_error *); /**< Allocate operation; no I/O. */
+  int (*cose_verify_mac0_stream_init)(
+      c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+      const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+      c89cbor_error *); /**< Initialize caller operation. */
   c89cbor_cose_options (*default_cose_options)(
       c89cbor *); /**< COSE receiver twin; see <c89cbor/cose.h>. */
   int (*cose_key_init)(

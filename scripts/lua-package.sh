@@ -9,11 +9,11 @@ c89_owned_path "$stage"; c89_owned_path "dist/$name.tar.gz"
 mkdir -p build/lua-source dist
 rm -rf -- "$stage"
 mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs
-cp lua/cbor.c lua/cose.inc.h lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
+cp lua/cbor.c lua/cose.inc.h lua/cwt.inc.h lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
 cp include/c89cbor/lua.h "$stage/include/c89cbor/"
 cp cmake/Runtime.cmake cmake/FindLua.cmake "$stage/cmake/"
 cp LICENSE "$stage/"
-cp docs/lua.md docs/cose.md docs/delivery.md "$stage/docs/"
+cp docs/lua.md docs/cose.md docs/sign1-cwt.md docs/delivery.md "$stage/docs/"
 cat > "$stage/README.md" <<'README'
 # libcbor Lua facade
 
@@ -50,7 +50,7 @@ build = {
     cbor = {
       sources = { "lua/cbor.c" },
       libraries = { "cbor", "lonejson" },
-      defines = { "_POSIX_C_SOURCE=200809L" },
+      defines = { "_POSIX_C_SOURCE=200809L", "LONEJSON_WITH_JWT" },
       incdirs = { "include", "\$(CBOR_INCDIR)", "\$(LONEJSON_INCDIR)" },
       libdirs = { "\$(CBOR_LIBDIR)", "\$(LONEJSON_LIBDIR)", "\$(CRYPTO_LIBDIR)" }
     }

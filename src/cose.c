@@ -24,14 +24,44 @@ static int fail(c89_cose_state *state, int status, const char *layer) {
     (void)EVP_CIPHER_CTX_reset(state->cipher_context);
   return c89_error(&state->owner->lifetime, status, layer);
 }
+static void unhold(c89cbor_cose_key *const *keys, size_t count) {
+  size_t i;
+  for (i = 0; i < count; ++i)
+    --keys[i]->lifetime.dependents;
+}
+/* Snapshot and pin before entering any caller allocator. The input list can
+ * itself be mutated by a callback; only the private snapshot is used afterward.
+ */
+static int hold(c89cbor_cose_key *const *keys, size_t count,
+                c89cbor_cose_key **snapshot) {
+  size_t i;
+  int status = C89CBOR_OK;
+  if (keys == NULL || count == 0 || count > C89_COSE_MAX_RECIPIENTS)
+    return C89CBOR_INVALID;
+  for (i = 0; i < count; ++i) {
+    if (!c89_cose_key_valid(keys[i]))
+      status = C89CBOR_INVALID;
+    else if (keys[i]->lifetime.busy)
+      status = C89CBOR_BUSY;
+    else if (keys[i]->lifetime.dependents == (size_t)-1)
+      status = C89CBOR_LIMIT;
+    if (status != 0) {
+      unhold(snapshot, i);
+      return status;
+    }
+    snapshot[i] = keys[i];
+    ++snapshot[i]->lifetime.dependents;
+  }
+  return C89CBOR_OK;
+}
 static void release(void *context) {
   c89_cose_state *state = context;
   c89cbor_allocator allocator = state->allocator;
-  size_t i;
+  c89cbor_cose_key *keys[C89_COSE_MAX_RECIPIENTS];
+  size_t count = state->key_count;
+  memcpy(keys, state->keys, count * sizeof(*keys));
   EVP_CIPHER_CTX_free(state->cipher_context);
   (void)c89cbor_decoder_cleanup(&state->framer);
-  for (i = 0; i < state->key_count; ++i)
-    --state->keys[i]->lifetime.dependents;
   if (state->workspace != NULL) {
     OPENSSL_cleanse(state->workspace, state->workspace_size);
     allocator.free(allocator.context, state->workspace);
@@ -43,6 +73,7 @@ static void release(void *context) {
   }
   OPENSSL_cleanse(state, sizeof(*state));
   allocator.free(allocator.context, state);
+  unhold(keys, count);
 }
 static int read_input(c89_cose_state *state, size_t *budget, int *waiting) {
   size_t count = 0, offered = sizeof(state->input);
@@ -179,7 +210,8 @@ static int advance(void *context) {
         if (state->stream && state->sequence == UINT64_MAX &&
             !state->record_final)
           return fail(state, C89CBOR_LIMIT, "cose-sequence");
-        status = c89_cose_seal_record(state);
+        status = state->auth ? c89_cose_auth_record(state)
+                             : c89_cose_seal_record(state);
         if (status != 0)
           return fail(state, status, "cose-seal");
         state->after_output = !state->stream || state->record_final;
@@ -205,7 +237,8 @@ static int advance(void *context) {
         continue;
       }
       if (status == C89CBOR_DONE) {
-        status = c89_cose_open_record(state);
+        status = state->auth ? c89_cose_auth_record(state)
+                             : c89_cose_open_record(state);
         if (status != 0) {
           OPENSSL_cleanse(state->plain, state->options.record_bytes + 16u);
           return fail(state, status, "cose-open");
@@ -232,8 +265,9 @@ static int advance(void *context) {
   }
   return C89CBOR_OK;
 }
-static int resolve(c89cbor *runtime, const c89cbor_cose_options *options,
-                   c89cbor_cose_options *out) {
+int c89_cose_options_resolve(c89cbor *runtime,
+                             const c89cbor_cose_options *options,
+                             c89cbor_cose_options *out) {
   *out = options == NULL ? c89cbor_default_cose_options() : *options;
   if (out->record_bytes == 0)
     out->record_bytes = C89CBOR_CHUNK;
@@ -248,9 +282,9 @@ static int resolve(c89cbor *runtime, const c89cbor_cose_options *options,
   if (out->step_events == 0)
     out->step_events = runtime->step_events;
   if (out->recipients > C89_COSE_MAX_RECIPIENTS ||
-      out->record_bytes > (size_t)INT_MAX - 16u ||
-      out->record_bytes > ((size_t)-1 - 432u) / 3u ||
-      out->header_bytes > ((size_t)-1 - 432u - out->record_bytes * 3u) / 8u)
+      out->record_bytes > (size_t)INT_MAX - 64u ||
+      out->record_bytes > ((size_t)-1 - 592u) / 4u ||
+      out->header_bytes > ((size_t)-1 - 592u - out->record_bytes * 4u) / 8u)
     return C89CBOR_LIMIT;
   if ((out->aad == NULL && out->aad_length != 0) ||
       out->aad_length > out->header_bytes)
@@ -264,24 +298,24 @@ static int allocate_workspace(c89_cose_state *state) {
   size_t record = state->options.record_bytes,
          header = state->options.header_bytes;
   int status;
-  state->workspace_size = record * 3u + header * 8u + 432u;
+  state->workspace_size = record * 4u + header * 8u + 592u;
   status = c89_allocate(state->runtime, NULL, state->workspace_size,
                         (void **)&state->workspace, &selected);
   if (status != 0)
     return status;
   at = state->workspace;
   state->plain = at;
-  at += record + 16u;
+  at += record + 64u;
   state->cipher = at;
-  at += record + 16u;
+  at += record + 64u;
   state->wire = at;
-  state->wire_capacity = record + 16u + header;
+  state->wire_capacity = record + 80u + header;
   at += state->wire_capacity;
   state->arena.bytes = at;
   state->arena.capacity = header * 2u;
   at += state->arena.capacity;
   state->aad = at;
-  state->aad_capacity = header * 2u + 128u;
+  state->aad_capacity = record + header * 2u + 128u;
   at += state->aad_capacity;
   state->external = at;
   state->external_capacity = header + 128u;
@@ -355,7 +389,7 @@ int c89cbor_cose_operation_next(c89cbor_cose_operation *operation,
   resolved = state->options;
   resolved.stream_id = NULL;
   if (options != NULL) {
-    status = resolve(state->runtime, options, &resolved);
+    status = c89_cose_options_resolve(state->runtime, options, &resolved);
     if (status != 0)
       return status;
     if (resolved.record_bytes != state->options.record_bytes ||
@@ -413,6 +447,15 @@ int c89cbor_cose_operation_stream_info(const c89cbor_cose_operation *operation,
     return C89CBOR_INPUT;
   memcpy(info->stream_id, state->stream_id, 16u);
   info->encrypt = state->seen_family;
+  info->tag = state->auth == 1     ? 18
+              : state->auth == 2   ? 17
+              : state->seen_family ? 96
+                                   : 16;
+  info->algorithm =
+      state->auth
+          ? c89_cose_auth_algorithm(
+                ((const c89_cose_key_state *)state->keys[0]->state)->info.kind)
+          : 3;
   info->complete = state->finished;
   return C89CBOR_OK;
 }
@@ -426,7 +469,8 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
   c89cbor_cose_options resolved;
   c89cbor_allocator selected;
   c89_cose_key_state *key;
-  size_t i;
+  c89cbor_cose_key *held[C89_COSE_MAX_RECIPIENTS];
+  size_t i, held_count = 0;
   int status;
   if (error != NULL)
     memset(error, 0, sizeof(*error));
@@ -450,10 +494,10 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
     status = C89CBOR_INVALID;
     goto failed;
   }
-  status = resolve(runtime, options, &resolved);
+  status = c89_cose_options_resolve(runtime, options, &resolved);
   if (status != 0)
     goto failed;
-  if (stream && seal && resolved.nonce != NULL) {
+  if (((stream && seal) || encrypt >= 2) && resolved.nonce != NULL) {
     status = C89CBOR_INVALID;
     goto failed;
   }
@@ -471,14 +515,29 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
       status = C89CBOR_BUSY;
       goto failed;
     }
-    if ((seal && !encrypt && key->info.kind != C89CBOR_COSE_A256GCM) ||
-        (seal && encrypt && key->info.kind != C89CBOR_COSE_A256KW &&
-         key->info.kind != C89CBOR_COSE_X25519_PUBLIC) ||
-        (!seal && key->info.kind == C89CBOR_COSE_X25519_PUBLIC)) {
+    if (encrypt >= 2) {
+      int algorithm = c89_cose_auth_algorithm(key->info.kind);
+      if ((encrypt == 3 && algorithm != 5) ||
+          (encrypt == 2 && algorithm != -19 && algorithm != -9) ||
+          (seal && (key->info.kind == C89CBOR_COSE_ED25519_PUBLIC ||
+                    key->info.kind == C89CBOR_COSE_P256_PUBLIC))) {
+        status = C89CBOR_INVALID;
+        goto failed;
+      }
+    } else if ((seal && !encrypt && key->info.kind != C89CBOR_COSE_A256GCM) ||
+               (seal && encrypt && key->info.kind != C89CBOR_COSE_A256KW &&
+                key->info.kind != C89CBOR_COSE_X25519_PUBLIC) ||
+               (!seal && key->info.kind != C89CBOR_COSE_A256GCM &&
+                key->info.kind != C89CBOR_COSE_A256KW &&
+                key->info.kind != C89CBOR_COSE_X25519_PRIVATE)) {
       status = C89CBOR_INVALID;
       goto failed;
     }
   }
+  status = hold(keys, count, held);
+  if (status != 0)
+    goto failed;
+  held_count = count;
   driver->lifetime.busy = 1;
   status =
       c89_allocate(runtime, NULL, sizeof(*state), (void **)&state, &selected);
@@ -494,9 +553,13 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
   state->source = *source;
   state->sink = *sink;
   state->options = resolved;
+  for (i = 0; i < count; ++i)
+    state->keys[state->key_count++] = held[i];
+  held_count = 0;
   state->seal = seal;
   state->stream = stream;
-  state->encrypt = encrypt;
+  state->auth = encrypt >= 2 ? encrypt - 1 : 0;
+  state->encrypt = state->auth ? 0 : encrypt;
   state->seen_family = -1;
   if (options != NULL && options->stream_id != NULL) {
     memcpy(state->stream_id, options->stream_id, 16u);
@@ -508,20 +571,13 @@ static int initialize(c89cbor *runtime, c89cbor_cose_operation *conversion,
     }
     state->have_id = 1;
   }
-  for (i = 0; i < count; ++i) {
-    if (keys[i]->lifetime.dependents == (size_t)-1) {
-      status = C89CBOR_LIMIT;
-      goto failed;
-    }
-    state->keys[state->key_count++] = keys[i];
-    ++keys[i]->lifetime.dependents;
-  }
   status = allocate_workspace(state);
   if (status != 0)
     goto failed;
   driver->lifetime.busy = 0;
   return C89CBOR_OK;
 failed:
+  unhold(held, held_count);
   driver->lifetime.busy = 0;
   c89_error(&driver->lifetime, status, "cose-open");
   if (error != NULL) {
@@ -539,6 +595,7 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
                           int stream, int encrypt, c89cbor_cose_operation **out,
                           c89cbor_error *error) {
   c89cbor_cose_operation *conversion;
+  c89cbor_cose_key *held[C89_COSE_MAX_RECIPIENTS];
   c89cbor_allocator selected;
   int status;
   if (error != NULL)
@@ -546,14 +603,21 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
   if (out == NULL)
     return C89CBOR_INVALID;
   *out = NULL;
-  status = c89_allocate(runtime, NULL, sizeof(*conversion),
-                        (void **)&conversion, &selected);
+  status = hold(keys, count, held);
   if (status != 0) {
     if (error != NULL)
       error->status = status;
     return status;
   }
-  status = initialize(runtime, conversion, source, sink, keys, count, options,
+  status = c89_allocate(runtime, NULL, sizeof(*conversion),
+                        (void **)&conversion, &selected);
+  unhold(held, count);
+  if (status != 0) {
+    if (error != NULL)
+      error->status = status;
+    return status;
+  }
+  status = initialize(runtime, conversion, source, sink, held, count, options,
                       seal, stream, encrypt, error);
   if (status != 0) {
     selected.free(selected.context, conversion);
@@ -563,14 +627,14 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
   *out = conversion;
   return C89CBOR_OK;
 }
-#define SINGLE_OPERATION(name, seal_value, stream_value)                       \
+#define SINGLE_OPERATION(name, seal_value, stream_value, family)               \
   int c89cbor_cose_##name##_init(                                              \
       c89cbor *runtime, c89cbor_cose_operation *conversion,                    \
       const c89cbor_source *source, const c89cbor_sink *sink,                  \
       c89cbor_cose_key *key, const c89cbor_cose_options *options,              \
       c89cbor_error *error) {                                                  \
     return initialize(runtime, conversion, source, sink, &key, 1u, options,    \
-                      seal_value, stream_value, 0, error);                     \
+                      seal_value, stream_value, family, error);                \
   }                                                                            \
   int c89cbor_cose_##name##_open(                                              \
       c89cbor *runtime, const c89cbor_source *source,                          \
@@ -578,7 +642,7 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
       const c89cbor_cose_options *options, c89cbor_cose_operation **out,       \
       c89cbor_error *error) {                                                  \
     return open_operation(runtime, source, sink, &key, 1u, options,            \
-                          seal_value, stream_value, 0, out, error);            \
+                          seal_value, stream_value, family, out, error);       \
   }                                                                            \
   int c89cbor_cose_##name(c89cbor *runtime, const c89cbor_source *source,      \
                           const c89cbor_sink *sink, c89cbor_cose_key *key,     \
@@ -589,9 +653,17 @@ static int open_operation(c89cbor *runtime, const c89cbor_source *source,
                                             sink, key, options, error);        \
     return status == 0 ? run_operation(&conversion, error) : status;           \
   }
-SINGLE_OPERATION(encrypt0, 1, 0)
-SINGLE_OPERATION(decrypt, 0, 0)
-SINGLE_OPERATION(decrypt_stream, 0, 1)
+SINGLE_OPERATION(encrypt0, 1, 0, 0)
+SINGLE_OPERATION(decrypt, 0, 0, 0)
+SINGLE_OPERATION(decrypt_stream, 0, 1, 0)
+SINGLE_OPERATION(sign1, 1, 0, 2)
+SINGLE_OPERATION(verify1, 0, 0, 2)
+SINGLE_OPERATION(mac0, 1, 0, 3)
+SINGLE_OPERATION(verify_mac0, 0, 0, 3)
+SINGLE_OPERATION(sign1_stream, 1, 1, 2)
+SINGLE_OPERATION(verify1_stream, 0, 1, 2)
+SINGLE_OPERATION(mac0_stream, 1, 1, 3)
+SINGLE_OPERATION(verify_mac0_stream, 0, 1, 3)
 #undef SINGLE_OPERATION
 #define MULTI_OPERATION(name, stream_value)                                    \
   int c89cbor_cose_##name##_init(                                              \
@@ -627,6 +699,30 @@ MULTI_OPERATION(encrypt_stream, 1)
 #undef MULTI_OPERATION
 
 void c89_cose_runtime_methods(c89cbor *runtime) {
+  runtime->cose_sign1 = c89cbor_cose_sign1;
+  runtime->cose_sign1_init = c89cbor_cose_sign1_init;
+  runtime->cose_sign1_open = c89cbor_cose_sign1_open;
+  runtime->cose_verify1 = c89cbor_cose_verify1;
+  runtime->cose_verify1_init = c89cbor_cose_verify1_init;
+  runtime->cose_verify1_open = c89cbor_cose_verify1_open;
+  runtime->cose_mac0 = c89cbor_cose_mac0;
+  runtime->cose_mac0_init = c89cbor_cose_mac0_init;
+  runtime->cose_mac0_open = c89cbor_cose_mac0_open;
+  runtime->cose_verify_mac0 = c89cbor_cose_verify_mac0;
+  runtime->cose_verify_mac0_init = c89cbor_cose_verify_mac0_init;
+  runtime->cose_verify_mac0_open = c89cbor_cose_verify_mac0_open;
+  runtime->cose_sign1_stream = c89cbor_cose_sign1_stream;
+  runtime->cose_sign1_stream_init = c89cbor_cose_sign1_stream_init;
+  runtime->cose_sign1_stream_open = c89cbor_cose_sign1_stream_open;
+  runtime->cose_verify1_stream = c89cbor_cose_verify1_stream;
+  runtime->cose_verify1_stream_init = c89cbor_cose_verify1_stream_init;
+  runtime->cose_verify1_stream_open = c89cbor_cose_verify1_stream_open;
+  runtime->cose_mac0_stream = c89cbor_cose_mac0_stream;
+  runtime->cose_mac0_stream_init = c89cbor_cose_mac0_stream_init;
+  runtime->cose_mac0_stream_open = c89cbor_cose_mac0_stream_open;
+  runtime->cose_verify_mac0_stream = c89cbor_cose_verify_mac0_stream;
+  runtime->cose_verify_mac0_stream_init = c89cbor_cose_verify_mac0_stream_init;
+  runtime->cose_verify_mac0_stream_open = c89cbor_cose_verify_mac0_stream_open;
   runtime->default_cose_options = c89cbor_runtime_default_cose_options;
   runtime->cose_key_init = c89cbor_cose_key_init;
   runtime->cose_key_create = c89cbor_cose_key_create;

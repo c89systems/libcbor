@@ -40,6 +40,12 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_cose_key_init` | runtime.cose_key_init | runtime:cose_key_init |
 | `c89cbor_cose_key_metadata` | cose_key.metadata | cose_key:metadata |
 | `c89cbor_cose_key_public_key` | cose_key.public_key | cose_key:public_key |
+| `c89cbor_cose_mac0` | runtime.cose_mac0 | runtime:cose_mac0 |
+| `c89cbor_cose_mac0_init` | runtime.cose_mac0_init | runtime:cose_mac0_init |
+| `c89cbor_cose_mac0_open` | runtime.cose_mac0_open | runtime:cose_mac0_open |
+| `c89cbor_cose_mac0_stream` | runtime.cose_mac0_stream | runtime:cose_mac0_stream |
+| `c89cbor_cose_mac0_stream_init` | runtime.cose_mac0_stream_init | runtime:cose_mac0_stream_init |
+| `c89cbor_cose_mac0_stream_open` | runtime.cose_mac0_stream_open | runtime:cose_mac0_stream_open |
 | `c89cbor_cose_operation_cleanup` | cose_operation.cleanup | cose_operation:cleanup |
 | `c89cbor_cose_operation_destroy` | cose_operation.destroy | cose_operation:destroy |
 | `c89cbor_cose_operation_diagnostic` | cose_operation.diagnostic | cose_operation:diagnostic |
@@ -47,7 +53,36 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_cose_operation_progress` | cose_operation.progress | cose_operation:progress |
 | `c89cbor_cose_operation_step` | cose_operation.step | cose_operation:step |
 | `c89cbor_cose_operation_stream_info` | cose_operation.stream_info | cose_operation:stream_info |
+| `c89cbor_cose_sign1` | runtime.cose_sign1 | runtime:cose_sign1 |
+| `c89cbor_cose_sign1_init` | runtime.cose_sign1_init | runtime:cose_sign1_init |
+| `c89cbor_cose_sign1_open` | runtime.cose_sign1_open | runtime:cose_sign1_open |
+| `c89cbor_cose_sign1_stream` | runtime.cose_sign1_stream | runtime:cose_sign1_stream |
+| `c89cbor_cose_sign1_stream_init` | runtime.cose_sign1_stream_init | runtime:cose_sign1_stream_init |
+| `c89cbor_cose_sign1_stream_open` | runtime.cose_sign1_stream_open | runtime:cose_sign1_stream_open |
+| `c89cbor_cose_verify1` | runtime.cose_verify1 | runtime:cose_verify1 |
+| `c89cbor_cose_verify1_init` | runtime.cose_verify1_init | runtime:cose_verify1_init |
+| `c89cbor_cose_verify1_open` | runtime.cose_verify1_open | runtime:cose_verify1_open |
+| `c89cbor_cose_verify1_stream` | runtime.cose_verify1_stream | runtime:cose_verify1_stream |
+| `c89cbor_cose_verify1_stream_init` | runtime.cose_verify1_stream_init | runtime:cose_verify1_stream_init |
+| `c89cbor_cose_verify1_stream_open` | runtime.cose_verify1_stream_open | runtime:cose_verify1_stream_open |
+| `c89cbor_cose_verify_mac0` | runtime.cose_verify_mac0 | runtime:cose_verify_mac0 |
+| `c89cbor_cose_verify_mac0_init` | runtime.cose_verify_mac0_init | runtime:cose_verify_mac0_init |
+| `c89cbor_cose_verify_mac0_open` | runtime.cose_verify_mac0_open | runtime:cose_verify_mac0_open |
+| `c89cbor_cose_verify_mac0_stream` | runtime.cose_verify_mac0_stream | runtime:cose_verify_mac0_stream |
+| `c89cbor_cose_verify_mac0_stream_init` | runtime.cose_verify_mac0_stream_init | runtime:cose_verify_mac0_stream_init |
+| `c89cbor_cose_verify_mac0_stream_open` | runtime.cose_verify_mac0_stream_open | runtime:cose_verify_mac0_stream_open |
 | `c89cbor_create` | Runtime bootstrap | cbor.create |
+| `c89cbor_cwt_claim` | cwt.claim | cwt:claim |
+| `c89cbor_cwt_cleanup` | cwt.cleanup | cwt:cleanup |
+| `c89cbor_cwt_create` | runtime.cwt_create | runtime:cwt_create |
+| `c89cbor_cwt_destroy` | cwt.destroy | cwt:destroy |
+| `c89cbor_cwt_diagnostic` | cwt.diagnostic | cwt:diagnostic |
+| `c89cbor_cwt_init` | runtime.cwt_init | runtime:cwt_init |
+| `c89cbor_cwt_seal` | cwt.seal | cwt:seal |
+| `c89cbor_cwt_set_claims` | cwt.set_claims | cwt:set_claims |
+| `c89cbor_cwt_set_lonejson` | cwt.set_lonejson | cwt:set_lonejson |
+| `c89cbor_cwt_verify` | cwt.verify | cwt:verify |
+| `c89cbor_cwt_view_get` | cwt.view_get | cwt:view_get |
 | `c89cbor_decode_map` | runtime.decode_map | runtime:decode_map |
 | `c89cbor_decode_map_init` | runtime.decode_map_init | runtime:decode_map_init |
 | `c89cbor_decode_map_open` | runtime.decode_map_open | runtime:decode_map_open |
@@ -66,6 +101,7 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_default_allocator` | Value helper; runtime.default_allocator twin | cbor.default_allocator |
 | `c89cbor_default_config` | Value helper; runtime.default_config twin | cbor.default_config |
 | `c89cbor_default_cose_options` | Value helper; runtime.default_cose_options twin | cbor.default_cose_options |
+| `c89cbor_default_cwt_options` | Value helper; runtime.default_cwt_options twin | cbor.default_cwt_options |
 | `c89cbor_default_options` | Value helper; runtime.default_options twin | cbor.default_options |
 | `c89cbor_destroy` | runtime.destroy | runtime:destroy |
 | `c89cbor_diagnostic` | runtime.diagnostic | runtime:diagnostic |
@@ -108,9 +144,13 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_lua_check_cose_key` | binding.check_cose_key | Native binding.check_cose_key |
 | `c89cbor_lua_check_cose_operation` | binding.check_cose_operation | Native binding.check_cose_operation |
 | `c89cbor_lua_check_cose_options` | binding.check_cose_options | Native binding.check_cose_options |
+| `c89cbor_lua_check_cwt` | binding.check_cwt | Native binding.check_cwt |
+| `c89cbor_lua_check_cwt_options` | binding.check_cwt_options | Native binding.check_cwt_options |
 | `c89cbor_lua_check_decoder` | binding.check_decoder | Native binding.check_decoder |
 | `c89cbor_lua_check_encoder` | binding.check_encoder | Native binding.check_encoder |
 | `c89cbor_lua_check_fd` | binding.check_fd | Native binding.check_fd |
+| `c89cbor_lua_check_jwt_claims` | binding.check_jwt_claims | Native binding.check_jwt_claims |
+| `c89cbor_lua_check_jwt_policy` | binding.check_jwt_policy | Native binding.check_jwt_policy |
 | `c89cbor_lua_check_options` | binding.check_options | Native binding.check_options |
 | `c89cbor_lua_check_reader` | binding.check_reader | Native binding.check_reader |
 | `c89cbor_lua_check_record_view` | binding.check_record_view | Native binding.check_record_view |
@@ -130,9 +170,13 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_lua_push_cose_key` | binding.push_cose_key | Native binding.push_cose_key |
 | `c89cbor_lua_push_cose_operation` | binding.push_cose_operation | Native binding.push_cose_operation |
 | `c89cbor_lua_push_cose_options` | binding.push_cose_options | Native binding.push_cose_options |
+| `c89cbor_lua_push_cwt` | binding.push_cwt | Native binding.push_cwt |
+| `c89cbor_lua_push_cwt_options` | binding.push_cwt_options | Native binding.push_cwt_options |
 | `c89cbor_lua_push_decoder` | binding.push_decoder | Native binding.push_decoder |
 | `c89cbor_lua_push_encoder` | binding.push_encoder | Native binding.push_encoder |
 | `c89cbor_lua_push_fd` | binding.push_fd | Native binding.push_fd |
+| `c89cbor_lua_push_jwt_claims` | binding.push_jwt_claims | Native binding.push_jwt_claims |
+| `c89cbor_lua_push_jwt_policy` | binding.push_jwt_policy | Native binding.push_jwt_policy |
 | `c89cbor_lua_push_options` | binding.push_options | Native binding.push_options |
 | `c89cbor_lua_push_reader` | binding.push_reader | Native binding.push_reader |
 | `c89cbor_lua_push_record_view` | binding.push_record_view | Native binding.push_record_view |
@@ -152,6 +196,7 @@ embedding interfaces and do not move records through Lua tables.
 | `c89cbor_runtime_default_allocator` | runtime.default_allocator | runtime:default_allocator |
 | `c89cbor_runtime_default_config` | runtime.default_config | runtime:default_config |
 | `c89cbor_runtime_default_cose_options` | runtime.default_cose_options | runtime:default_cose_options |
+| `c89cbor_runtime_default_cwt_options` | runtime.default_cwt_options | runtime:default_cwt_options |
 | `c89cbor_runtime_default_options` | runtime.default_options | runtime:default_options |
 | `c89cbor_status_string` | runtime.status_string | runtime:status_string |
 | `c89cbor_transfer_cleanup` | transfer.cleanup | transfer:cleanup |

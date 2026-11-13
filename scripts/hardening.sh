@@ -32,22 +32,24 @@ fuzz)
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-x86_64-linux-gnu/lib/cmake/lonejson" \
     "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore"
   cmake --build build/fuzz --parallel "${BUILD_JOBS:-2}"
-  read -ra fuzz_cases <<< "${FUZZ_CASES:-codec json cbor map cose cose-stream}"
+  read -ra fuzz_cases <<< "${FUZZ_CASES:-codec json cbor map cose cose-stream cose-sign1 cose-sign1-stream cose-mac0 cose-mac0-stream cwt}"
   for case_name in "${fuzz_cases[@]}"; do
-    case "$case_name" in codec|json|cbor|map|cose|cose-stream) ;; *) printf 'Unknown fuzz case: %s\n' "$case_name" >&2; exit 1;; esac
+    case "$case_name" in codec|json|cbor|map|cose|cose-stream|cose-sign1|cose-sign1-stream|cose-mac0|cose-mac0-stream|cwt) ;; *) printf 'Unknown fuzz case: %s\n' "$case_name" >&2; exit 1;; esac
     result=build/fuzz/results-$case_name
     c89_owned_path "$result"
     rm -rf -- "$result"
     if [[ $case_name == codec ]]; then
       command=("$root/build/fuzz/codec_fuzz")
       corpus=tests/fuzz-corpus
-    elif [[ $case_name == cose* ]]; then
+    elif [[ $case_name == cose* || $case_name == cwt ]]; then
       command=("$root/build/fuzz/cose_fuzz" "$case_name")
       corpus=build/fuzz/corpus-$case_name
       mkdir -p "$corpus"
       build/fuzz/cose_fuzz "seed-$case_name" < /dev/null > "$corpus/valid"
       build/fuzz/cose_fuzz "seed-$case_name-kw" < /dev/null > "$corpus/wrapped"
       build/fuzz/cose_fuzz "seed-$case_name-x" < /dev/null > "$corpus/public"
+      build/fuzz/cose_fuzz "seed-$case_name-p256" < /dev/null > "$corpus/p256"
+      build/fuzz/cose_fuzz "seed-$case_name-hmac" < /dev/null > "$corpus/hmac"
       cp tests/fuzz-corpus/* "$corpus/"
     else
       command=("$root/build/fuzz/bridge_fuzz" "$case_name")

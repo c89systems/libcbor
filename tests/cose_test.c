@@ -3,6 +3,7 @@
 #include <openssl/params.h>
 #include <openssl/core_names.h>
 #include <openssl/kdf.h>
+#include <openssl/x509.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -278,6 +279,9 @@ static void tamper(fixture *f) {
 #include "cose_transport.inc.h"
 #include "cose_counters.inc.h"
 #include "cose_concurrency.inc.h"
+#include "cose_sign.inc.h"
+#include "cwt.inc.h"
+#include "cose_udp.inc.h"
 static void *run(void *unused) {
   fixture *f = malloc(sizeof(*f));
   int encrypt, stream, pause;
@@ -302,9 +306,16 @@ static void *run(void *unused) {
   cose_replay_admission(f);
   cose_stream_attacks(f);
   cose_lifetime(f);
+  cose_factory_reentry(f);
   cose_transports(f);
   cose_counters(f);
   cose_concurrency(f);
+  cose_authentication(f);
+  cwt_tokens(f);
+  cwt_claim_edges(f);
+  cwt_policy_edges(f);
+  cwt_allocations();
+  cose_udp_failures(f);
   cleanup(f);
   free(f);
   return NULL;

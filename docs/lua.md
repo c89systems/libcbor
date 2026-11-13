@@ -97,9 +97,9 @@ SDK archives contain the C library, not an interpreter or prebuilt Lua module.
 ## COSE
 
 `runtime:cose_key_init(kind, bytes, id=nil)` and `cose_key_create` import copied
-32-byte keys. Constants COSE_A256GCM, COSE_A256KW, COSE_X25519_PUBLIC and
+keys (32 bytes, or 65 for P-256 public). Constants COSE_A256GCM, COSE_A256KW, COSE_X25519_PUBLIC and
 COSE_X25519_PRIVATE select distinct key policies. `key:metadata()` returns
-`status,{kind,key_id}`; `key:public_key()` returns `status,bytes` for X25519,
+`status,{kind,key_id}`; `key:public_key()` returns `status,bytes` for public-key families,
 or UNSUPPORTED for symmetric keys. Secret export is unavailable. Constructors
 return a handle or `nil,status,error`. They also exist on the module for keys
 with the default native allocator. Key cleanup/destroy/close and diagnostic
@@ -136,3 +136,51 @@ stream's first record authenticates, or `INPUT,nil` before that point.
 Standalone/sealing operations return `UNSUPPORTED,nil`. Empty streams expose
 metadata after DONE. Applications own replay admission; authentication of an
 individual stream never implies a persistent replay database.
+
+## Sign1, Mac0 and CWT
+
+Key kinds also include COSE_ED25519_PUBLIC/PRIVATE, COSE_P256_PUBLIC/PRIVATE
+and COSE_HMAC256. Import 32 bytes except for the 65-byte uncompressed SEC1
+P-256 public point. `public_key` returns 32 or 65 public bytes as appropriate.
+
+`cose_sign1`, `cose_verify1`, `cose_mac0` and `cose_verify_mac0` use the same
+`(source,sink,key,options)` signature, with `_init`, `_open` and `_stream`
+variants. For example `cose_sign1_stream_open` opens a resumable record signer.
+Every byte stays on native endpoints. Stream metadata additionally reports
+`tag` (18/17 for Sign1/Mac0) and `algorithm` (-19/-9/5).
+
+`root:cwt_init(options=nil)` and `root:cwt_create(options=nil)` return a
+bounded token shell or `nil,status,error`. `default_cwt_options` exists on the
+root and module. Options contain `cose` options, claim/audience count limits,
+`require_cti` and `require_encryption`. Native options can also supply an admission
+callback/context; Lua does not implement a hidden replay database.
+
+- `token:set_claims(encoded_map)` copies local CBOR claims.
+- `token:set_lonejson(native_claims,cti=nil)` encodes a typed native lonejson
+  JWT claim pointer directly; no JSON serialization is involved.
+- `token:seal(signing_key,encryption_keys=nil,capacity=receiver_default)` returns
+  `status,wire_span,error`. The owned native span passes directly to native
+  consumers and `verify`; `wire_span:string()` explicitly requests a Lua copy.
+  Borrowed native CWT handles default to a 6162-byte output capacity; supply
+  capacity explicitly when their configured bounds are larger.
+- `token:verify(wire,verification_key,decryption_key=nil,policy)` returns
+  `status,error`. Policy can be a native lonejson policy handle or a table with
+  native field names. Tables require an explicit integer `now`. Lists and their
+  strings are snapshotted for the call. Algorithm names are Ed25519/ES256/HS256.
+- `token:view_get()` returns `status,view` or `INPUT,nil`. The view is an explicit
+  Lua copy with encoded claims, binary cti, claim_count, authenticated,
+  algorithm and a claims table including audience/scp arrays.
+- `token:claim(integer_or_text_or_token)` returns `status,encoded_value`, or
+  `INPUT,nil` when absent. This is an explicit Lua copy of that one CBOR value.
+- diagnostic and close/cleanup/destroy follow normal shell ownership rules.
+
+A failed verification clears the published view. Local loading reports
+`authenticated=false`; only crypto, native claim policy and application admission
+can produce `authenticated=true`. `cwt` operations are bounded memory calls;
+use native COSE operations for transport scheduling and unbounded values.
+
+Native embedders have binding push/check pairs for cwt, cwt_options, jwt_claims
+and jwt_policy. Native CWT consumers can read `view_get` directly without copying
+records into Lua tables. These typed handles borrow storage and pin their owner,
+without an FFI dependency. The [CWT specification](sign1-cwt.md) defines trust,
+size, nesting, clock and replay contracts.

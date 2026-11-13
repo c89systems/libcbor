@@ -164,7 +164,7 @@ Its timed interval includes borrowed-handle preparation and Lua chunk execution;
 VM/module creation belongs to setup. Native standalone/core measurements link
 statically. These link modes are intentional and should not be conflated.
 
-The COSE development run on the x86_64 host/compiler above, OpenSSL 3.6.5,
+The earlier encryption-only development run on the x86_64 host/compiler above, OpenSSL 3.6.5,
 1000 payload units and default bounds produced these medians of five rounds:
 
 | Profile | Standalone seal µs | Standalone open µs | Shared C stream MiB/s | Lua stream MiB/s |
@@ -174,7 +174,7 @@ The COSE development run on the x86_64 host/compiler above, OpenSSL 3.6.5,
 | X25519 recipient | 114.64 | 61.78 | 120.4 | 111.7 |
 | Eight X25519 entries | 870.29 | 90.85 | 48.7 | 47.1 |
 
-Each paired stream made six libcbor allocator calls at construction, with 65904
+In that earlier implementation each paired stream made six libcbor allocator calls at construction, with 65904
 peak owned bytes including the four prepared key handles. Streaming length does
 not increase this workspace. OpenSSL provider/RNG allocations and Lua VM
 allocations are outside those allocator hooks; this is not allocation-free
@@ -183,3 +183,38 @@ All C/Lua pairs used identical endpoint callback counts and copied-byte totals.
 Shared-host timing varies; these figures establish workloads, not speed gates.
 Binary hashes, dirty-source context, toolchain and configured repetition counts
 are recorded in the normal build/bench/context.txt.
+
+The Sign1/Mac0 extension adds ed25519, p256 and hmac profiles to the same object
+and bounded-ring stream workloads. CWT seal/verify workloads appear separately
+as `cwt-<profile>-<static|shared|lua>.jsonl`. They use native claims and an explicit
+lonejson algorithm/issuer/audience/clock policy; no JSON serialization occurs.
+The Lua CWT workload uses an owned native output span without a Lua string copy.
+Its interval includes Lua userdata allocation and dispatch; the static/shared
+native workload writes caller-owned storage. Provider and Lua allocations remain
+outside the libcbor allocator counters. Internal CBOR, claim and crypto copies
+are not inferred from endpoint counters. COSE object runs use 1024 payload
+bytes; CWT runs use the actual small issuer/audience/expiration map. Throughput
+uses the actual wire bytes per token. Setup includes key/token receiver creation;
+per-token measurements include temporary COSE operation allocation and cleanup.
+
+The common COSE workspace now accommodates a bounded signature input:
+`4 * record_bytes + 8 * header_bytes + 592` bytes per operation, plus state and
+recipient storage. Historical allocation peaks above describe the previous
+encryption-only workspace; current JSONL counters are authoritative.
+
+A subsequent x86_64 development run with OpenSSL 3.6.5 and 1000 operations per
+round produced these medians of five measured rounds for the small CWT map:
+
+| Profile | Shared C seal µs | Shared C verify µs | Lua seal µs | Lua verify µs |
+| --- | ---: | ---: | ---: | ---: |
+| Ed25519 | 24.85 | 64.56 | 27.84 | 66.60 |
+| P-256 | 19.15 | 45.81 | 20.64 | 48.79 |
+| HMAC-SHA-256 | 3.52 | 6.03 | 5.95 | 6.00 |
+
+Shared C bounded-record sign/verify roundtrips measured 21.8 MiB/s for Ed25519,
+32.0 MiB/s for P-256 and 247.8 MiB/s for HMAC, counting authenticated wire bytes.
+These are initial measurements on a shared host, not comparative speed claims.
+The same run includes static C, native Lua spans, every encryption profile and
+Unix/TCP/UDP/pipe transport measurements under `build/bench/`. Timing and allocator
+context are recorded alongside the JSONL; rerun before drawing optimization or
+release-performance conclusions.

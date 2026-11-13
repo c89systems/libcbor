@@ -14,8 +14,10 @@ struct c89cbor_cose_options;
  * successful record authentication. Applications own replay admission. */
 typedef struct c89cbor_cose_stream_info {
   unsigned char stream_id[16]; /**< First authenticated stream identifier. */
-  int encrypt;                 /**< True for Encrypt, false for Encrypt0. */
-  int complete; /**< True only after successful final-record delivery/DONE. */
+  int encrypt;   /**< True only for Encrypt; tag distinguishes all families. */
+  int tag;       /**< Authenticated COSE family: 16, 96, 18 or 17. */
+  int algorithm; /**< Authenticated body algorithm identifier. */
+  int complete;  /**< True only after successful final-record delivery/DONE. */
 } c89cbor_cose_stream_info;
 /** COSE operation receiver. Decryption retains read-ahead after DONE and next
  * starts another object/logical stream on the same source. Keep its address
@@ -52,7 +54,12 @@ typedef enum c89cbor_cose_key_kind {
   C89CBOR_COSE_A256KW = 1,        /**< AES-256 key-wrapping key only. */
   C89CBOR_COSE_X25519_PUBLIC = 2, /**< Trusted recipient public key. */
   C89CBOR_COSE_X25519_PRIVATE =
-      3 /**< Recipient private key; public export allowed. */
+      3, /**< Recipient private key; public export allowed. */
+  C89CBOR_COSE_ED25519_PUBLIC = 4,  /**< Ed25519 verification key. */
+  C89CBOR_COSE_ED25519_PRIVATE = 5, /**< Ed25519 signing seed. */
+  C89CBOR_COSE_P256_PUBLIC = 6,  /**< Uncompressed SEC1 P-256 public point. */
+  C89CBOR_COSE_P256_PRIVATE = 7, /**< Big-endian P-256 private scalar. */
+  C89CBOR_COSE_HMAC256 = 8 /**< HMAC-SHA-256 key, separate from AES keys. */
 } c89cbor_cose_key_kind;
 /** Copied nonsecret metadata. The unused key_id suffix is zero. */
 typedef struct c89cbor_cose_key_info {
@@ -70,7 +77,7 @@ typedef struct c89cbor_cose_key {
   int (*metadata)(const struct c89cbor_cose_key *, c89cbor_cose_key_info *);
   /**< Copy nonsecret metadata; initialize output before validation. */
   int (*public_key)(const struct c89cbor_cose_key *, void *, size_t, size_t *);
-  /**< Copy 32 X25519 public bytes; symmetric keys return UNSUPPORTED. */
+  /**< Copy 32 X25519/Ed25519 or 65 SEC1 P-256 public bytes. */
   int (*diagnostic)(const struct c89cbor_cose_key *, c89cbor_error *);
   /**< Copy the first retained failure without allocating. */
   int (*cleanup)(
@@ -142,9 +149,9 @@ C89CBOR_API c89cbor_cose_options c89cbor_default_cose_options(void);
 /** Matching root receiver utility; no allocation. */
 C89CBOR_API c89cbor_cose_options
 c89cbor_runtime_default_cose_options(c89cbor *);
-/** Import exactly 32 key bytes and copy at most 64 identifier bytes into fresh
- * caller-owned storage. NULL runtime selects native allocator defaults. No I/O.
- * Failure leaves a cleanup-safe shell. Key material is never logged.
+/** Import 32 key bytes (65 for P-256 public) and copy at most 64 ID bytes into
+ * fresh caller-owned storage. NULL runtime selects native allocator defaults.
+ * No I/O. Failure leaves a cleanup-safe shell. Key material is never logged.
  */
 C89CBOR_API int c89cbor_cose_key_init(c89cbor *, c89cbor_cose_key *,
                                       c89cbor_cose_key_kind, const void *,
@@ -270,6 +277,147 @@ c89cbor_cose_decrypt_stream_init(c89cbor *, c89cbor_cose_operation *,
                                  const c89cbor_source *, const c89cbor_sink *,
                                  c89cbor_cose_key *,
                                  const c89cbor_cose_options *, c89cbor_error *);
+/** Create one bounded object; borrow the explicitly typed key. Blocking
+ * endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_sign1(c89cbor *, const c89cbor_source *,
+                                   const c89cbor_sink *, c89cbor_cose_key *,
+                                   const c89cbor_cose_options *,
+                                   c89cbor_error *);
+/** Allocate a resumable sign1 receiver; no endpoint I/O. */
+C89CBOR_API int
+c89cbor_cose_sign1_open(c89cbor *, const c89cbor_source *, const c89cbor_sink *,
+                        c89cbor_cose_key *, const c89cbor_cose_options *,
+                        c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for sign1; borrow endpoints and key. */
+C89CBOR_API int c89cbor_cose_sign1_init(c89cbor *, c89cbor_cose_operation *,
+                                        const c89cbor_source *,
+                                        const c89cbor_sink *,
+                                        c89cbor_cose_key *,
+                                        const c89cbor_cose_options *,
+                                        c89cbor_error *);
+/** Authenticate one bounded object; release payload only after authentication.
+ * Blocking endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_verify1(c89cbor *, const c89cbor_source *,
+                                     const c89cbor_sink *, c89cbor_cose_key *,
+                                     const c89cbor_cose_options *,
+                                     c89cbor_error *);
+/** Allocate a resumable verify1 receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_verify1_open(
+    c89cbor *, const c89cbor_source *, const c89cbor_sink *, c89cbor_cose_key *,
+    const c89cbor_cose_options *, c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for verify1; borrow endpoints and key. */
+C89CBOR_API int c89cbor_cose_verify1_init(c89cbor *, c89cbor_cose_operation *,
+                                          const c89cbor_source *,
+                                          const c89cbor_sink *,
+                                          c89cbor_cose_key *,
+                                          const c89cbor_cose_options *,
+                                          c89cbor_error *);
+/** Create one bounded object; borrow the explicitly typed key. Blocking
+ * endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_mac0(c89cbor *, const c89cbor_source *,
+                                  const c89cbor_sink *, c89cbor_cose_key *,
+                                  const c89cbor_cose_options *,
+                                  c89cbor_error *);
+/** Allocate a resumable mac0 receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_mac0_open(c89cbor *, const c89cbor_source *,
+                                       const c89cbor_sink *, c89cbor_cose_key *,
+                                       const c89cbor_cose_options *,
+                                       c89cbor_cose_operation **,
+                                       c89cbor_error *);
+/** Initialize fresh caller storage for mac0; borrow endpoints and key. */
+C89CBOR_API int c89cbor_cose_mac0_init(c89cbor *, c89cbor_cose_operation *,
+                                       const c89cbor_source *,
+                                       const c89cbor_sink *, c89cbor_cose_key *,
+                                       const c89cbor_cose_options *,
+                                       c89cbor_error *);
+/** Authenticate one bounded object; release payload only after authentication.
+ * Blocking endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_verify_mac0(c89cbor *, const c89cbor_source *,
+                                         const c89cbor_sink *,
+                                         c89cbor_cose_key *,
+                                         const c89cbor_cose_options *,
+                                         c89cbor_error *);
+/** Allocate a resumable verify_mac0 receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_verify_mac0_open(
+    c89cbor *, const c89cbor_source *, const c89cbor_sink *, c89cbor_cose_key *,
+    const c89cbor_cose_options *, c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for verify_mac0; borrow endpoints and key.
+ */
+C89CBOR_API int
+c89cbor_cose_verify_mac0_init(c89cbor *, c89cbor_cose_operation *,
+                              const c89cbor_source *, const c89cbor_sink *,
+                              c89cbor_cose_key *, const c89cbor_cose_options *,
+                              c89cbor_error *);
+/** Create ordered bounded records; borrow the explicitly typed key. Blocking
+ * endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_sign1_stream(c89cbor *, const c89cbor_source *,
+                                          const c89cbor_sink *,
+                                          c89cbor_cose_key *,
+                                          const c89cbor_cose_options *,
+                                          c89cbor_error *);
+/** Allocate a resumable sign1_stream receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_sign1_stream_open(
+    c89cbor *, const c89cbor_source *, const c89cbor_sink *, c89cbor_cose_key *,
+    const c89cbor_cose_options *, c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for sign1_stream; borrow endpoints and key.
+ */
+C89CBOR_API int
+c89cbor_cose_sign1_stream_init(c89cbor *, c89cbor_cose_operation *,
+                               const c89cbor_source *, const c89cbor_sink *,
+                               c89cbor_cose_key *, const c89cbor_cose_options *,
+                               c89cbor_error *);
+/** Authenticate ordered bounded records; release payload only after
+ * authentication. Blocking endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_verify1_stream(c89cbor *, const c89cbor_source *,
+                                            const c89cbor_sink *,
+                                            c89cbor_cose_key *,
+                                            const c89cbor_cose_options *,
+                                            c89cbor_error *);
+/** Allocate a resumable verify1_stream receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_verify1_stream_open(
+    c89cbor *, const c89cbor_source *, const c89cbor_sink *, c89cbor_cose_key *,
+    const c89cbor_cose_options *, c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for verify1_stream; borrow endpoints and
+ * key. */
+C89CBOR_API int
+c89cbor_cose_verify1_stream_init(c89cbor *, c89cbor_cose_operation *,
+                                 const c89cbor_source *, const c89cbor_sink *,
+                                 c89cbor_cose_key *,
+                                 const c89cbor_cose_options *, c89cbor_error *);
+/** Create ordered bounded records; borrow the explicitly typed key. Blocking
+ * endpoints; scoped EOF on verify. */
+C89CBOR_API int c89cbor_cose_mac0_stream(c89cbor *, const c89cbor_source *,
+                                         const c89cbor_sink *,
+                                         c89cbor_cose_key *,
+                                         const c89cbor_cose_options *,
+                                         c89cbor_error *);
+/** Allocate a resumable mac0_stream receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_mac0_stream_open(
+    c89cbor *, const c89cbor_source *, const c89cbor_sink *, c89cbor_cose_key *,
+    const c89cbor_cose_options *, c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for mac0_stream; borrow endpoints and key.
+ */
+C89CBOR_API int
+c89cbor_cose_mac0_stream_init(c89cbor *, c89cbor_cose_operation *,
+                              const c89cbor_source *, const c89cbor_sink *,
+                              c89cbor_cose_key *, const c89cbor_cose_options *,
+                              c89cbor_error *);
+/** Authenticate ordered bounded records; release payload only after
+ * authentication. Blocking endpoints; scoped EOF on verify. */
+C89CBOR_API int
+c89cbor_cose_verify_mac0_stream(c89cbor *, const c89cbor_source *,
+                                const c89cbor_sink *, c89cbor_cose_key *,
+                                const c89cbor_cose_options *, c89cbor_error *);
+/** Allocate a resumable verify_mac0_stream receiver; no endpoint I/O. */
+C89CBOR_API int c89cbor_cose_verify_mac0_stream_open(
+    c89cbor *, const c89cbor_source *, const c89cbor_sink *, c89cbor_cose_key *,
+    const c89cbor_cose_options *, c89cbor_cose_operation **, c89cbor_error *);
+/** Initialize fresh caller storage for verify_mac0_stream; borrow endpoints and
+ * key. */
+C89CBOR_API int c89cbor_cose_verify_mac0_stream_init(
+    c89cbor *, c89cbor_cose_operation *, const c89cbor_source *,
+    const c89cbor_sink *, c89cbor_cose_key *, const c89cbor_cose_options *,
+    c89cbor_error *);
 #ifdef __cplusplus
 }
 #endif

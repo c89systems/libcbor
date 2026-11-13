@@ -93,7 +93,7 @@ static int cose_key_factory(lua_State *L, int create) {
   c89cbor_cose_key *key = NULL;
   c89cbor_error error;
   handle *h;
-  if (kind > C89CBOR_COSE_X25519_PRIVATE)
+  if (kind > C89CBOR_COSE_HMAC256)
     return luaL_argerror(L, 1 + base, "unknown COSE key kind");
   if (base && checked(L, 1, ROOT)->active) {
     lua_pushnil(L);
@@ -141,7 +141,7 @@ static int cose_key_metadata(lua_State *L) {
   return 2;
 }
 static int cose_key_public_key(lua_State *L) {
-  unsigned char bytes[32];
+  unsigned char bytes[65];
   size_t length;
   int status = c89cbor_cose_key_public_key(checked(L, 1, COSE_KEY)->ptr, bytes,
                                            sizeof(bytes), &length);
@@ -152,7 +152,21 @@ static int cose_key_public_key(lua_State *L) {
     lua_pushnil(L);
   return 2;
 }
-enum cose_kind { COSE_E0, COSE_E, COSE_D, COSE_ES, COSE_DS };
+enum cose_kind {
+  COSE_E0,
+  COSE_E,
+  COSE_D,
+  COSE_ES,
+  COSE_DS,
+  COSE_AUTH_0,
+  COSE_AUTH_1,
+  COSE_AUTH_2,
+  COSE_AUTH_3,
+  COSE_AUTH_4,
+  COSE_AUTH_5,
+  COSE_AUTH_6,
+  COSE_AUTH_7
+};
 /* source, sink, key-or-recipient-array, options follow the root. A private
  * recipient snapshot pins each wrapper even if the input table is mutated. */
 static int runtime_cose(lua_State *L, enum cose_kind kind, int mode) {
@@ -205,7 +219,31 @@ static int runtime_cose(lua_State *L, enum cose_kind kind, int mode) {
   root->active = h->active = 1;
   if (mode == 1) {
     h->ptr = NULL;
-    if (kind == COSE_E0)
+    if (kind == COSE_AUTH_0)
+      status =
+          runtime->cose_sign1(runtime, source, sink, keys[0], options, &error);
+    else if (kind == COSE_AUTH_1)
+      status = runtime->cose_verify1(runtime, source, sink, keys[0], options,
+                                     &error);
+    else if (kind == COSE_AUTH_2)
+      status =
+          runtime->cose_mac0(runtime, source, sink, keys[0], options, &error);
+    else if (kind == COSE_AUTH_3)
+      status = runtime->cose_verify_mac0(runtime, source, sink, keys[0],
+                                         options, &error);
+    else if (kind == COSE_AUTH_4)
+      status = runtime->cose_sign1_stream(runtime, source, sink, keys[0],
+                                          options, &error);
+    else if (kind == COSE_AUTH_5)
+      status = runtime->cose_verify1_stream(runtime, source, sink, keys[0],
+                                            options, &error);
+    else if (kind == COSE_AUTH_6)
+      status = runtime->cose_mac0_stream(runtime, source, sink, keys[0],
+                                         options, &error);
+    else if (kind == COSE_AUTH_7)
+      status = runtime->cose_verify_mac0_stream(runtime, source, sink, keys[0],
+                                                options, &error);
+    else if (kind == COSE_E0)
       status = runtime->cose_encrypt0(runtime, source, sink, keys[0], options,
                                       &error);
     else if (kind == COSE_E)
@@ -223,7 +261,31 @@ static int runtime_cose(lua_State *L, enum cose_kind kind, int mode) {
   } else if (mode == 2) {
     operation = h->ptr;
     h->heap_kind = -9;
-    if (kind == COSE_E0)
+    if (kind == COSE_AUTH_0)
+      status = runtime->cose_sign1_init(runtime, operation, source, sink,
+                                        keys[0], options, &error);
+    else if (kind == COSE_AUTH_1)
+      status = runtime->cose_verify1_init(runtime, operation, source, sink,
+                                          keys[0], options, &error);
+    else if (kind == COSE_AUTH_2)
+      status = runtime->cose_mac0_init(runtime, operation, source, sink,
+                                       keys[0], options, &error);
+    else if (kind == COSE_AUTH_3)
+      status = runtime->cose_verify_mac0_init(runtime, operation, source, sink,
+                                              keys[0], options, &error);
+    else if (kind == COSE_AUTH_4)
+      status = runtime->cose_sign1_stream_init(runtime, operation, source, sink,
+                                               keys[0], options, &error);
+    else if (kind == COSE_AUTH_5)
+      status = runtime->cose_verify1_stream_init(
+          runtime, operation, source, sink, keys[0], options, &error);
+    else if (kind == COSE_AUTH_6)
+      status = runtime->cose_mac0_stream_init(runtime, operation, source, sink,
+                                              keys[0], options, &error);
+    else if (kind == COSE_AUTH_7)
+      status = runtime->cose_verify_mac0_stream_init(
+          runtime, operation, source, sink, keys[0], options, &error);
+    else if (kind == COSE_E0)
       status = runtime->cose_encrypt0_init(runtime, operation, source, sink,
                                            keys[0], options, &error);
     else if (kind == COSE_E)
@@ -241,7 +303,31 @@ static int runtime_cose(lua_State *L, enum cose_kind kind, int mode) {
   } else {
     h->ptr = NULL;
     h->heap_kind = 9;
-    if (kind == COSE_E0)
+    if (kind == COSE_AUTH_0)
+      status = runtime->cose_sign1_open(runtime, source, sink, keys[0], options,
+                                        &operation, &error);
+    else if (kind == COSE_AUTH_1)
+      status = runtime->cose_verify1_open(runtime, source, sink, keys[0],
+                                          options, &operation, &error);
+    else if (kind == COSE_AUTH_2)
+      status = runtime->cose_mac0_open(runtime, source, sink, keys[0], options,
+                                       &operation, &error);
+    else if (kind == COSE_AUTH_3)
+      status = runtime->cose_verify_mac0_open(runtime, source, sink, keys[0],
+                                              options, &operation, &error);
+    else if (kind == COSE_AUTH_4)
+      status = runtime->cose_sign1_stream_open(runtime, source, sink, keys[0],
+                                               options, &operation, &error);
+    else if (kind == COSE_AUTH_5)
+      status = runtime->cose_verify1_stream_open(runtime, source, sink, keys[0],
+                                                 options, &operation, &error);
+    else if (kind == COSE_AUTH_6)
+      status = runtime->cose_mac0_stream_open(runtime, source, sink, keys[0],
+                                              options, &operation, &error);
+    else if (kind == COSE_AUTH_7)
+      status = runtime->cose_verify_mac0_stream_open(
+          runtime, source, sink, keys[0], options, &operation, &error);
+    else if (kind == COSE_E0)
       status = runtime->cose_encrypt0_open(runtime, source, sink, keys[0],
                                            options, &operation, &error);
     else if (kind == COSE_E)
@@ -282,6 +368,14 @@ COSE_FACTORY(encrypt, COSE_E)
 COSE_FACTORY(decrypt, COSE_D)
 COSE_FACTORY(encrypt_stream, COSE_ES)
 COSE_FACTORY(decrypt_stream, COSE_DS)
+COSE_FACTORY(sign1, COSE_AUTH_0)
+COSE_FACTORY(verify1, COSE_AUTH_1)
+COSE_FACTORY(mac0, COSE_AUTH_2)
+COSE_FACTORY(verify_mac0, COSE_AUTH_3)
+COSE_FACTORY(sign1_stream, COSE_AUTH_4)
+COSE_FACTORY(verify1_stream, COSE_AUTH_5)
+COSE_FACTORY(mac0_stream, COSE_AUTH_6)
+COSE_FACTORY(verify_mac0_stream, COSE_AUTH_7)
 #undef COSE_FACTORY
 /* run stops on backpressure, and never polls a blocked native endpoint. */
 static int cose_operation_drive(lua_State *L, int run) {
@@ -359,6 +453,10 @@ static int cose_operation_stream_info(lua_State *L) {
     lua_setfield(L, -2, "stream_id");
     lua_pushboolean(L, info.encrypt);
     lua_setfield(L, -2, "encrypt");
+    lua_pushinteger(L, info.tag);
+    lua_setfield(L, -2, "tag");
+    lua_pushinteger(L, info.algorithm);
+    lua_setfield(L, -2, "algorithm");
     lua_pushboolean(L, info.complete);
     lua_setfield(L, -2, "complete");
   }
