@@ -50,6 +50,7 @@
 -- encoder:read(capacity=2048) -> status,string (explicit copying Lua path).
 -- encoder:peek() -> status,span_or_nil; encoder:advance(count) -> status.
 -- Close a peek span before put/reset/close can reuse or release its encoder.
+-- A DATA peek retains its token and byte owner even after advance/read drains it.
 -- Pending DATA keeps its token and data owner alive until drained.
 -- span(string_or_span) -> borrowed view; span:length() -> byte count;
 -- span:string() explicitly materializes the view as a Lua string.

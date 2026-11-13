@@ -84,7 +84,9 @@ unsigned/magnitude/float-bit arguments. Size/limit arguments reject negative and
 out-of-range values. Native float64 helpers preserve their C behavior.
 The runtime exposes those helpers too. Encoder peek returns a borrowed span;
 advance accepts exact byte counts. Close the span before put/reset can reuse
-the encoder. Explicit string conversion remains available through span:string().
+the encoder. DATA spans retain their token and byte owner even after advance or
+read drains the encoder. Explicit string conversion remains available through
+span:string().
 
 Owners are pinned across callbacks/operations. Explicit close is idempotent and
 rejects active or borrowed owners; close borrowed child views first.

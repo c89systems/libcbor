@@ -1269,11 +1269,16 @@ static int peek_encoder(lua_State *L) {
   c89cbor_encoder *encoder = checked(L, 1, ENC)->ptr;
   const void *bytes;
   size_t length;
-  int status = c89cbor_encoder_peek(encoder, &bytes, &length);
+  int owner, status = c89cbor_encoder_peek(encoder, &bytes, &length);
   result(L, status);
-  if (status == C89CBOR_OUTPUT)
+  if (status == C89CBOR_OUTPUT) {
+    /* Draining can release the encoder's DATA pin while this view survives. */
+    lua_getiuservalue(L, 1, 2);
+    owner = lua_gettop(L);
     (void)push_span(L, bytes, length, 1);
-  else
+    pin(L, checked(L, -1, SPAN), owner, 2);
+    lua_remove(L, owner);
+  } else
     lua_pushnil(L);
   return 2;
 }

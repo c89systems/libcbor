@@ -159,6 +159,33 @@ do
 end
 collectgarbage('collect')
 assert(owner:close() == c.OK)
+for _, drain in ipairs({'advance', 'read'}) do
+  local encoder = c.encoder()
+  local owner = c.span(string.rep('x', 1000))
+  local token = c.token(c.DATA, 0, owner)
+  assert(encoder:put(c.token(c.BYTES, 1000)) == c.OK)
+  assert(encoder:read() == c.OK)
+  assert(encoder:put(token) == c.OK)
+  local status, first = encoder:peek()
+  assert(status == c.OUTPUT and first:length() == 1000)
+  assert(encoder:advance(400) == c.OUTPUT)
+  local status, second = encoder:peek()
+  assert(status == c.OUTPUT and second:length() == 600)
+  assert(encoder[drain](encoder, 600) == c.OK)
+  assert(token:close() == c.INVALID and owner:close() == c.INVALID)
+  assert(first:string() == string.rep('x', 1000))
+  assert(first:close() == c.OK and token:close() == c.INVALID)
+  -- Only the outstanding peek now retains the token and its string owner.
+  token, owner = nil, nil
+  collectgarbage('collect')
+  collectgarbage('collect')
+  assert(second:string() == string.rep('x', 600))
+  assert(encoder:reset() == c.BUSY)
+  assert(second:close() == c.OK)
+  assert(encoder:put(c.token(c.END, c.BYTES)) == c.OK)
+  assert(encoder:finish() == c.OK)
+  assert(encoder:reset() == c.OK and encoder:close() == c.OK)
+end
 local fd = c.fd(0)
 local fs, fw = fd:source(), fd:sink()
 assert(fd:close() == c.INVALID)
