@@ -314,13 +314,14 @@ static int close_at(lua_State *L, int index) {
   lua_pop(L, 1);
   return status;
 }
-typedef struct key_import_probe {
+typedef struct constructor_probe {
   lua_State *state;
+  const char *reentry;
   size_t calls, fail_at, live;
   int armed, finalized;
-} key_import_probe;
+} constructor_probe;
 typedef struct key_input_owner {
-  key_import_probe *probe;
+  constructor_probe *probe;
   void *bytes;
 } key_input_owner;
 static int finalize_key_input(lua_State *L) {
@@ -329,17 +330,12 @@ static int finalize_key_input(lua_State *L) {
   ++owner->probe->finalized;
   return 0;
 }
-static void *key_import_allocate(void *context, size_t size) {
-  key_import_probe *probe = context;
+static void *constructor_allocate(void *context, size_t size) {
+  constructor_probe *probe = context;
   void *memory;
   if (probe->armed) {
     ++probe->calls;
-    assert(luaL_dostring(probe->state,
-                         "local c=require('cbor'); "
-                         "assert(import_bytes:close()==c.INVALID); "
-                         "assert(import_id:close()==c.INVALID); "
-                         "assert(import_root:close()==c.INVALID); "
-                         "collectgarbage('collect')") == LUA_OK);
+    assert(luaL_dostring(probe->state, probe->reentry) == LUA_OK);
     assert(probe->finalized == 0);
     if (probe->calls == probe->fail_at)
       return NULL;
@@ -349,15 +345,15 @@ static void *key_import_allocate(void *context, size_t size) {
     ++probe->live;
   return memory;
 }
-static void key_import_free(void *context, void *memory) {
-  key_import_probe *probe = context;
+static void constructor_free(void *context, void *memory) {
+  constructor_probe *probe = context;
   if (memory != NULL) {
     assert(probe->live != 0);
     --probe->live;
     free(memory);
   }
 }
-static void push_key_input(c89cbor_lua *binding, key_import_probe *probe,
+static void push_key_input(c89cbor_lua *binding, constructor_probe *probe,
                            const char *name) {
   lua_State *L = binding->state;
   key_input_owner *owner = lua_newuserdatauv(L, sizeof(*owner), 0);
@@ -375,7 +371,7 @@ static void push_key_input(c89cbor_lua *binding, key_import_probe *probe,
 }
 static void key_import_reentry(c89cbor_lua *binding) {
   lua_State *L = binding->state;
-  key_import_probe probe;
+  constructor_probe probe;
   c89cbor runtime;
   c89cbor_config config = c89cbor_default_config();
   c89cbor_error error;
@@ -386,10 +382,15 @@ static void key_import_reentry(c89cbor_lua *binding) {
     for (fail_at = 0; fail_at <= (size_t)create + 1u; ++fail_at) {
       memset(&probe, 0, sizeof(probe));
       probe.state = L;
+      probe.reentry = "local c=require('cbor'); "
+                      "assert(import_bytes:close()==c.INVALID); "
+                      "assert(import_id:close()==c.INVALID); "
+                      "assert(import_root:close()==c.INVALID); "
+                      "collectgarbage('collect')";
       probe.fail_at = fail_at;
       config.allocator.context = &probe;
-      config.allocator.alloc = key_import_allocate;
-      config.allocator.free = key_import_free;
+      config.allocator.alloc = constructor_allocate;
+      config.allocator.free = constructor_free;
       assert(c89cbor_init(&runtime, &config, &error) == 0);
       assert(binding->push_runtime(binding, &runtime, 0) == 0);
       lua_setglobal(L, "import_root");
@@ -422,6 +423,89 @@ static void key_import_reentry(c89cbor_lua *binding) {
           LUA_OK);
       assert(probe.live == 0);
       assert(runtime.cleanup(&runtime) == 0);
+    }
+}
+static void transfer_constructor_reentry(c89cbor_lua *binding) {
+  lua_State *L = binding->state;
+  constructor_probe probe;
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_error error;
+  c89cbor_source *source;
+  unsigned char bytes[4];
+  int input[2], output[2], create, failure, status;
+  char script[768];
+  for (create = 1; create >= 0; --create)
+    for (failure = 0; failure < 3; ++failure) {
+      if (!create && failure == 1)
+        continue; /* In-place transfer initialization does not allocate. */
+      memset(&probe, 0, sizeof(probe));
+      probe.state = L;
+      probe.reentry = "local c=require('cbor'); "
+                      "assert(transfer_source:close()==c.INVALID); "
+                      "assert(transfer_sink:close()==c.INVALID); "
+                      "assert(transfer_input:close()==c.INVALID); "
+                      "assert(transfer_output:close()==c.INVALID); "
+                      "assert(transfer_root:close()==c.INVALID); "
+                      "collectgarbage('collect')";
+      probe.fail_at = failure == 1 ? 1u : 0;
+      config.allocator.context = &probe;
+      config.allocator.alloc = constructor_allocate;
+      config.allocator.free = constructor_free;
+      assert(c89cbor_init(&runtime, &config, &error) == 0);
+      assert(binding->push_runtime(binding, &runtime, 0) == 0);
+      lua_setglobal(L, "transfer_root");
+      assert(pipe(input) == 0 && pipe(output) == 0);
+      assert(write(input[1], "cabc", 4) == 4 && close(input[1]) == 0);
+      status = snprintf(script, sizeof(script),
+                        "transfer_input=assert(transfer_root:fd_create(%d)); "
+                        "transfer_output=assert(transfer_root:fd_create(%d)); "
+                        "transfer_source=transfer_input:source(); "
+                        "transfer_sink=transfer_output:sink()",
+                        input[0], output[1]);
+      assert(status > 0 && (size_t)status < sizeof(script));
+      assert(luaL_dostring(L, script) == LUA_OK);
+      assert(probe.live == 2);
+      if (failure == 2) {
+        lua_getglobal(L, "transfer_source");
+        source = binding->check_source(binding, -1);
+        assert(source != NULL);
+        source->read = NULL;
+        lua_pop(L, 1);
+      }
+      probe.armed = 1;
+      status = snprintf(
+          script, sizeof(script),
+          "local c=require('cbor'); "
+          "local t,why=transfer_root:%s(transfer_source,transfer_sink); %s "
+          "assert(transfer_source:close()==c.OK); "
+          "assert(transfer_sink:close()==c.OK); "
+          "assert(transfer_input:close()==c.OK); "
+          "assert(transfer_output:close()==c.OK); "
+          "assert(transfer_root:close()==c.OK)",
+          create ? "transfer_create" : "transfer",
+          failure == 1   ? "assert(t==nil and why==c.NOMEM);"
+          : failure == 2 ? "assert(t==nil and why==c.INVALID);"
+                         : "assert(t); collectgarbage('collect'); "
+                           "assert(transfer_source:close()==c.INVALID); "
+                           "assert(transfer_sink:close()==c.INVALID); "
+                           "assert(t:run()==c.DONE); "
+                           "local r,w=t:counts(); assert(r==4 and w==4); "
+                           "assert(t:close()==c.OK);");
+      assert(status > 0 && (size_t)status < sizeof(script));
+      assert(luaL_dostring(L, script) == LUA_OK);
+      assert(probe.calls == (size_t)create && probe.live == 0);
+      if (!failure) {
+        assert(read(output[0], bytes, sizeof(bytes)) == 4);
+        assert(memcmp(bytes, "cabc", 4) == 0);
+      }
+      assert(luaL_dostring(L, "transfer_source=nil; transfer_sink=nil; "
+                              "transfer_input=nil; transfer_output=nil; "
+                              "transfer_root=nil; collectgarbage('collect')") ==
+             LUA_OK);
+      assert(runtime.cleanup(&runtime) == 0);
+      assert(close(input[0]) == 0 && close(output[0]) == 0 &&
+             close(output[1]) == 0);
     }
 }
 static void typed_interop(c89cbor_lua *binding, conversion_fixture *fixture) {
@@ -614,6 +698,7 @@ static void *run(void *ctx) {
   if (strstr(args->script, "lua_test.lua") != NULL) {
     synchronous_reentry(&binding);
     key_import_reentry(&binding);
+    transfer_constructor_reentry(&binding);
   }
   typed_interop(&binding, &fixture);
   assert(binding.destroy(&binding) == C89CBOR_INVALID);

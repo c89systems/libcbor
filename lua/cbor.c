@@ -967,6 +967,12 @@ static int transfer_factory(lua_State *L, int create) {
     return 2;
   }
   h = new_handle(L, TRANSFER, create ? 0 : sizeof(c89cbor_transfer));
+  /* The allocator can re-enter Lua before the native endpoint copies exist. */
+  pin(L, h, 1 + base, 1);
+  pin(L, h, 2 + base, 2);
+  if (base)
+    pin(L, h, 1, 3);
+  h->active = 1;
   if (base)
     checked(L, 1, ROOT)->active = 1;
   if (create) {
@@ -979,11 +985,9 @@ static int transfer_factory(lua_State *L, int create) {
                                (c89cbor_framing)mode, limit);
   if (base)
     checked(L, 1, ROOT)->active = 0;
-  pin(L, h, 1 + base, 1);
-  pin(L, h, 2 + base, 2);
-  if (base)
-    pin(L, h, 1, 3);
+  h->active = 0;
   if (rc < 0) {
+    (void)release_handle(h);
     lua_pop(L, 1);
     lua_pushnil(L);
     result(L, rc);
