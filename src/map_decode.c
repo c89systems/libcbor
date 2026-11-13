@@ -350,15 +350,15 @@ static int collect_text(c89_map_state *state, c89_map_frame *frame,
   if (!may_truncate && frame->text_seen > (uint64_t)limit)
     return c89_map_fail(state, C89CBOR_LIMIT,
                         "mapped string exceeds its storage limit");
-  if (!frame->indefinite && frame->text_seen == frame->expected &&
-      frame->materialized == 0 && token->length == frame->expected) {
-    frame->borrowed = token->data;
-    frame->materialized = token->length;
-    return C89CBOR_OK;
-  }
   if (take > limit - frame->materialized) {
     take = limit - frame->materialized;
     frame->truncated = 1;
+  }
+  if (!frame->indefinite && frame->text_seen == frame->expected &&
+      frame->materialized == 0 && token->length == frame->expected) {
+    frame->borrowed = token->data;
+    frame->materialized = take;
+    return C89CBOR_OK;
   }
   if (take != 0) {
     if (state->scratch == NULL) {

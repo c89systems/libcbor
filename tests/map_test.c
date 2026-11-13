@@ -825,6 +825,78 @@ static const lonejson_field fixed_fields[] = {
     LONEJSON_FIELD_I64_PRESENT_NULLABLE(fixed_record, number, present,
                                         "number")};
 LONEJSON_MAP_DEFINE(fixed_map, fixed_record, fixed_fields);
+static void fixed_text_truncation(void) {
+  static const char *const inputs[] = {"",
+                                       "abc",
+                                       "abcd",
+                                       "ab\303\251x",
+                                       "a\342\202\254x",
+                                       "\360\237\230\200x",
+                                       "\342\202\254x",
+                                       "a\303\251x"};
+  static const char *const expected[] = {
+      "", "abc", "abc", "ab", "a", "", "\342\202\254", "a\303\251"};
+  static const lonejson_overflow_policy policies[] = {
+      LONEJSON_OVERFLOW_FAIL, LONEJSON_OVERFLOW_TRUNCATE,
+      LONEJSON_OVERFLOW_TRUNCATE_SILENT};
+  c89cbor runtime;
+  c89cbor_error error;
+  c89cbor_options options = c89cbor_default_options();
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  c89cbor_config config = c89cbor_default_config();
+  lonejson_field field = fixed_fields[0];
+  lonejson_map map = fixed_map;
+  fixed_record value;
+  endpoint wire;
+  size_t i, policy, split, length, at;
+  int indefinite, status, truncated;
+  assert(json != NULL);
+  config.json = json;
+  assert(c89cbor_init(&runtime, &config, &error) == 0);
+  map.fields = &field;
+  map.field_count = 1;
+  for (policy = 0; policy < sizeof(policies) / sizeof(policies[0]); ++policy) {
+    field.overflow_policy = policies[policy];
+    for (i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+      length = strlen(inputs[i]);
+      truncated = length >= sizeof(value.text);
+      for (indefinite = 0; indefinite < 2; ++indefinite)
+        for (split = 1; split <= 16; ++split) {
+          memset(&wire, 0, sizeof(wire));
+          memcpy(wire.output, "\241\144text", 6);
+          at = 6;
+          if (indefinite)
+            wire.output[at++] = 0x7f;
+          wire.output[at++] = (unsigned char)(0x60u + length);
+          memcpy(wire.output + at, inputs[i], length);
+          at += length;
+          if (indefinite)
+            wire.output[at++] = 0xff;
+          wire.used = at;
+          wire.fragment = split;
+          assert(lonejson_init(json, &map, &value, &jerror) ==
+                 LONEJSON_STATUS_OK);
+          status =
+              decode_record(&runtime, &wire, &map, &value, &options, &error);
+          assert(status == (truncated && policies[policy] !=
+                                             LONEJSON_OVERFLOW_TRUNCATE_SILENT
+                                ? C89CBOR_LIMIT
+                                : C89CBOR_DONE));
+          if (!truncated || policies[policy] != LONEJSON_OVERFLOW_FAIL) {
+            assert(strcmp(value.text, expected[i]) == 0);
+            assert(error.truncated == truncated);
+            if (truncated && policies[policy] == LONEJSON_OVERFLOW_TRUNCATE)
+              assert(error.cause == LONEJSON_STATUS_TRUNCATED);
+          }
+          assert(json->cleanup(json, &map, &value, &jerror) ==
+                 LONEJSON_STATUS_OK);
+        }
+    }
+  }
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+}
 static void policies_and_views(void) {
   c89cbor runtime;
   c89cbor_config config = c89cbor_default_config();
@@ -1003,6 +1075,7 @@ static void *run_tests(void *unused) {
   bound_null();
   allocation_failures();
   source_payload();
+  fixed_text_truncation();
   policies_and_views();
   spool_fields_test();
   return NULL;
