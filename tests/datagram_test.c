@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <poll.h>
 
 typedef struct fixture {
   c89cbor root;
@@ -52,6 +53,24 @@ static void pair_open(int family, int pair[2]) {
   nonblock(pair[0]);
   nonblock(pair[1]);
 }
+static int receive_ready(c89cbor_datagram *self, int descriptor,
+                         c89cbor_datagram_message *packet,
+                         c89cbor_error *error) {
+  struct pollfd ready;
+  int status;
+  ready.fd = descriptor;
+  ready.events = POLLIN;
+  ready.revents = 0;
+  do {
+    status = poll(&ready, 1, 5000);
+  } while (status < 0 && errno == EINTR);
+  assert(status == 1 && (ready.revents & POLLIN) != 0);
+  status = self->receive(self, packet, error);
+  if (status == C89CBOR_INPUT || status == C89CBOR_IO)
+    fprintf(stderr, "ready datagram receive: status=%d errno=%d\n", status,
+            error->system_errno);
+  return status;
+}
 static void packets(fixture *f, int family) {
   static const unsigned char item[] = {0x83, 1, 2, 3};
   c89cbor_datagram_message packet;
@@ -60,6 +79,7 @@ static void packets(fixture *f, int family) {
   c89cbor_source source;
   size_t count, total;
   int pair[2];
+  fprintf(stderr, "datagram family=%d\n", family);
   pair_open(family, pair);
   assert(f->root.datagram_init(&f->root, &f->sender, pair[0], 32u, &error) ==
          0);
@@ -73,7 +93,7 @@ static void packets(fixture *f, int family) {
   assert(f->sender.send(&f->sender, item, sizeof(item), NULL, 1u, &error) ==
          C89CBOR_INVALID);
   assert(error.system_errno == EINVAL);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) == 0);
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) == 0);
   assert(packet.length == sizeof(item) &&
          memcmp(packet.bytes, item, sizeof(item)) == 0);
   if (family == AF_UNIX)
@@ -82,7 +102,7 @@ static void packets(fixture *f, int family) {
          0);
   assert(f->receiver.send(&f->receiver, packet.bytes, packet.length, NULL, 0,
                           &error) == 0);
-  assert(f->sender.receive(&f->sender, &packet, &error) == 0 &&
+  assert(receive_ready(&f->sender, pair[0], &packet, &error) == 0 &&
          packet.length == sizeof(item));
   assert(f->sender.source(&f->sender, &source) == 0);
   total = 0;
@@ -98,25 +118,26 @@ static void packets(fixture *f, int family) {
   /* Oversize input contains a valid one-byte prefix; no prefix is admitted. */
   memset(f->bytes, 1, 33u);
   assert(send(pair[0], f->bytes, 33u, 0) == 33);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) == C89CBOR_LIMIT);
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) ==
+         C89CBOR_LIMIT);
   assert(packet.bytes == NULL && packet.length == 0 &&
          error.system_errno == EMSGSIZE);
   assert(send(pair[0], "", 0, 0) == 0);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) ==
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) ==
              C89CBOR_MALFORMED &&
          packet.bytes == NULL);
   assert(send(pair[0], "\1\2", 2u, 0) == 2);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) ==
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) ==
          C89CBOR_MALFORMED);
   assert(send(pair[0], "\x82\1", 2u, 0) == 2);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) ==
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) ==
          C89CBOR_MALFORMED);
   assert(f->sender.send(&f->sender, "\1\2", 2u, NULL, 0, &error) ==
          C89CBOR_MALFORMED);
   assert(f->sender.send(&f->sender, f->bytes, 33u, NULL, 0, &error) ==
          C89CBOR_LIMIT);
   assert(f->sender.send(&f->sender, item, sizeof(item), NULL, 0, &error) == 0);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) == 0);
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) == 0);
   assert(f->receiver.progress(&f->receiver, &counts) == 0 &&
          counts.received == 2u && counts.rejected == 4u);
   assert(f->receiver.reset(&f->receiver) == 0);
@@ -151,17 +172,17 @@ static void named_peers(fixture *f) {
          0);
   assert(f->sender.send(&f->sender, "\1", 1u, &address[1], sizeof(address[1]),
                         &error) == 0);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) == 0);
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) == 0);
   assert(packet.peer != NULL &&
          packet.peer_length > offsetof(struct sockaddr_un, sun_path));
   assert(f->receiver.set_peer(&f->receiver, packet.peer, packet.peer_length) ==
          0);
   assert(f->receiver.send(&f->receiver, "\2", 1u, NULL, 0, &error) == 0);
-  assert(f->sender.receive(&f->sender, &packet, &error) == 0 &&
+  assert(receive_ready(&f->sender, pair[0], &packet, &error) == 0 &&
          packet.length == 1u && ((const unsigned char *)packet.bytes)[0] == 2);
   assert(f->sender.send(&f->sender, "\3", 1u, packet.peer, packet.peer_length,
                         &error) == 0);
-  assert(f->receiver.receive(&f->receiver, &packet, &error) == 0 &&
+  assert(receive_ready(&f->receiver, pair[1], &packet, &error) == 0 &&
          packet.length == 1u && ((const unsigned char *)packet.bytes)[0] == 3);
   assert(f->receiver.cleanup(&f->receiver) == 0 &&
          f->sender.cleanup(&f->sender) == 0);
