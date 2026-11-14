@@ -8,7 +8,7 @@ typedef struct cose_datagram {
   c89cbor_source source;
   int fd, deadline, injected_errno;
   unsigned char bytes[2048];
-  size_t capacity, length, offset, calls;
+  size_t capacity, length, offset, calls, queued;
 } cose_datagram;
 static int cose_datagram_receive(int fd, void *bytes, size_t capacity,
                                  size_t *length) {
@@ -71,12 +71,21 @@ static int cose_datagram_source(void *context, void *bytes, size_t capacity,
   }
   return status;
 }
-static int cose_datagram_drive(c89cbor_cose_operation *operation) {
+static int cose_datagram_drive(c89cbor_cose_operation *operation,
+                               cose_datagram *datagram) {
   c89cbor_error error;
+  c89cbor_datagram_counts counts;
   int status;
   size_t steps = 0;
   do {
     status = operation->step(operation, &error);
+    if (status == C89CBOR_INPUT && datagram->queued != 0) {
+      assert(datagram->receiver.progress(&datagram->receiver, &counts) == 0);
+      if (counts.received < datagram->queued) {
+        cose_socket_ready(datagram->fd, POLLIN);
+        status = C89CBOR_OK;
+      }
+    }
     assert(++steps < 10000u);
   } while (status == C89CBOR_OK || status == C89CBOR_OUTPUT);
   return status;
@@ -172,6 +181,7 @@ static void cose_udp_failures(fixture *f) {
           }
           assert(send(pair[0], f->output.bytes, lengths[j], 0) ==
                  (ssize_t)lengths[j]);
+          ++datagram->queued;
         }
         source.context = datagram;
         source.read = cose_datagram_source;
@@ -180,7 +190,7 @@ static void cose_udp_failures(fixture *f) {
         f->output.pause = scenario == 0;
         assert(cose_datagram_open(f, &receiver, key, mode, &options, &error) ==
                0);
-        status = cose_datagram_drive(&receiver);
+        status = cose_datagram_drive(&receiver, datagram);
         assert(status == expected_status[scenario] &&
                f->output.length == expected_bytes[scenario]);
         for (i = 0; i < f->output.length; ++i)
@@ -190,7 +200,7 @@ static void cose_udp_failures(fixture *f) {
           assert(receiver.step(&receiver, &error) == C89CBOR_INPUT &&
                  datagram->calls == calls + 1u);
           datagram->deadline = 1;
-          assert(cose_datagram_drive(&receiver) == C89CBOR_IO);
+          assert(cose_datagram_drive(&receiver, datagram) == C89CBOR_IO);
           assert(receiver.diagnostic(&receiver, &error) == 0 &&
                  error.system_errno == ETIMEDOUT);
         }
@@ -205,7 +215,7 @@ static void cose_udp_failures(fixture *f) {
     f->source.context = datagram;
     f->source.read = cose_datagram_source;
     assert(cose_datagram_open(f, &receiver, key, mode, &options, &error) == 0);
-    assert(cose_datagram_drive(&receiver) == C89CBOR_IO &&
+    assert(cose_datagram_drive(&receiver, datagram) == C89CBOR_IO &&
            f->output.length == 0);
     assert(receiver.diagnostic(&receiver, &error) == 0 &&
            error.system_errno == EHOSTUNREACH);
@@ -223,14 +233,17 @@ static void cose_udp_failures(fixture *f) {
   f->output.bytes[lengths[0]] = 0;
   assert(send(pair[0], f->output.bytes, lengths[0] + 1u, 0) ==
          (ssize_t)(lengths[0] + 1u));
+  cose_socket_ready(pair[1], POLLIN);
   assert(cose_datagram_receive(pair[1], datagram->bytes, lengths[0], &n) ==
              C89CBOR_IO &&
          n == 0 && errno == EMSGSIZE);
   assert(send(pair[0], f->wire.bytes, lengths[0], 0) == (ssize_t)lengths[0]);
+  cose_socket_ready(pair[1], POLLIN);
   assert(cose_datagram_receive(pair[1], datagram->bytes,
                                sizeof(datagram->bytes), &n) == 0 &&
          n == lengths[0]);
   assert(send(pair[0], "", 0, 0) == 0);
+  cose_socket_ready(pair[1], POLLIN);
   assert(cose_datagram_receive(pair[1], datagram->bytes,
                                sizeof(datagram->bytes), &n) == C89CBOR_IO &&
          errno == EBADMSG);
@@ -238,14 +251,17 @@ static void cose_udp_failures(fixture *f) {
   memcpy(f->output.bytes + lengths[0], f->wire.bytes, lengths[0]);
   assert(send(pair[0], f->output.bytes, lengths[0] * 2u, 0) ==
          (ssize_t)(lengths[0] * 2u));
+  cose_socket_ready(pair[1], POLLIN);
   assert(cose_datagram_receive(pair[1], datagram->bytes,
                                sizeof(datagram->bytes), &n) == C89CBOR_IO &&
          n == 0);
   assert(send(pair[0], f->wire.bytes, 1u, 0) == 1);
   assert(send(pair[0], f->wire.bytes + 1u, lengths[0] - 1u, 0) ==
          (ssize_t)(lengths[0] - 1u));
+  cose_socket_ready(pair[1], POLLIN);
   assert(cose_datagram_receive(pair[1], datagram->bytes,
                                sizeof(datagram->bytes), &n) == C89CBOR_IO);
+  cose_socket_ready(pair[1], POLLIN);
   assert(cose_datagram_receive(pair[1], datagram->bytes,
                                sizeof(datagram->bytes), &n) == C89CBOR_IO);
   assert(cose_datagram_receive(pair[1], datagram->bytes,

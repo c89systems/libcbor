@@ -53,6 +53,7 @@ static void cwt_transport(fixture *f, c89cbor_cwt *receiver,
     cose_socket_pair(domains[i], types[i], pair);
     sent = 0;
     do {
+      cose_socket_ready(pair[0], POLLOUT);
       count = write(pair[0], f->wire.bytes + sent, f->wire.length - sent);
       assert(count > 0);
       sent += (size_t)count;
@@ -64,6 +65,7 @@ static void cwt_transport(fixture *f, c89cbor_cwt *receiver,
       vector.iov_len = sizeof(f->output.bytes);
       message.msg_iov = &vector;
       message.msg_iovlen = 1;
+      cose_socket_ready(pair[1], POLLIN);
       count = recvmsg(pair[1], &message, 0);
       assert(count > 0 && !(message.msg_flags & MSG_TRUNC));
       received = (size_t)count;
@@ -72,6 +74,7 @@ static void cwt_transport(fixture *f, c89cbor_cwt *receiver,
         take = f->wire.length - received;
         if (take > 13u)
           take = 13u;
+        cose_socket_ready(pair[1], POLLIN);
         count = read(pair[1], f->output.bytes + received, take);
         assert(count > 0);
         received += (size_t)count;

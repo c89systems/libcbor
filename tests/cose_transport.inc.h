@@ -3,6 +3,20 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>
+#include <errno.h>
+
+static void cose_socket_ready(int descriptor, short events) {
+  struct pollfd ready;
+  int status;
+  ready.fd = descriptor;
+  ready.events = events;
+  ready.revents = 0;
+  do {
+    status = poll(&ready, 1, 5000);
+  } while (status < 0 && errno == EINTR);
+  assert(status == 1 && (ready.revents & events) != 0);
+}
 
 typedef struct cose_cbor_flow {
   uint64_t generated, received, length, values;
@@ -166,6 +180,7 @@ static void cose_datagram_transport(fixture *f, int domain, int encrypt) {
   assert(length < 512u);
   cose_socket_pair(domain, SOCK_DGRAM, pair);
   assert(send(pair[0], f->wire.bytes, length, 0) == (ssize_t)length);
+  cose_socket_ready(pair[1], POLLIN);
   count = recv(pair[1], f->wire.bytes, sizeof(f->wire.bytes), 0);
   assert(count == (ssize_t)length);
   assert(cose_open_to_buffer(f, encrypt ? &f->private_key : &f->content, NULL,
