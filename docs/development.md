@@ -57,6 +57,8 @@ verifies module selection, lifetime-suite inclusion and the worker-stack environ
 SDK, arm64 architecture and macOS 15 deployment baseline. It runs C and Lua tests
 in Debug and Release, then verifies the relocated Release SDK and its consumers.
 Use Bash >=4.4 and GNU coreutils/tar plus flock, ripgrep, CMake, Ninja and pkg-config.
+Expose GNU `realpath` and `sha256sum` while preserving macOS `stat`; the workflow
+creates checkout-local links for those two GNU commands.
 Set `CPKT_LIFECYCLE_SCRIPTS_DIR` to the prepared lifecycle helpers as on Linux.
 The native toolchain never selects osxcross on macOS.
 

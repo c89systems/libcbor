@@ -41,8 +41,12 @@ jobs:
         run: brew install bash cmake ninja coreutils gnu-tar util-linux ripgrep pkgconf
       - name: Select host Bash and GNU tools
         run: |
+          mkdir -p build/ci-tools/bin
+          for tool in realpath sha256sum; do
+            ln -s "$(brew --prefix coreutils)/libexec/gnubin/$tool" "build/ci-tools/bin/$tool"
+          done
           for directory in "$(brew --prefix bash)/bin" \
-            "$(brew --prefix coreutils)/libexec/gnubin" \
+            "$GITHUB_WORKSPACE/build/ci-tools/bin" \
             "$(brew --prefix gnu-tar)/libexec/gnubin" \
             "$(brew --prefix util-linux)/bin"; do
             printf '%s\n' "$directory" >> "$GITHUB_PATH"
@@ -54,6 +58,8 @@ jobs:
         run: |
           test "$(uname -s)" = Darwin
           test "$(uname -m)" = arm64
+          test "$(command -v stat)" = /usr/bin/stat
+          stat -f %Lp .
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           mkdir -p build/ci
           git rev-parse HEAD > build/ci/commit.txt
