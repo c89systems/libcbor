@@ -1,6 +1,7 @@
 #include "internal.h"
 #include <c89cbor/datagram.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/uio.h>
 #include <errno.h>
 #include <limits.h>
@@ -73,6 +74,9 @@ static int validate(const void *bytes, size_t length) {
 }
 static int receive_work(c89cbor_datagram *self) {
   datagram_state *state = self->state;
+#ifdef __APPLE__
+  const unsigned char *peer_bytes = (const unsigned char *)&state->peer;
+#endif
   struct msghdr message;
   struct iovec vector;
   ssize_t received;
@@ -93,6 +97,14 @@ static int receive_work(c89cbor_datagram *self) {
                ? C89CBOR_INPUT
                : C89CBOR_IO;
   state->peer_length = message.msg_namelen;
+#ifdef __APPLE__
+  /* Darwin supplies a zero-path sockaddr for unnamed Unix peers. It is not
+   * a destination: retain connected sends instead of publishing that address.
+   * Linux abstract Unix names, which can start with zero, remain untouched. */
+  if (state->peer_length != 0 && state->peer.ss_family == AF_UNIX &&
+      peer_bytes[offsetof(struct sockaddr_un, sun_path)] == 0)
+    state->peer_length = 0;
+#endif
   if ((message.msg_flags & MSG_TRUNC) != 0 ||
       (size_t)received > state->capacity)
     status = C89CBOR_LIMIT;

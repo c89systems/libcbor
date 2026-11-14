@@ -13,8 +13,7 @@ extern "C" {
 typedef struct c89cbor_datagram_message {
   const void *bytes; /**< One complete CBOR item. */
   size_t length;     /**< Wire bytes, bounded at construction. */
-  const void
-      *peer; /**< sockaddr bytes, or NULL when no address was returned. */
+  const void *peer;  /**< sockaddr bytes, or NULL for an unnamed socket peer. */
   size_t peer_length; /**< Address length for send/set_peer. */
 } c89cbor_datagram_message;
 /** Cumulative successful traffic and discarded invalid datagrams. */

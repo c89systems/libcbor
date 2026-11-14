@@ -1,5 +1,9 @@
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
 #include <c89cbor/lonejson.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -9,6 +13,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct fixture {
   c89cbor root;
@@ -71,6 +76,8 @@ static void packets(fixture *f, int family) {
   assert(f->receiver.receive(&f->receiver, &packet, &error) == 0);
   assert(packet.length == sizeof(item) &&
          memcmp(packet.bytes, item, sizeof(item)) == 0);
+  if (family == AF_UNIX)
+    assert(packet.peer == NULL && packet.peer_length == 0);
   assert(f->receiver.set_peer(&f->receiver, packet.peer, packet.peer_length) ==
          0);
   assert(f->receiver.send(&f->receiver, packet.bytes, packet.length, NULL, 0,
@@ -119,6 +126,48 @@ static void packets(fixture *f, int family) {
          f->sender.cleanup(&f->sender) == 0);
   assert(fcntl(pair[0], F_GETFD) >= 0 && fcntl(pair[1], F_GETFD) >= 0);
   assert(close(pair[0]) == 0 && close(pair[1]) == 0);
+}
+static void named_peers(fixture *f) {
+  struct sockaddr_un address[2];
+  c89cbor_datagram_message packet;
+  c89cbor_error error;
+  char directory[] = "c89cbor-datagram-XXXXXX";
+  int pair[2], i;
+  assert(mkdtemp(directory) != NULL);
+  memset(address, 0, sizeof(address));
+  for (i = 0; i < 2; ++i) {
+    address[i].sun_family = AF_UNIX;
+    assert(snprintf(address[i].sun_path, sizeof(address[i].sun_path), "%s/%d",
+                    directory, i) > 0);
+    pair[i] = socket(AF_UNIX, SOCK_DGRAM, 0);
+    assert(pair[i] >= 0);
+    assert(bind(pair[i], (struct sockaddr *)&address[i], sizeof(address[i])) ==
+           0);
+    nonblock(pair[i]);
+  }
+  assert(f->root.datagram_init(&f->root, &f->sender, pair[0], 32u, &error) ==
+         0);
+  assert(f->root.datagram_init(&f->root, &f->receiver, pair[1], 32u, &error) ==
+         0);
+  assert(f->sender.send(&f->sender, "\1", 1u, &address[1], sizeof(address[1]),
+                        &error) == 0);
+  assert(f->receiver.receive(&f->receiver, &packet, &error) == 0);
+  assert(packet.peer != NULL &&
+         packet.peer_length > offsetof(struct sockaddr_un, sun_path));
+  assert(f->receiver.set_peer(&f->receiver, packet.peer, packet.peer_length) ==
+         0);
+  assert(f->receiver.send(&f->receiver, "\2", 1u, NULL, 0, &error) == 0);
+  assert(f->sender.receive(&f->sender, &packet, &error) == 0 &&
+         packet.length == 1u && ((const unsigned char *)packet.bytes)[0] == 2);
+  assert(f->sender.send(&f->sender, "\3", 1u, packet.peer, packet.peer_length,
+                        &error) == 0);
+  assert(f->receiver.receive(&f->receiver, &packet, &error) == 0 &&
+         packet.length == 1u && ((const unsigned char *)packet.bytes)[0] == 3);
+  assert(f->receiver.cleanup(&f->receiver) == 0 &&
+         f->sender.cleanup(&f->sender) == 0);
+  for (i = 0; i < 2; ++i)
+    assert(close(pair[i]) == 0 && unlink(address[i].sun_path) == 0);
+  assert(rmdir(directory) == 0);
 }
 static void backpressure(fixture *f) {
   static const unsigned char item[] = {0x48, 1, 2, 3, 4, 5, 6, 7, 8};
@@ -248,6 +297,7 @@ static void *run(void *unused) {
   packets(f, AF_UNIX);
   packets(f, AF_INET);
   packets(f, AF_INET6);
+  named_peers(f);
   backpressure(f);
   ownership();
   assert(f->root.cleanup(&f->root) == 0);
