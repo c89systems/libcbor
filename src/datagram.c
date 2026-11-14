@@ -201,7 +201,8 @@ static int send_work(c89cbor_datagram *self, const void *bytes, size_t length,
 #endif
   sent = sendmsg(state->descriptor, &message, flags);
   if (sent < 0)
-    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR
+    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
+                   errno == ENOBUFS
                ? C89CBOR_OUTPUT
                : C89CBOR_IO;
   if ((size_t)sent != length) {

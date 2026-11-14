@@ -195,7 +195,8 @@ static void backpressure(fixture *f) {
   c89cbor_datagram_message packet;
   c89cbor_datagram_counts counts;
   c89cbor_error error;
-  c89cbor_sink sink;
+  c89cbor_sink sink, fd_sink;
+  c89cbor_fd fd;
   int pair[2], buffer_size = 1024, status;
   size_t count, i, packets = 0;
   pair_open(AF_UNIX, pair);
@@ -207,7 +208,12 @@ static void backpressure(fixture *f) {
          0);
   while (send(pair[0], "\1", 1u, 0) == 1)
     assert(++packets < 10000u);
-  assert(errno == EAGAIN || errno == EWOULDBLOCK);
+  fprintf(stderr, "full datagram queue errno=%d\n", errno);
+  assert(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS);
+  assert(c89cbor_fd_init(NULL, &fd, pair[0], NULL, &fd_sink) == 0);
+  assert(fd_sink.write(fd_sink.context, "\1", 1u, &count) == C89CBOR_OUTPUT &&
+         count == 0);
+  assert(fd.cleanup(&fd) == 0);
   assert(f->sender.sink(&f->sender, &sink) == 0);
   for (i = 0; i < sizeof(item) - 1u; ++i)
     assert(sink.write(sink.context, item + i, 1u, &count) == 0 && count == 1u);

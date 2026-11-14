@@ -99,7 +99,8 @@ static void send_all(int fd, const void *bytes, size_t length) {
     n = write(fd, p, length);
     if (n < 0 && errno == EINTR)
       continue;
-    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if (n < 0 &&
+        (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
       ready(fd, POLLOUT);
       continue;
     }

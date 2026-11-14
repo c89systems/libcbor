@@ -257,8 +257,9 @@ static int fd_write(void *context, const void *bytes, size_t length,
 #endif
   } while (n < 0 && errno == EINTR);
   if (n < 0)
-    return errno == EAGAIN || errno == EWOULDBLOCK ? C89CBOR_OUTPUT
-                                                   : C89CBOR_IO;
+    return errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS
+               ? C89CBOR_OUTPUT
+               : C89CBOR_IO;
   *count = (size_t)n;
   return C89CBOR_OK;
 }
