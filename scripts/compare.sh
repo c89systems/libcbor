@@ -4,12 +4,8 @@ source "$(dirname -- "$0")/workspace.sh"
 root=$PWD
 archive=.cache/archives/pjk-libcbor-0.14.0.tar.gz
 mkdir -p .cache/archives .cache/reference build/bench
-if [[ ! -f $archive ]]; then
-  curl --fail --location --retry 3 https://codeload.github.com/PJK/libcbor/tar.gz/refs/tags/v0.14.0 -o "$archive.part"
-  printf '%s  %s\n' a8c1516e741562cf95aa4479c64916c3d4d2623e24fdc35e414e2320e7300aae "$archive.part" | sha256sum -c -
-  mv -- "$archive.part" "$archive"
-fi
-printf '%s  %s\n' a8c1516e741562cf95aa4479c64916c3d4d2623e24fdc35e414e2320e7300aae "$archive" | sha256sum -c -
+bash scripts/archive.sh https://codeload.github.com/PJK/libcbor/tar.gz/refs/tags/v0.14.0 \
+  a8c1516e741562cf95aa4479c64916c3d4d2623e24fdc35e414e2320e7300aae "$archive"
 if [[ ! -d .cache/reference/libcbor-0.14.0 ]]; then tar -xzf "$archive" -C .cache/reference; fi
 lifecycle=${CPKT_LIFECYCLE_SCRIPTS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/pkt-systems-cmake-lifecycle/scripts}
 cmake -S .cache/reference/libcbor-0.14.0 -B build/reference -G Ninja \

@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname -- "$0")/workspace.sh"
 root=$PWD
-action=${1:?usage: build.sh core|test|lua|lua-test TARGET Debug|Release [VERSION]}
+action=${1:?usage: build.sh core|test|lua-runtime|lua|lua-test TARGET Debug|Release [VERSION]}
 target=${2:-x86_64-linux-gnu}
 config=${3:-Debug}
 version=${4:-}
@@ -28,7 +28,7 @@ test)
   [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]] || { printf 'Darwin execution requires a native Darwin runner\n' >&2; exit 1; }
   ctest --test-dir "$build" --output-on-failure --stop-on-failure --no-tests=error
   ;;
-lua)
+lua-runtime|lua)
   scripts/deps.sh "$target" lua
   lua_sdk=$root/build/lua-sdk-$target-${config,,}
   lua_build=build/lua-runtime-$target-${config,,}
@@ -36,6 +36,7 @@ lua)
     "-DLUA_SOURCE_DIR=$root/.cache/deps/lua-5.5.1/src" "-DCMAKE_INSTALL_PREFIX=$lua_sdk"
   cmake --build "$lua_build" --parallel "${BUILD_JOBS:-2}"
   cmake --install "$lua_build"
+  [[ $action == lua ]] || exit 0
   if [[ $target == arm64-apple-darwin ]]; then lua_library=liblua.dylib; else lua_library=liblua.so; fi
   sdk=$root/build/sdk-$target-${config,,}
   cmake --install "$build" --prefix "$sdk"

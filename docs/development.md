@@ -1,13 +1,18 @@
 # Development
 
 Bash >=4.4, CMake >=3.21, Ninja, Make, Git, curl, GNU tar/gzip, SHA-256 tools,
-pkg-config, clang-format and clangd are workstation tools. The activated
+pkg-config, flock, clang-format and clangd are workstation tools. The activated
 pkt-systems-cmake-lifecycle skill supplies pinned Bootlin/osxcross resolvers.
 Set CPKT_LIFECYCLE_SCRIPTS_DIR when it is outside the usual Codex skill directory.
 Missing toolchains fail with their preparation requirement; the build never
 falls back to host GCC or downloads an Apple SDK. Repository-local .cache owns
 extracted dependencies. Shared verified archives can be read from the declared
 cpkt global cache. No sibling checkout's sources or generated state are used.
+Acquisition publishes verified archives under the shared cache's SHA-256 buckets
+with a per-digest lock. `CPKT_DEPENDENCY_CACHE` selects this checkout's `build/`
+or `.cache/` storage, or the standard global cpkt dependency cache. Corrupt inputs
+fail rather than being silently replaced. Local archive hits can seed a missing
+shared entry without network access.
 COSE uses OpenSSL 3.6.5 from the pinned cpkt 0.7.0 SDK on every target. The core
 links libcrypto directly through the provider targets; it needs neither libssl
 nor a cpkt facade library. CMake consumers supply CpktCore_DIR alongside lonejson_DIR.
@@ -39,6 +44,14 @@ supply Git release versions; extracted source carries VERSION/RELEASE_MANIFEST.
 BUILD_JOBS defaults to 2. Operations run serially; compiler jobs inside a single
 build follow that bound. `make clean` removes build, dist, local .cache and the
 editor database, preserving installed tools and the declared global cpkt cache.
+`check-native` always selects x86_64 Linux glibc Debug, regardless of TARGET or
+CONFIG inherited from the caller. `clean` resolves its owning Makefile and
+checkout even when invoked with `make -f` from another directory.
+
+Native pipeline fixtures cover cleanup ownership, archive cache miss/hit/corruption,
+packaged documentation links, matrix lane selection and isolated source exports.
+Lua's inventory check
+verifies module selection, lifetime-suite inclusion and the worker-stack environment.
 
 The normal native Debug build creates build/x86_64-linux-gnu-debug/compile_commands.json,
 which .clangd discovers. Build once before opening the editor. Public headers

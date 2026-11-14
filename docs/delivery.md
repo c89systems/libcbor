@@ -23,7 +23,13 @@ Linux runners. GNU tar/gzip use stable order, timestamps, owners and gzip header
 `make package-source` uses this owning repository's indexed sources, injecting
 VERSION/RELEASE_MANIFEST. Stage new source files before preparation. Source smoke
 extracts independently and rebuilds/tests with fresh local generated state;
-it does not borrow the parent checkout's dependencies or binaries.
+it does not borrow the parent checkout's dependencies or binaries. `make matrix`
+uses that reconstruction as its native Release lane: it builds/tests C and Lua,
+packages and relocates the native SDK there, and exports only the verified archive
+and its binary checksum. The remaining six target lanes run in the owning checkout;
+the native library is not built a second time there.
+The global verified archive cache can supply raw inputs. A checkout-local cache
+override is remapped to the reconstructed source's own `.cache/shared`.
 
 Preparation stays on one feature branch, with an explicit candidate VERSION if
 needed. No release, signing, squash to trunk, tag or push is implicit in building.
@@ -43,4 +49,8 @@ the rootless reference peer and resumable longer fuzz campaigns. It is not part
 of `make release`; see [hardening](hardening.md).
 `make package-lua-verify` verifies the source rock's exact nested source and
 rockspec, rebuilds both entrypoints against the extracted native SDK and runs
-Lua API/interop tests. `make package-checksums` verifies the complete inventory.
+all registered Lua tests, including lifetime and GC cases, against each extracted
+module. Its runner uses the extracted native SDK and a checkout-owned Lua runtime;
+it does not rebuild the native library. Package verification checks the transitive
+local documentation links from the shipped README. `make package-checksums`
+verifies the complete inventory.

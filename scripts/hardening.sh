@@ -29,23 +29,40 @@ sanitize)
     "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore"
   cmake --build build/sanitize --parallel "${BUILD_JOBS:-2}"
   ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-    ctest --test-dir build/sanitize --output-on-failure --stop-on-failure --no-tests=error -E '^reference-peer$'
+    ctest --test-dir build/sanitize --output-on-failure --stop-on-failure --no-tests=error -LE podman
+  scripts/build.sh lua-runtime x86_64-linux-gnu Debug
+  cmake --install build/sanitize --prefix "$root/build/sdk-sanitize"
+  cmake -S lua -B build/lua-sanitize -G Ninja \
+    "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake" -DC89CBOR_TARGET=x86_64-linux-gnu \
+    "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DCMAKE_BUILD_TYPE=Debug -DC89CBOR_SANITIZE=ON \
+    "-DC89Cbor_DIR=$root/build/sdk-sanitize/lib/cmake/C89Cbor" \
+    "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-x86_64-linux-gnu/lib/cmake/lonejson" \
+    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore" \
+    "-DLUA_INCLUDE_DIR=$root/build/lua-sdk-x86_64-linux-gnu-debug/include" \
+    "-DLUA_LIBRARY=$root/build/lua-sdk-x86_64-linux-gnu-debug/lib/liblua.so"
+  cmake --build build/lua-sanitize --parallel "${BUILD_JOBS:-2}"
+  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    ctest --test-dir build/lua-sanitize --output-on-failure --stop-on-failure --no-tests=error
   ;;
 valgrind)
   command -v valgrind >/dev/null
   scripts/build.sh core x86_64-linux-gnu Debug "${2:-}"
-  for test in codec io transport receiver_static receiver_shared conversion_static conversion_shared map_static map_shared api_static api_shared concurrency_static concurrency_shared cose_static cose_shared cose_rng datagram_static datagram_shared cwt_reuse_static cwt_reuse_shared; do
-    valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=all \
-      "build/x86_64-linux-gnu-debug/${test}_test"
-  done
-  for kind in static shared; do
-    valgrind --tool=helgrind --error-exitcode=99 --suppressions=tests/openssl-helgrind.supp "build/x86_64-linux-gnu-debug/concurrency_${kind}_test"
-    valgrind --tool=helgrind --error-exitcode=99 --suppressions=tests/openssl-helgrind.supp "build/x86_64-linux-gnu-debug/cose_${kind}_test"
-    valgrind --tool=helgrind --error-exitcode=99 --suppressions=tests/openssl-helgrind.supp "build/x86_64-linux-gnu-debug/cwt_reuse_${kind}_test"
-  done
+  checker=$(command -v valgrind)
+  memory_args=(--overwrite "MemoryCheckCommand=$checker" --overwrite MemoryCheckType=Valgrind)
+  ctest --test-dir build/x86_64-linux-gnu-debug -T MemCheck "${memory_args[@]}" \
+    --overwrite 'MemoryCheckCommandOptions=--error-exitcode=99 --leak-check=full --errors-for-leak-kinds=all' \
+    -R '^(codec|io|transport-.*|((receiver|conversion|map|api|concurrency|cose|datagram|cwt-reuse)-(static|shared))|cose-rng)$' \
+    --output-on-failure --stop-on-failure --no-tests=error
+  ctest --test-dir build/x86_64-linux-gnu-debug -T MemCheck "${memory_args[@]}" \
+    --overwrite "MemoryCheckCommandOptions=--tool=helgrind --error-exitcode=99 --suppressions=$root/tests/openssl-helgrind.supp" \
+    -R '^(concurrency|cose|cwt-reuse)-(static|shared)$' \
+    --output-on-failure --stop-on-failure --no-tests=error
   scripts/build.sh lua x86_64-linux-gnu Debug
-  valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=all \
-    build/lua-x86_64-linux-gnu-debug/lua_test "$root/build/lua-x86_64-linux-gnu-debug/cbor.so" "$root/tests/lua_test.lua"
+  ctest --test-dir build/lua-x86_64-linux-gnu-debug -R '^lua-test-inventory$' \
+    --output-on-failure --no-tests=error
+  ctest --test-dir build/lua-x86_64-linux-gnu-debug -T MemCheck "${memory_args[@]}" \
+    --overwrite 'MemoryCheckCommandOptions=--error-exitcode=99 --leak-check=full --errors-for-leak-kinds=all' \
+    -L lua --output-on-failure --stop-on-failure --no-tests=error
   ;;
 fuzz|fuzz-long)
   mode=$1

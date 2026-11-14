@@ -39,18 +39,8 @@ fi
 archive=.cache/archives/$name.tar.gz
 prefix=.cache/deps/$name
 c89_owned_path "$archive"; c89_owned_path "$prefix"; c89_owned_path "$prefix.tmp"
-mkdir -p .cache/archives .cache/deps
-if [[ ! -f "$archive" ]]; then
-  shared=${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cpkt/deps}/archives/sha256/$digest/$name.tar.gz
-  if [[ -f "$shared" ]]; then
-    cp -- "$shared" "$archive.part"
-  else
-    curl --fail --location --retry 3 "$url" -o "$archive.part"
-  fi
-  printf '%s  %s\n' "$digest" "$archive.part" | sha256sum -c -
-  mv -- "$archive.part" "$archive"
-fi
-printf '%s  %s\n' "$digest" "$archive" | sha256sum -c -
+bash scripts/archive.sh "$url" "$digest" "$archive"
+mkdir -p .cache/deps
 if [[ ! -d "$prefix" ]]; then
   mkdir -- "$prefix.tmp"
   trap 'rm -rf -- "$prefix.tmp"' EXIT

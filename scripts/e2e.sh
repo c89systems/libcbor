@@ -11,12 +11,7 @@ mkdir -p "$state/sources" .cache/e2e/sources
 while IFS=$'\t' read -r filename checksum url; do
   [[ $filename != */* && $checksum =~ ^[0-9a-f]{64}$ && $url == https://codeload.github.com/* ]] || exit 1
   destination=.cache/e2e/sources/$filename
-  if [[ ! -f $destination ]]; then
-    curl --fail --location --retry 2 "$url" -o "$destination.part"
-    printf '%s  %s\n' "$checksum" "$destination.part" | sha256sum -c -
-    mv -- "$destination.part" "$destination"
-  fi
-  printf '%s  %s\n' "$checksum" "$destination" | sha256sum -c -
+  bash scripts/archive.sh "$url" "$checksum" "$destination"
   if [[ ! -d $state/sources/${filename%.tar.gz} ]]; then
     tar -xzf "$destination" -C "$state/sources"
   fi
@@ -36,8 +31,7 @@ cp "$state/cose-c/cose-c-peer" .cache/e2e/cose-c-peer
 while IFS=$'\t' read -r filename checksum url; do
   [[ $filename != */* && $checksum =~ ^[0-9a-f]{64}$ && $url == https://files.pythonhosted.org/* ]] || exit 1
   destination=.cache/e2e/wheels/$filename
-  if [[ ! -f $destination ]]; then curl --fail --location --retry 2 "$url" -o "$destination"; fi
-  printf '%s  %s\n' "$checksum" "$destination" | sha256sum -c -
+  bash scripts/archive.sh "$url" "$checksum" "$destination"
 done <tests/e2e/wheels.lock
 cp tests/e2e/peer.py .cache/e2e/peer.py
 cp tests/e2e/requirements.txt .cache/e2e/requirements.txt

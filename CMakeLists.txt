@@ -11,17 +11,7 @@ include(CTest)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(C89CBOR_DISABLE_TESTS "Disable executable tests" OFF)
 option(C89CBOR_BENCHMARKS "Build benchmarks" OFF)
-option(C89CBOR_SANITIZE "Native address and undefined-behavior checks" OFF)
-if(C89CBOR_SANITIZE)
-  if(NOT C89CBOR_TARGET STREQUAL "x86_64-linux-gnu")
-    message(FATAL_ERROR "Sanitizer workflow is native x86_64 Linux only")
-  endif()
-  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
-  add_link_options(-fsanitize=address,undefined)
-  execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-file-name=libasan.so
-    OUTPUT_VARIABLE sanitizer_library OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-  get_filename_component(C89CBOR_SANITIZER_RUNTIME "${sanitizer_library}" DIRECTORY)
-endif()
+include(cmake/Sanitizers.cmake)
 find_package(lonejson 0.50.0 EXACT CONFIG REQUIRED COMPONENTS jwt)
 find_package(CpktCore 0.7.0 EXACT CONFIG REQUIRED)
 list(APPEND CMAKE_FIND_ROOT_PATH "${CpktCore_PREFIX}")
@@ -159,6 +149,17 @@ if(BUILD_TESTING AND NOT C89CBOR_DISABLE_TESTS)
   endif()
   include(cmake/ApiInventory.cmake)
   if(C89CBOR_TARGET STREQUAL "x86_64-linux-gnu")
+    find_program(C89CBOR_HOST_MAKE NAMES gmake make REQUIRED)
+    foreach(case clean cache docs matrix source)
+      add_test(NAME lifecycle-${case} COMMAND ${CMAKE_COMMAND}
+        "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DLIFECYCLE=${CPKT_LIFECYCLE_SCRIPTS_DIR}" "-DCMAKE_MAKE_PROGRAM_HOST=${C89CBOR_HOST_MAKE}"
+        "-DCASE=${case}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/lifecycle.cmake")
+      set_tests_properties(lifecycle-${case} PROPERTIES TIMEOUT 45 LABELS "pipeline;offline")
+    endforeach()
+    add_test(NAME documentation-links COMMAND ${CMAKE_COMMAND}
+      "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckDocLinks.cmake")
+    set_tests_properties(documentation-links PROPERTIES TIMEOUT 15 LABELS "pipeline;offline")
     add_test(NAME fuzz-retained-findings COMMAND ${CMAKE_COMMAND}
       "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DWORK=build/fuzz-findings-test"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_findings.cmake")

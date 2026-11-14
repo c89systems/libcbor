@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
+project_root := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 TARGET ?= x86_64-linux-gnu
 CONFIG ?= Debug
 VERSION ?=
@@ -18,7 +19,8 @@ test: build
 lua: build
 lua-test: lua
 	@scripts/build.sh lua-test "$(TARGET)" "$(CONFIG)"
-check-native: test lua-test format-check shell-check
+check-native:
+	@$(MAKE) -C "$(project_root)" test lua-test format-check shell-check TARGET=x86_64-linux-gnu CONFIG=Debug VERSION="$(VERSION)"
 matrix:
 	@scripts/matrix.sh "$(VERSION)"
 format:
@@ -60,14 +62,12 @@ prerelease:
 	@$(MAKE) matrix VERSION="$(VERSION)"
 	@$(MAKE) valgrind VERSION="$(VERSION)"
 	@$(MAKE) fuzz-smoke VERSION="$(VERSION)"
-	@$(MAKE) source-smoke VERSION="$(VERSION)"
 	@$(MAKE) package-lua-verify VERSION="$(VERSION)"
 	@$(MAKE) package-checksums VERSION="$(VERSION)"
 release:
 	@scripts/release.sh "$(VERSION)"
 clean:
-	@rm -rf -- build dist .cache
-	@rm -f -- compile_commands.json
+	@bash "$(project_root)/scripts/clean.sh"
 .PHONY: package-lua package-checksums
 package-lua:
 	@scripts/lua-package.sh "$(VERSION)"

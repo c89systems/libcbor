@@ -13,6 +13,7 @@ rm -rf -- "$stage/relocated" "$stage/consumer"
 mkdir -p "$stage/relocated"
 tar -xzf "dist/$name.tar.gz" -C "$stage/relocated"
 sdk=$root/$stage/relocated/$name
+cmake "-DROOT=$sdk/share/doc/C89Cbor" -P cmake/CheckDocLinks.cmake
 [[ -f "$sdk/LICENSE" || -f "$sdk/share/doc/C89Cbor/LICENSE" ]]
 [[ -f "$sdk/include/c89cbor/cbor.h" && -f "$sdk/include/c89cbor/io.h" && -f "$sdk/lib/libcbor.a" ]]
 [[ -f "$sdk/include/c89cbor/lua.h" && -f "$sdk/include/c89cbor/cose.h" && ! -e "$sdk/include/c89" && ! -e "$sdk/include/cbor" ]]

@@ -8,12 +8,13 @@ stage=build/lua-source/$name
 c89_owned_path "$stage"; c89_owned_path "dist/$name.tar.gz"
 mkdir -p build/lua-source dist
 rm -rf -- "$stage"
-mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs
+mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs "$stage"/examples
 cp lua/cbor.c lua/cose.inc.h lua/cwt.inc.h lua/datagram.inc.h lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
 cp include/c89cbor/lua.h "$stage/include/c89cbor/"
-cp cmake/Runtime.cmake cmake/FindLua.cmake "$stage/cmake/"
+cp cmake/Runtime.cmake cmake/FindLua.cmake cmake/Sanitizers.cmake "$stage/cmake/"
 cp LICENSE "$stage/"
-cp docs/lua.md docs/cose.md docs/sign1-cwt.md docs/delivery.md docs/hardening.md "$stage/docs/"
+cp docs/*.md "$stage/docs/"
+cp examples/cbor-peer.c "$stage/examples/"
 cat > "$stage/README.md" <<'README'
 # libcbor Lua facade
 

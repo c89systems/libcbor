@@ -12,8 +12,8 @@ they have no deferred E2E runner requirement.
 
 ```sh
 make check-native        # normal C/Lua, formatting and shell checks
-make sanitize            # native ASan + UBSan, including child applications
-make valgrind            # native Memcheck and shared-key Helgrind
+make sanitize            # native C and Lua ASan + UBSan, including child applications
+make valgrind            # CTest Memcheck for C/Lua and shared-key Helgrind
 make e2e                 # rootless Podman Kube reference peer
 make fuzz-smoke          # 10 seconds per corpus, fresh smoke results
 make fuzz-long           # 120 seconds per corpus, resumable results
@@ -29,6 +29,12 @@ libraries are the separately supplied pinned binaries. The intentional child
 stack-guard fault retains the kernel signal rather than ASan's signal handler;
 other ASan/UBSan detection and leak checks remain enabled.
 
+Sanitizers exercise both the native library and the Lua module/test runners.
+Valgrind uses CTest's registered commands, environments and timeouts for the C
+tests, Lua API and all four Lua lifetime groups. The same lifetime groups run
+against both packaged Lua modules during `package-lua-verify`; a CTest inventory
+check rejects missing groups, module mismatches or lost test environments.
+
 Helgrind has one narrow suppression for OpenSSL 3.6.5's name-map counter read
 during signature fetch. The pinned
 [name-map source](https://github.com/openssl/openssl/blob/openssl-3.6.5/crypto/core_namemap.c)
@@ -43,11 +49,11 @@ fetch call chain; it does not suppress libcbor accesses or general provider race
 The independent implementations are
 [Python-CWT 4.0.0](https://pypi.org/project/cwt/4.0.0/) and
 [COSE-C](https://github.com/cose-wg/COSE-C/tree/97d1805e71b7a6770093c5e6790d46611680d563).
-[tests/e2e/pod.yaml.in](../tests/e2e/pod.yaml.in) declares the single fixture
+[tests/e2e/pod.yaml.in](https://github.com/c89systems/libcbor/blob/trunk/tests/e2e/pod.yaml.in) declares the single fixture
 service. Its Python 3.12 Alpine base is pinned by digest; all six wheel artifacts
 are pinned by version, URL and SHA-256 in
-[tests/e2e/wheels.lock](../tests/e2e/wheels.lock). Dependencies are downloaded only
-into this checkout's `.cache/e2e`. This fixture currently targets a native
+[tests/e2e/wheels.lock](https://github.com/c89systems/libcbor/blob/trunk/tests/e2e/wheels.lock). Verified downloads use the shared archive cache
+and checkout-local `.cache/e2e`. This fixture currently targets a native
 x86_64 Linux Podman host. It requires rootless Podman, curl, sha256sum, tar,
 CMake, Ninja and the prepared lifecycle x86_64 musl C/C++ toolchain.
 No live provider, credentials, privileged cleanup or broker is used.
@@ -77,7 +83,7 @@ The separate `cose-c-peer` test closes that library-interoperability gap for
 Encrypt/A256GCM with X25519 ECDH-ES+A256KW (`-31`). COSE-C commit
 `97d1805e71b7a6770093c5e6790d46611680d563` and cn-cbor commit
 `f713bf67bcf3e076d47e474ce060252ef8be48c7` are pinned by archive URL and SHA-256 in
-[tests/e2e/sources.lock](../tests/e2e/sources.lock). CMake builds the bounded C89
+[tests/e2e/sources.lock](https://github.com/c89systems/libcbor/blob/trunk/tests/e2e/sources.lock). CMake builds the bounded C89
 adapter and the unmodified upstream libraries using the lifecycle's musl
 toolchain and cpkt 0.7.0's OpenSSL 3.6.5. The static executable is copied into
 the same pinned container; the image needs no compiler or extra Alpine packages.
