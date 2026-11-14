@@ -9,6 +9,7 @@ BUILD_JOBS ?= 2
 export BUILD_JOBS
 .PHONY: help build test lua lua-test check-native matrix format format-check shell-check benchmark benchmark-compare package package-verify package-source source-smoke valgrind fuzz-smoke fuzz-long sanitize e2e prerelease-hardening prerelease clean release
 help:
+	@printf '%s\n' 'check-darwin: Apple Silicon Debug/Release C/Lua and relocated SDK tests'
 	@printf '%s\n' 'e2e / sanitize / fuzz-long: explicit prerelease hardening; see docs/hardening.md' 'prerelease-hardening: normal checks, native memory/sanitizers, reference peer and long fuzz'
 	@printf '%s\n' 'build / test / lua / lua-test: TARGET=<triple> CONFIG=Debug|Release VERSION=<candidate>' 'check-native: native Debug C and installed-SDK Lua checks' 'matrix: build all seven targets, execute six Linux targets with QEMU where needed' 'format / format-check / shell-check: source and shell checks' 'benchmark / benchmark-compare: native Release C/Lua/transport measurements' 'package / package-verify / package-source / source-smoke: SDK and source evidence' 'valgrind / fuzz-smoke: native memory and instrumented fuzz checks' 'prerelease: complete local preparation (no signing, tags or publication)' 'release: signed default-branch/tag gate; see docs/delivery.md' 'clean: remove this checkout build/, dist/, .cache/ and editor database'
 build:
@@ -21,6 +22,11 @@ lua-test: lua
 	@scripts/build.sh lua-test "$(TARGET)" "$(CONFIG)"
 check-native:
 	@$(MAKE) -C "$(project_root)" test lua-test format-check shell-check TARGET=x86_64-linux-gnu CONFIG=Debug VERSION="$(VERSION)"
+.PHONY: check-darwin
+check-darwin:
+	@[[ $$(uname -s) == Darwin && $$(uname -m) == arm64 ]] || { printf 'check-darwin requires Apple Silicon macOS\n' >&2; exit 1; }
+	@$(MAKE) -C "$(project_root)" test lua-test TARGET=arm64-apple-darwin CONFIG=Debug VERSION="$(VERSION)"
+	@$(MAKE) -C "$(project_root)" test lua-test package package-verify TARGET=arm64-apple-darwin CONFIG=Release VERSION="$(VERSION)"
 matrix:
 	@scripts/matrix.sh "$(VERSION)"
 format:

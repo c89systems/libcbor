@@ -53,6 +53,13 @@ packaged documentation links, matrix lane selection and isolated source exports.
 Lua's inventory check
 verifies module selection, lifetime-suite inclusion and the worker-stack environment.
 
+`make check-darwin` runs on Apple Silicon macOS with the selected Xcode tools and
+SDK, arm64 architecture and macOS 15 deployment baseline. It runs C and Lua tests
+in Debug and Release, then verifies the relocated Release SDK and its consumers.
+Use Bash >=4.4 and GNU coreutils/tar plus flock, ripgrep, CMake, Ninja and pkg-config.
+Set `CPKT_LIFECYCLE_SCRIPTS_DIR` to the prepared lifecycle helpers as on Linux.
+The native toolchain never selects osxcross on macOS.
+
 The normal native Debug build creates build/x86_64-linux-gnu-debug/compile_commands.json,
 which .clangd discovers. Build once before opening the editor. Public headers
 can be parsed through their ordinary implementation includers. There is no
@@ -62,8 +69,8 @@ CTest covers vectors, malformed/truncated inputs, fragment boundaries, borrowed
 ownership, terminal errors, native backpressure, large generated streaming and
 real transports. Linux foreign architectures execute through qemu-aarch64 or
 qemu-arm with their target sysroots. Darwin is compiled/linked/inspected locally
-through osxcross; required native Darwin execution needs a Darwin host and is
-reported separately. Glibc Debug worker tests constrain defaults to 128 KiB and
+through osxcross; native runtime diagnostics run separately in the macOS workflow.
+Glibc Debug worker tests constrain defaults to 128 KiB and
 disable glibc's thread stack cache; musl workers use native defaults.
 
 Formatting uses checked-in clang-format settings. Shell checks use bash -n;

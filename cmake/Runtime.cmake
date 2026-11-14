@@ -21,5 +21,8 @@ function(c89_runtime target)
     elseif(C89CBOR_TARGET MATCHES "^armhf")
       set_property(TARGET ${target} PROPERTY CROSSCOMPILING_EMULATOR "qemu-arm;-L;${CMAKE_SYSROOT}")
     endif()
+  elseif(APPLE AND CpktCore_PREFIX)
+    # Installed SDK dependencies use @rpath; local test processes supply it.
+    set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "${CpktCore_PREFIX}/lib")
   endif()
 endfunction()

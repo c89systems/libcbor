@@ -1,0 +1,74 @@
+name: Native macOS diagnostics
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arm64:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      BUILD_JOBS: '2'
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+      CPKT_LIFECYCLE_SCRIPTS_DIR: ${{ github.workspace }}/build/lifecycle/scripts
+    defaults:
+      run:
+        shell: bash --noprofile --norc -e -o pipefail {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare pinned lifecycle helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: c89systems/cpkt
+          ref: 380332d4638701c0632a0818a7b8863baffc3026 # v0.7.0
+          path: build/lifecycle
+          sparse-checkout: scripts
+          persist-credentials: false
+      - name: Install workstation tools
+        run: brew install bash cmake ninja coreutils gnu-tar util-linux ripgrep pkgconf
+      - name: Select host Bash and GNU tools
+        run: |
+          for directory in "$(brew --prefix bash)/bin" \
+            "$(brew --prefix coreutils)/libexec/gnubin" \
+            "$(brew --prefix gnu-tar)/libexec/gnubin" \
+            "$(brew --prefix util-linux)/bin"; do
+            printf '%s\n' "$directory" >> "$GITHUB_PATH"
+            export PATH="$directory:$PATH"
+          done
+          bash "$CPKT_LIFECYCLE_SCRIPTS_DIR/require-host-bash.sh"
+          printf 'SDKROOT=%s\n' "$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+      - name: Native C, Lua and relocated SDK consumers
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p build/ci
+          git rev-parse HEAD > build/ci/commit.txt
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-path
+          make check-darwin 2>&1 | tee build/ci/macos.log
+      - name: Preserve diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-arm64-${{ github.sha }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            build/ci/*.txt
+            build/ci/*.log
+            build/**/Testing/Temporary/*.log
+            build/**/CMakeFiles/CMakeConfigureLog.yaml

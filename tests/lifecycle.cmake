@@ -197,6 +197,50 @@ sha256sum -c build/package/x86_64-linux-gnu-release/SHA256
      EXISTS "${owner}/build/package/x86_64-linux-gnu-release/SHA256")
     message(FATAL_ERROR "Failed source verification exported an artifact")
   endif()
+elseif(CASE STREQUAL "darwin")
+  file(MAKE_DIRECTORY "${owner}/bin" "${owner}/Apple SDK.sdk" "${owner}/Apple Tools")
+  foreach(tool clang clang++ ld ar ranlib strip nm otool install_name_tool)
+    file(WRITE "${owner}/Apple Tools/${tool}" "fixture")
+  endforeach()
+  file(WRITE "${owner}/bin/xcrun" [=[#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${FIXTURE_XCODE_FAIL:-0} == 1 ]]; then exit 1; fi
+if [[ $3 == --show-sdk-path ]]; then printf '%s/Apple SDK.sdk\n' "$FIXTURE_XCODE"
+else printf '%s/Apple Tools/%s\n' "$FIXTURE_XCODE" "$4"; fi
+]=])
+  file(CHMOD "${owner}/bin/xcrun" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  file(WRITE "${owner}/check.cmake" [=[
+set(CMAKE_HOST_SYSTEM_NAME Darwin)
+set(CMAKE_HOST_SYSTEM_PROCESSOR arm64)
+if(WRONG_ARCH)
+  set(CMAKE_HOST_SYSTEM_PROCESSOR x86_64)
+endif()
+set(C89CBOR_TARGET arm64-apple-darwin)
+include("${ROOT}/cmake/toolchain.cmake")
+if(NOT CMAKE_C_COMPILER STREQUAL "$ENV{FIXTURE_XCODE}/Apple Tools/clang" OR
+   NOT CMAKE_OSX_SYSROOT STREQUAL "$ENV{FIXTURE_XCODE}/Apple SDK.sdk" OR
+   NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR
+   NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "15.0" OR
+   DEFINED CMAKE_EXE_LINKER_FLAGS_INIT OR DEFINED CMAKE_SYSTEM_NAME)
+  message(FATAL_ERROR "Native Xcode selection lost its SDK, architecture or native flags")
+endif()
+]=])
+  set(environment "${CMAKE_COMMAND}" -E env "PATH=${owner}/bin:$ENV{PATH}" "FIXTURE_XCODE=${owner}")
+  set(check "${CMAKE_COMMAND}" "-DROOT=${ROOT}" -P "${owner}/check.cmake")
+  run(pass ${environment} ${check})
+  run(fail ${environment} "FIXTURE_XCODE_FAIL=1" ${check})
+  run(fail ${environment} "${CMAKE_COMMAND}" "-DROOT=${ROOT}" -DWRONG_ARCH=ON -P "${owner}/check.cmake")
+  file(REMOVE "${owner}/Apple Tools/nm")
+  run(fail ${environment} ${check})
+  file(WRITE "${owner}/Apple Tools/nm" "fixture")
+  file(REMOVE_RECURSE "${owner}/Apple SDK.sdk")
+  run(fail ${environment} ${check})
+  run(pass "${CMAKE_MAKE_PROGRAM_HOST}" -n -f "${ROOT}/Makefile" check-darwin TARGET=x86_64-linux-gnu CONFIG=Debug)
+  if(NOT last_output MATCHES "core \"arm64-apple-darwin\" \"Debug\"" OR
+     NOT last_output MATCHES "core \"arm64-apple-darwin\" \"Release\"" OR
+     NOT last_output MATCHES "verify-package.sh \"arm64-apple-darwin\" \"Release\"")
+    message(FATAL_ERROR "check-darwin lost its target/configuration/consumer coverage: ${last_output}")
+  endif()
 else()
   message(FATAL_ERROR "Unknown lifecycle fixture: ${CASE}")
 endif()

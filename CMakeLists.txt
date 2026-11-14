@@ -150,7 +150,7 @@ if(BUILD_TESTING AND NOT C89CBOR_DISABLE_TESTS)
   include(cmake/ApiInventory.cmake)
   if(C89CBOR_TARGET STREQUAL "x86_64-linux-gnu")
     find_program(C89CBOR_HOST_MAKE NAMES gmake make REQUIRED)
-    foreach(case clean cache docs matrix source)
+    foreach(case clean cache docs matrix source darwin)
       add_test(NAME lifecycle-${case} COMMAND ${CMAKE_COMMAND}
         "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
         "-DLIFECYCLE=${CPKT_LIFECYCLE_SCRIPTS_DIR}" "-DCMAKE_MAKE_PROGRAM_HOST=${C89CBOR_HOST_MAKE}"

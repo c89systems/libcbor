@@ -40,10 +40,17 @@ gate runs before clean/build. A failure stops the release; fixes require a new
 iteration. Remote refs remain unchanged. No script pushes or publishes artifacts.
 
 `make prerelease` supplies local preparation checks. Runtime evidence is six Linux
-targets on this Linux host; Darwin native execution remains a separately declared
-runner requirement and must not be represented as completed here.
+targets on this Linux host; Darwin release evidence uses local osxcross
+compilation, linking and artifact inspection.
 
 The Darwin deployment baseline is macOS 15.
+The `Native macOS diagnostics` GitHub Actions workflow runs `make check-darwin`
+on branch pushes and manual dispatch. It records the tested commit and retains
+test/configure logs for seven days. Its pinned public cpkt helper collection and
+verified dependency archives prepare a fresh Apple Silicon/Xcode native build.
+These hosted checks supply development runtime diagnostics and upload only logs.
+They are separate from release gates and publication. Local osxcross continues
+to supply Darwin release artifacts and release proof.
 `make prerelease-hardening` separately runs native sanitizers, memory checks,
 the rootless reference peer and resumable longer fuzz campaigns. It is not part
 of `make release`; see [hardening](hardening.md).
