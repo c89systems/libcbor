@@ -26,7 +26,7 @@ sanitize)
     -DC89CBOR_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug \
     "-DC89CBOR_VERSION_OVERRIDE=${2:-}" \
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-x86_64-linux-gnu/lib/cmake/lonejson" \
-    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore"
+    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-x86_64-linux-gnu/lib/cmake/CpktCore"
   cmake --build build/sanitize --parallel "${BUILD_JOBS:-2}"
   ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
     ctest --test-dir build/sanitize --output-on-failure --stop-on-failure --no-tests=error -LE podman
@@ -37,7 +37,7 @@ sanitize)
     "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DCMAKE_BUILD_TYPE=Debug -DC89CBOR_SANITIZE=ON \
     "-DC89Cbor_DIR=$root/build/sdk-sanitize/lib/cmake/C89Cbor" \
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-x86_64-linux-gnu/lib/cmake/lonejson" \
-    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore" \
+    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-x86_64-linux-gnu/lib/cmake/CpktCore" \
     "-DLUA_INCLUDE_DIR=$root/build/lua-sdk-x86_64-linux-gnu-debug/include" \
     "-DLUA_LIBRARY=$root/build/lua-sdk-x86_64-linux-gnu-debug/lib/liblua.so"
   cmake --build build/lua-sanitize --parallel "${BUILD_JOBS:-2}"
@@ -81,7 +81,7 @@ fuzz|fuzz-long)
     -DC89CBOR_AFL=ON -DC89CBOR_DISABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
     "-DC89CBOR_VERSION_OVERRIDE=${2:-}" \
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-x86_64-linux-gnu/lib/cmake/lonejson" \
-    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu/lib/cmake/CpktCore"
+    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-x86_64-linux-gnu/lib/cmake/CpktCore"
   cmake --build build/fuzz --parallel "${BUILD_JOBS:-2}"
   read -ra fuzz_cases <<< "${FUZZ_CASES:-codec json cbor map cose cose-stream cose-sign1 cose-sign1-stream cose-mac0 cose-mac0-stream cwt}"
   for case_name in "${fuzz_cases[@]}"; do

@@ -1,7 +1,17 @@
 cmake_minimum_required(VERSION 3.21)
 project(CborConsumer LANGUAGES C)
 include(CTest)
+# A provider upgrade must override a stale but otherwise discoverable OpenSSL
+# cache entry. Exercise installed package metadata with that entry present.
+set(stale_openssl "${CMAKE_CURRENT_BINARY_DIR}/stale-openssl")
+file(MAKE_DIRECTORY "${stale_openssl}")
+file(WRITE "${stale_openssl}/OpenSSLConfigVersion.cmake"
+  "set(PACKAGE_VERSION 3.6.5)\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\nset(PACKAGE_VERSION_EXACT TRUE)\n")
+file(WRITE "${stale_openssl}/OpenSSLConfig.cmake"
+  "message(FATAL_ERROR \"Unselected OpenSSL cache entry was used\")\n")
+set(OpenSSL_DIR "${stale_openssl}" CACHE PATH "Stale provider cache fixture" FORCE)
 find_package(C89Cbor CONFIG REQUIRED)
+cpkt_sdk_assert_targets(core)
 find_package(Threads REQUIRED)
 include("${RUNTIME_HELPER}")
 foreach(kind static shared)

@@ -4,9 +4,11 @@ project(CoseCPeer LANGUAGES C CXX)
 # This disposable fixture is independent of libcbor. Only the adapter is C89;
 # upstream COSE-C and cn-cbor retain their own language requirements.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
-find_package(CpktCore 0.7.0 EXACT CONFIG REQUIRED)
+find_package(CpktCore 0.8.0 EXACT CONFIG REQUIRED)
 list(APPEND CMAKE_FIND_ROOT_PATH "${CpktCore_PREFIX}")
 list(APPEND CMAKE_PREFIX_PATH "${CpktCore_PREFIX}")
+set(OpenSSL_DIR "${CpktCore_PREFIX}/lib/cmake/OpenSSL")
+set(OpenSSL_DIR "${OpenSSL_DIR}" CACHE PATH "OpenSSL from selected cpkt SDK" FORCE)
 find_package(OpenSSL 3.6.5 EXACT CONFIG REQUIRED HINTS "${CpktCore_PREFIX}/lib/cmake/OpenSSL")
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
 set(OPENSSL_LIBRARIES OpenSSL::Crypto)

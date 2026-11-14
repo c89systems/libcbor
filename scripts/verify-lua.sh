@@ -33,13 +33,13 @@ args=(-G Ninja "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake"
   "-DC89CBOR_TARGET=$target" "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DCMAKE_BUILD_TYPE=Release
   "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" "-DLUA_INCLUDE_DIR=$lua_sdk/include" "-DLUA_LIBRARY=$lua_sdk/lib/liblua.so")
 args+=("-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-$target/lib/cmake/lonejson")
-args+=("-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-$target/lib/cmake/CpktCore")
+args+=("-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-$target/lib/cmake/CpktCore")
 cmake -S "$scratch/extracted/$name" -B "$scratch/facade" "${args[@]}"
 cmake --build "$scratch/facade" --parallel "${BUILD_JOBS:-2}"
 TMPDIR="$scratch/tmp" luarocks --tree "$scratch/tree" --lua-version=5.5 \
   install --deps-mode=none "$rock" "CBOR_DIR=$sdk" "CC=$cc" "LD=$cc" \
   "LONEJSON_DIR=$root/.cache/deps/liblonejson-0.50.0-$target" \
-  "CRYPTO_DIR=$root/.cache/deps/cpkt-0.7.0-$target" \
+  "CRYPTO_DIR=$root/.cache/deps/cpkt-0.8.0-$target" \
   "LUA_INCDIR=$lua_sdk/include" "LUA_LIBDIR=$lua_sdk/lib" \
   'CFLAGS=-O2 -fPIC -std=c89 -Wall -Wextra -Werror -Wpedantic -Wno-long-long'
 for module in "$scratch/facade/lua/cbor.so" "$scratch/tree/lib/lua/5.5/cbor.so"; do

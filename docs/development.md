@@ -13,9 +13,11 @@ with a per-digest lock. `CPKT_DEPENDENCY_CACHE` selects this checkout's `build/`
 or `.cache/` storage, or the standard global cpkt dependency cache. Corrupt inputs
 fail rather than being silently replaced. Local archive hits can seed a missing
 shared entry without network access.
-COSE uses OpenSSL 3.6.5 from the pinned cpkt 0.7.0 SDK on every target. The core
+COSE uses OpenSSL 3.6.5 from the pinned cpkt 0.8.0 SDK on every target. The core
 links libcrypto directly through the provider targets; it needs neither libssl
 nor a cpkt facade library. CMake consumers supply CpktCore_DIR alongside lonejson_DIR.
+The selected cpkt prefix also selects OpenSSL, replacing stale OpenSSL package
+cache entries when the provider is upgraded.
 Lua builds prepare the pinned Lua.org 5.5.1 source into target/configuration-local
 `build/lua-runtime-*` and `build/lua-sdk-*` directories. Upstream Lua compiles
 with `-std=c89` and GNU inline spelling, retaining its normal 64-bit integer ABI

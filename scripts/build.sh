@@ -21,7 +21,7 @@ core)
   scripts/deps.sh "$target" cpkt
   cmake -S . -B "$build" "${args[@]}" "-DC89CBOR_VERSION_OVERRIDE=$version" \
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-$target/lib/cmake/lonejson" \
-    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-$target/lib/cmake/CpktCore" "${@:5}"
+    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-$target/lib/cmake/CpktCore" "${@:5}"
   cmake --build "$build" --parallel "${BUILD_JOBS:-2}"
   ;;
 test)
@@ -43,7 +43,7 @@ lua-runtime|lua)
   cmake -S lua -B "build/lua-$target-${config,,}" "${args[@]}" \
     "-DC89Cbor_DIR=$sdk/lib/cmake/C89Cbor" \
     "-Dlonejson_DIR=$root/.cache/deps/liblonejson-0.50.0-$target/lib/cmake/lonejson" \
-    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-$target/lib/cmake/CpktCore" \
+    "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-$target/lib/cmake/CpktCore" \
     "-DLUA_INCLUDE_DIR=$lua_sdk/include" "-DLUA_LIBRARY=$lua_sdk/lib/$lua_library"
   cmake --build "build/lua-$target-${config,,}" --parallel "${BUILD_JOBS:-2}"
   ;;

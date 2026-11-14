@@ -88,7 +88,7 @@ Encrypt/A256GCM with X25519 ECDH-ES+A256KW (`-31`). COSE-C commit
 `f713bf67bcf3e076d47e474ce060252ef8be48c7` are pinned by archive URL and SHA-256 in
 [tests/e2e/sources.lock](https://github.com/c89systems/libcbor/blob/trunk/tests/e2e/sources.lock). CMake builds the bounded C89
 adapter and the unmodified upstream libraries using the lifecycle's musl
-toolchain and cpkt 0.7.0's OpenSSL 3.6.5. The static executable is copied into
+toolchain and cpkt 0.8.0's OpenSSL 3.6.5. The static executable is copied into
 the same pinned container; the image needs no compiler or extra Alpine packages.
 These are test-only dependencies, absent from shipped libcbor SDKs.
 COSE-C is C++ internally; its language settings do not change libcbor's C89 API.

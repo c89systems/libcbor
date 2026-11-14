@@ -249,7 +249,7 @@ interop on the binding receiver, preserving owner pins and GC order.
 ## cpkt/OpenSSL and packaging
 
 Use cpkt as the OpenSSL SDK provider, following the lifecycle's provider and
-dependency contracts. The available validated baseline is cpkt 0.7.0, whose
+dependency contracts. The available validated baseline is cpkt 0.8.0, whose
 manifest selects OpenSSL 3.6.5 on all seven targets. Exact release/target/archive-SHA
 pins are recorded in scripts/deps.sh. Do not acquire
 OpenSSL independently, build from a sibling checkout or fall back to host libs.

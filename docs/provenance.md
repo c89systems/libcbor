@@ -20,9 +20,12 @@ in scripts/deps.sh to SHA-256
 `1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce`, from
 [Lua.org](https://www.lua.org/download.html). Lua uses no cpkt facade library.
 
-COSE uses OpenSSL 3.6.5 from the cpkt 0.7.0 SDK. Provider release archives and
+COSE uses OpenSSL 3.6.5 from the cpkt 0.8.0 SDK. Provider release archives and
 all seven target SHA-256 pins are recorded in scripts/deps.sh. The product links
 libcrypto's public EVP API, without copying OpenSSL code into this repository.
 Consumers install the provider separately; its libraries are not bundled into
 the libcbor shared SDK. Static consumers link the provider's static dependency
 closure. See [COSE](cose.md) for protocol references and the declared algorithms.
+The [cpkt 0.8.0 release](https://github.com/c89systems/cpkt/releases/tag/v0.8.0)
+includes an OpenSSL error-printing fix for allocation failure while retaining
+OpenSSL 3.6.5 and its public ABI. Static consumers must relink to receive it.

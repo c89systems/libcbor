@@ -14,7 +14,7 @@ mkdir -p build/bench
   sed -n '/^CMAKE_C_COMPILER:FILEPATH=/p; /^CMAKE_C_FLAGS_RELEASE:STRING=/p' build/x86_64-linux-gnu-release/CMakeCache.txt
   awk -F: '/model name/ {print; exit}' /proc/cpuinfo
   printf 'profile_repetitions=%s chunk=%s\n' "${BENCH_REPETITIONS:-10000}" "${BENCH_CHUNK:-0}"
-  printf 'cose_repetitions=%s openssl=3.6.5 provider=cpkt-0.7.0\n' "${COSE_BENCH_REPETITIONS:-1000}"
+  printf 'cose_repetitions=%s openssl=3.6.5 provider=cpkt-0.8.0\n' "${COSE_BENCH_REPETITIONS:-1000}"
 } > build/bench/context.txt
 for mode in decode encode; do
   build/x86_64-linux-gnu-release/codec_benchmark "$mode" | tee "build/bench/$mode.jsonl"

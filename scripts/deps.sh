@@ -18,17 +18,17 @@ if [[ $component == lonejson ]]; then
   url=https://github.com/c89systems/lonejson/releases/download/v0.50.0/$name.tar.gz
 elif [[ $component == cpkt ]]; then
   case "$target" in
-  x86_64-linux-gnu) digest=e898960071bc5f30a00f5308d559b60c7495fce442f9d9e1fce54d112a959d84 ;;
-  x86_64-linux-musl) digest=8c5de2f414c1c99147e22d9651de600b047299c7d547c53830c3c8fe15d34dbc ;;
-  aarch64-linux-gnu) digest=0ba48a8ca621ec9a1045bb2081ec440970695bfcc34aa75683dec8bdaff64e1c ;;
-  aarch64-linux-musl) digest=7146f274e3fbff74b7e1e4c3b3b8276c1c62843f2517f1940a65a17683a17230 ;;
-  armhf-linux-gnu) digest=8eb105e3d19328619c8274a64dcfe39df8d00861d0d31ca3dd3b692f21b25734 ;;
-  armhf-linux-musl) digest=7dbdeaa6b4c8180e14fbd3cc9388c81b88015a306ae268cc12468eb775969f15 ;;
-  arm64-apple-darwin) digest=b1c0d9eee975a1e30f7395db0bcc42fddcca45cbae6919a2d49b4e42ebbb88d3 ;;
+  x86_64-linux-gnu) digest=7a9f2c1de42beec5fb324ac9c8b5a8005c17fb98003d9625eb5ad5ad228ba941 ;;
+  x86_64-linux-musl) digest=9f768f99fa1933adfa0ae5fa8d8f13d1b0c9136047adc72e36a1970d7932772e ;;
+  aarch64-linux-gnu) digest=fd34aaefe2642f548990c7c53d2463e8104004d8e55e38bc2ba63399b28fee43 ;;
+  aarch64-linux-musl) digest=533e75c266416a721bad6dd50126d25575c776e663b8d32686f491fdff80451b ;;
+  armhf-linux-gnu) digest=4066a6fba75cc48baead943431be0b6fb55a290a48ed8b1405f9e068de5e10d0 ;;
+  armhf-linux-musl) digest=f0412151082a3e99f141dd19f0a8040ba1c507695f6df270e72aa4b62e2c58c5 ;;
+  arm64-apple-darwin) digest=25e912cf05614810de3c4d8afbde0bad9dd9033a87443256aef6073f1a432b62 ;;
   *) printf 'Unsupported target: %s\n' "$target" >&2; exit 1 ;;
   esac
-  name=cpkt-0.7.0-$target
-  url=https://github.com/c89systems/cpkt/releases/download/v0.7.0/$name.tar.gz
+  name=cpkt-0.8.0-$target
+  url=https://github.com/c89systems/cpkt/releases/download/v0.8.0/$name.tar.gz
 elif [[ $component == lua ]]; then
   digest=1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
   name=lua-5.5.1

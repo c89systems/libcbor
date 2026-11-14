@@ -22,7 +22,7 @@ cmake -S tests/e2e/cose-c -B "$state/cose-c" -G Ninja \
   "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchain.cmake" \
   "-DCPKT_LIFECYCLE_SCRIPTS_DIR=$lifecycle" -DC89CBOR_TARGET=x86_64-linux-musl \
   -DCMAKE_BUILD_TYPE=Release \
-  "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.7.0-x86_64-linux-musl/lib/cmake/CpktCore" \
+  "-DCpktCore_DIR=$root/.cache/deps/cpkt-0.8.0-x86_64-linux-musl/lib/cmake/CpktCore" \
   "-DCOSE_C_SOURCE_DIR=$root/$state/sources/COSE-C-97d1805e71b7a6770093c5e6790d46611680d563" \
   "-DFETCHCONTENT_SOURCE_DIR_PROJECT_CN_CBOR=$root/$state/sources/cn-cbor-f713bf67bcf3e076d47e474ce060252ef8be48c7" \
   >"$state/cose-c-configure.log" 2>&1

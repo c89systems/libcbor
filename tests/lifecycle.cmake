@@ -131,7 +131,7 @@ umask 077
 exec bash "$(dirname -- "$0")/scripts/deps.sh" x86_64-linux-gnu cpkt
 ]=])
   run(pass bash "${owner}/extract.sh")
-  set(prefix "${owner}/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu")
+  set(prefix "${owner}/.cache/deps/cpkt-0.8.0-x86_64-linux-gnu")
   run(pass stat -c %a "${prefix}/include/group.h" "${prefix}/bin/tool")
   if(NOT last_output STREQUAL "664\n755\n")
     message(FATAL_ERROR "Dependency extraction changed verified payload modes under umask 077: ${last_output}")
