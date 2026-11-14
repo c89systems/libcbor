@@ -331,6 +331,182 @@ elseif group == 'policy' then
     end)
   end
   assert(token:close() == c.OK and key:close() == c.OK and root:close() == c.OK)
+elseif group == 'transfer' then
+  collectgarbage('incremental')
+  collectgarbage('param','pause',0)
+  collectgarbage('param','stepmul',10000)
+  collectgarbage('param','stepsize',0)
+  for _, ctor in ipairs({'transfer','transfer_create'}) do
+    for _, rooted in ipairs({false,true}) do
+      for _, target in ipairs({'source','sink','both','runtime','none'}) do
+        if rooted or target ~= 'runtime' then
+          for _, fd_ctor in ipairs({'fd','fd_create'}) do
+            case(ctor..' rooted='..tostring(rooted)..' closes '..target..' '..fd_ctor, function()
+              collectgarbage('collect')
+              local root = rooted and c.init() or nil
+              local input = root and root[fd_ctor](root,0) or c[fd_ctor](0)
+              local output = root and root[fd_ctor](root,1) or c[fd_ctor](1)
+              local source, sink = input:source(), output:sink()
+              local construct = root and root[ctor] or c[ctor]
+              local inside, closed = 0, false
+              collectgarbage('stop')
+              setmetatable({}, {__gc=function()
+                local constructing = false
+                for level=2,16 do
+                  local info=debug.getinfo(level,'f')
+                  if not info then break end
+                  if info.func==construct then constructing=true; break end
+                end
+                if not constructing then return end
+                inside=inside+1
+                if target=='source' or target=='both' or target=='runtime' then
+                  assert(source:close()==c.OK and input:close()==c.OK)
+                  closed=true
+                end
+                if target=='sink' or target=='both' or target=='runtime' then
+                  assert(sink:close()==c.OK and output:close()==c.OK)
+                  closed=true
+                end
+                if target=='runtime' then assert(root:close()==c.OK) end
+              end})
+              collectgarbage('restart')
+              local ok, transfer
+              if root then ok,transfer=pcall(construct,root,source,sink)
+              else ok,transfer=pcall(construct,source,sink) end
+              assert(inside==1,'finalizer did not run inside transfer construction')
+              if target=='none' then
+                assert(ok and transfer)
+                assert(source:close()==c.INVALID and sink:close()==c.INVALID)
+                assert(transfer:close()==c.OK)
+              else
+                assert(closed and not ok and tostring(transfer):find('handle is closed',1,true),
+                       'constructor accepted an owner closed during userdata allocation')
+              end
+              -- A rejected constructor must leave no partial borrows behind.
+              assert(source:close()==c.OK and sink:close()==c.OK)
+              assert(input:close()==c.OK and output:close()==c.OK)
+              if root then assert(root:close()==c.OK) end
+            end)
+          end
+        end
+      end
+    end
+  end
+  for _, ctor in ipairs({'transfer','transfer_create'}) do
+    for _, rooted in ipairs({false,true}) do
+      for at=1,4 do
+        case(ctor..' Lua allocation failure '..at..' rooted='..tostring(rooted),function()
+          local root=rooted and c.init() or nil
+          local input,output=c.fd_create(0),c.fd_create(1)
+          local source,sink=input:source(),output:sink()
+          collectgarbage('stop')
+          local ok,transfer
+          if root then ok,transfer=native_lua_failure(root[ctor],at,root,source,sink)
+          else ok,transfer=native_lua_failure(c[ctor],at,source,sink) end
+          collectgarbage('restart')
+          if ok then assert(transfer:close()==c.OK)
+          else assert(tostring(transfer):find('memory',1,true)) end
+          assert(source:close()==c.OK and sink:close()==c.OK)
+          assert(input:close()==c.OK and output:close()==c.OK)
+          if root then assert(root:close()==c.OK) end
+        end)
+      end
+    end
+  end
+elseif group == 'snapshot' then
+  local function prepared(ctor, array)
+    local root=c.init()
+    local key=root:cose_key_init(c.COSE_HMAC256,string.rep('k',32))
+    local token=assert(root[ctor](root))
+    local claims='\xab\x01\x66issuer\x02\x78\x80'..string.rep('s',128)..'\x03'..
+                 (array and '\x82\x68audience\x69secondary' or '\x68audience')..
+                 '\x04\x19\x03\xe8\x05\x18\x32\x06\x18\x32\x07\x58\x40'..string.rep('i',64)..
+                 '\x65nonce\x69challenge\x63azp\x66client\x65scope\x64read'..
+                 '\x63scp\x82\x64read\x65write'
+    assert(token:set_claims(claims)==c.OK and token:set_seal_keys(key)==c.OK)
+    local status,span=token:seal()
+    assert(status==c.OK)
+    local wire=span:string()
+    assert(span:close()==c.OK and token:set_verify_keys(key)==c.OK)
+    assert(token:verify(wire,{now=100,accepted_algs={'HS256'},
+                             accepted_issuers={'issuer'},accepted_audiences={'audience'}})==c.OK)
+    return root,key,token,wire
+  end
+  collectgarbage('incremental')
+  collectgarbage('param','pause',0)
+  collectgarbage('param','stepmul',10000)
+  collectgarbage('param','stepsize',0)
+  for _, ctor in ipairs({'cwt_init','cwt_create'}) do
+    for _, array in ipairs({false,true}) do
+      for _, action in ipairs({'close','set_claims','seal','verify','keys','view'}) do
+        case(ctor..' finalizer attempts '..action..' during view_get; array='..tostring(array),function()
+          collectgarbage('collect')
+          local root,key,token,wire=prepared(ctor,array)
+          local status,before=token:view_get()
+          assert(status==c.OK)
+          local view_get=token.view_get
+          local inside,blocked=0,false
+          collectgarbage('stop')
+          setmetatable({}, {__gc=function()
+            local copying=false
+            for level=2,16 do
+              local info=debug.getinfo(level,'f')
+              if not info then break end
+              if info.func==view_get then copying=true; break end
+            end
+            if not copying then return end
+            inside=inside+1
+            local result
+            if action=='close' then result=token:close(); blocked=result==c.INVALID
+            elseif action=='set_claims' then result=token:set_claims('\xa0'); blocked=result==c.BUSY
+            elseif action=='seal' then result=token:seal(); blocked=result==c.BUSY
+            elseif action=='verify' then result=token:verify(wire,{now=100}); blocked=result==c.BUSY
+            elseif action=='keys' then result=token:set_verify_keys(key); blocked=result==c.BUSY
+            else result=token:view_get(); blocked=result==c.BUSY end
+          end})
+          collectgarbage('restart')
+          local status,snapshot=view_get(token)
+          assert(inside==1,'GC did not run inside view_get')
+          assert(blocked,'CWT close or mutation was allowed during snapshot copy')
+          assert(status==c.OK and snapshot.encoded==before.encoded and snapshot.cti==string.rep('i',64))
+          assert(snapshot.authenticated and snapshot.algorithm==before.algorithm)
+          assert(snapshot.claim_count==before.claim_count and snapshot.claims.iss=='issuer')
+          assert(snapshot.claims.sub==string.rep('s',128) and snapshot.claims.aud==before.claims.aud)
+          assert(snapshot.claims.nonce=='challenge' and snapshot.claims.azp=='client' and snapshot.claims.scope=='read')
+          assert(snapshot.claims.exp==1000 and snapshot.claims.nbf==50 and snapshot.claims.iat==50)
+          assert(#snapshot.claims.aud_array==(array and 2 or 0))
+          if array then assert(snapshot.claims.aud_array[1]=='audience' and snapshot.claims.aud_array[2]=='secondary') end
+          assert(#snapshot.claims.scp==2 and snapshot.claims.scp[1]=='read' and snapshot.claims.scp[2]=='write')
+          assert(token:close()==c.OK and key:close()==c.OK and root:close()==c.OK)
+          assert(snapshot.encoded==before.encoded and snapshot.claims.iss=='issuer')
+        end)
+      end
+    end
+    local errors,successes=0,0
+    for at=1,36 do
+      case(ctor..' view_get Lua allocation failure '..at,function()
+        local root,key,token=prepared(ctor,true)
+        collectgarbage('stop')
+        local ok,status,snapshot=native_lua_failure(token.view_get,at,token)
+        collectgarbage('restart')
+        if ok then assert(status==c.OK and snapshot.claims.iss=='issuer'); successes=successes+1
+        else assert(tostring(status):find('memory',1,true)); errors=errors+1 end
+        -- Every error path must release the active guard immediately.
+        local status,view=token:view_get()
+        assert(status==c.OK and view.claims.iss=='issuer')
+        assert(token:set_claims('\xa0')==c.OK)
+        assert(token:close()==c.OK and key:close()==c.OK and root:close()==c.OK)
+      end)
+    end
+    assert(errors>0 and successes>0,'allocation sweep did not reach failure and success')
+    case(ctor..' view without authenticated storage',function()
+      local root=c.init()
+      local token=root[ctor](root)
+      local status,snapshot=token:view_get()
+      assert(status~=c.OK and snapshot==nil)
+      assert(token:set_claims('\xa0')==c.OK and token:close()==c.OK and root:close()==c.OK)
+    end)
+  end
 elseif group == 'gc' then
   collectgarbage('incremental')
   local pause = collectgarbage('param', 'pause', 0)

@@ -750,6 +750,45 @@ typedef struct arguments {
   const char *module;
   const char *script;
 } arguments;
+typedef struct lua_allocation_probe {
+  lua_Alloc allocator;
+  void *context;
+  size_t calls, fail_at;
+} lua_allocation_probe;
+static void *fail_lua_allocation(void *context, void *memory, size_t old_size,
+                                 size_t new_size) {
+  lua_allocation_probe *probe = context;
+  if (new_size != 0 && (memory == NULL || new_size > old_size)) {
+    ++probe->calls;
+    if (probe->fail_at != 0 && probe->calls >= probe->fail_at)
+      return NULL;
+  }
+  return probe->allocator(probe->context, memory, old_size, new_size);
+}
+/* Deny a selected Lua growth allocation, including its emergency-GC retry.
+ * Restore the VM allocator before returning either results or the Lua error. */
+static int native_lua_failure(lua_State *L) {
+  lua_allocation_probe probe;
+  int base = lua_gettop(L), i, status, results;
+  luaL_checktype(L, 1, LUA_TFUNCTION);
+  luaL_argcheck(L, luaL_checkinteger(L, 2) >= 0, 2,
+                "allocation index must be nonnegative");
+  probe.calls = 0;
+  probe.fail_at = (size_t)lua_tointeger(L, 2);
+  probe.allocator = lua_getallocf(L, &probe.context);
+  luaL_checkstack(L, base + 4, "allocation failure fixture arguments");
+  lua_pushvalue(L, 1);
+  for (i = 3; i <= base; ++i)
+    lua_pushvalue(L, i);
+  lua_setallocf(L, fail_lua_allocation, &probe);
+  status = lua_pcall(L, base - 2, LUA_MULTRET, 0);
+  lua_setallocf(L, probe.allocator, probe.context);
+  results = lua_gettop(L) - base;
+  lua_pushboolean(L, status == LUA_OK);
+  lua_insert(L, base + 1);
+  lua_pushinteger(L, (lua_Integer)probe.calls);
+  return results + 2;
+}
 static void *run(void *ctx) {
   arguments *args = ctx;
   void *module = dlopen(args->module, RTLD_NOW | RTLD_LOCAL), *symbol;
@@ -782,6 +821,8 @@ static void *run(void *ctx) {
   L = luaL_newstate();
   assert(L != NULL);
   luaL_openlibs(L);
+  lua_pushcfunction(L, native_lua_failure);
+  lua_setglobal(L, "native_lua_failure");
   lua_pushstring(L, c89cbor_version(NULL));
   lua_setglobal(L, "expected_version");
   assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, datagram_pair) == 0);

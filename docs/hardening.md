@@ -31,9 +31,12 @@ other ASan/UBSan detection and leak checks remain enabled.
 
 Sanitizers exercise both the native library and the Lua module/test runners.
 Valgrind uses CTest's registered commands, environments and timeouts for the C
-tests, Lua API and all four Lua lifetime groups. The same lifetime groups run
+tests, Lua API and all six Lua lifetime groups. The same lifetime groups run
 against both packaged Lua modules during `package-lua-verify`; a CTest inventory
 check rejects missing groups, module mismatches or lost test environments.
+GC reentry covers descriptor/transfer construction and CWT snapshot copying,
+including close/mutation attempts and Lua allocation failures with immediate
+handle reuse after errors.
 
 Helgrind has one narrow suppression for OpenSSL 3.6.5's name-map counter read
 during signature fetch. The pinned

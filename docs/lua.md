@@ -48,6 +48,10 @@ Tables expose step budgets, allocator handles and JSON policy limits. Native
 configs preserve every C field, including borrowed lonejson runtimes. Children
 pin their runtime and other owners. Root cleanup rejects live children. GC
 defers owner cleanup until dependent finalizers release their pins.
+Transfer constructors revalidate owners after Lua userdata allocation and pin
+them before native allocation callbacks. CWT `view_get()` copies a complete Lua
+snapshot while close and mutation are blocked; Lua allocation errors release
+that protection before reaching the caller.
 
 ```lua
 local runtime = cbor.create()

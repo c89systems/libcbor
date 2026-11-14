@@ -964,8 +964,8 @@ static int fd_sink(lua_State *L) {
 static int transfer_factory(lua_State *L, int create) {
   c89cbor *runtime = check_runtime(L, 1);
   int base = runtime != NULL ? 1 : 0;
-  c89cbor_source *source = checked(L, 1 + base, SOURCE)->ptr;
-  c89cbor_sink *sink = checked(L, 2 + base, SINK)->ptr;
+  c89cbor_source *source;
+  c89cbor_sink *sink;
   uint64_t mode = optional(L, 3 + base, 0);
   uint32_t limit = limit_arg(L, 4 + base);
   handle *h;
@@ -979,6 +979,11 @@ static int transfer_factory(lua_State *L, int create) {
     return 2;
   }
   h = new_handle(L, TRANSFER, create ? 0 : sizeof(c89cbor_transfer));
+  /* Lua userdata allocation can run finalizers before any borrow exists. */
+  if (base)
+    runtime = checked(L, 1, ROOT)->ptr;
+  source = checked(L, 1 + base, SOURCE)->ptr;
+  sink = checked(L, 2 + base, SINK)->ptr;
   /* The allocator can re-enter Lua before the native endpoint copies exist. */
   pin(L, h, 1 + base, 1);
   pin(L, h, 2 + base, 2);

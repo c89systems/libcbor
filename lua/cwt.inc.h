@@ -340,7 +340,7 @@ static int cwt_verify(lua_State *L) {
   diagnostic_table(L, &error);
   return 2;
 }
-static int cwt_view_get(lua_State *L) {
+static int cwt_view_snapshot(lua_State *L) {
   c89cbor_cwt_view view;
   size_t i;
   int status = c89cbor_cwt_view_get(checked(L, 1, CWT)->ptr, &view);
@@ -395,6 +395,26 @@ static int cwt_view_get(lua_State *L) {
   VIEW_ARRAY(scp);
 #undef VIEW_ARRAY
   lua_setfield(L, -2, "claims");
+  return 2;
+}
+static int cwt_view_get(lua_State *L) {
+  handle *h = checked(L, 1, CWT);
+  int status;
+  if (h->active) {
+    result(L, C89CBOR_BUSY);
+    lua_pushnil(L);
+    return 2;
+  }
+  lua_pushcfunction(L, cwt_view_snapshot);
+  lua_pushvalue(L, 1);
+  h->active = 1;
+  /* Copying strings/tables can run finalizers or raise a Lua allocation error.
+   * Keep native storage immutable until every borrowed field is copied, and
+   * release the guard before propagating a protected-call error. */
+  status = lua_pcall(L, 1, 2, 0);
+  h->active = 0;
+  if (status != LUA_OK)
+    return lua_error(L);
   return 2;
 }
 static int cwt_claim(lua_State *L) {
