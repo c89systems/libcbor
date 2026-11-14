@@ -44,6 +44,6 @@ mkdir -p .cache/deps
 if [[ ! -d "$prefix" ]]; then
   mkdir -- "$prefix.tmp"
   trap 'rm -rf -- "$prefix.tmp"' EXIT
-  tar -xzf "$archive" -C "$prefix.tmp" --strip-components=1
+  tar -xzf "$archive" --same-permissions -C "$prefix.tmp" --strip-components=1
   mv -- "$prefix.tmp" "$prefix"
 fi

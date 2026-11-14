@@ -111,6 +111,31 @@ if [[ ${FIXTURE_DOWNLOAD_FAIL:-0} == 1 ]]; then exit 22; fi
   if(EXISTS "${work}/foreign/cache")
     message(FATAL_ERROR "Foreign cache override was modified")
   endif()
+elseif(CASE STREQUAL "deps")
+  file(COPY "${ROOT}/scripts/deps.sh" "${ROOT}/scripts/workspace.sh" DESTINATION "${owner}/scripts")
+  file(MAKE_DIRECTORY "${work}/payload/sdk/include" "${work}/payload/sdk/bin")
+  file(WRITE "${work}/payload/sdk/include/group.h" "fixture header")
+  file(WRITE "${work}/payload/sdk/bin/tool" "fixture executable")
+  file(CHMOD "${work}/payload/sdk/include/group.h" PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ GROUP_WRITE WORLD_READ)
+  file(CHMOD "${work}/payload/sdk/bin/tool" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${owner}/fixture.tar.gz" sdk
+    WORKING_DIRECTORY "${work}/payload" COMMAND_ERROR_IS_FATAL ANY)
+  file(WRITE "${owner}/scripts/archive.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$(dirname -- "$3")"
+cp fixture.tar.gz "$3"
+]=])
+  file(WRITE "${owner}/extract.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+exec bash "$(dirname -- "$0")/scripts/deps.sh" x86_64-linux-gnu cpkt
+]=])
+  run(pass bash "${owner}/extract.sh")
+  set(prefix "${owner}/.cache/deps/cpkt-0.7.0-x86_64-linux-gnu")
+  run(pass stat -c %a "${prefix}/include/group.h" "${prefix}/bin/tool")
+  if(NOT last_output STREQUAL "664\n755\n")
+    message(FATAL_ERROR "Dependency extraction changed verified payload modes under umask 077: ${last_output}")
+  endif()
 elseif(CASE STREQUAL "docs")
   file(MAKE_DIRECTORY "${owner}/docs")
   file(WRITE "${owner}/README.md" "[page](docs/page.md) [external](https://fixture.invalid/)\n")
