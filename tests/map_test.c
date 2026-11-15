@@ -9,7 +9,13 @@
 
 typedef struct allocation_count {
   size_t calls, live, fail;
+  size_t bytes, peak, largest, limit;
 } allocation_count;
+typedef union allocation_header {
+  size_t size;
+  long double alignment;
+  void *pointer;
+} allocation_header;
 static void *tracked_allocate(void *context, size_t size);
 static void tracked_free(void *context, void *memory);
 
@@ -601,22 +607,40 @@ static void bound_null(void) {
 }
 static void *tracked_allocate(void *context, size_t size) {
   allocation_count *count = context;
+  allocation_header *header;
   void *memory;
-  if (++count->calls == count->fail)
+  ++count->calls;
+  if (size > count->largest)
+    count->largest = size;
+  if (count->calls == count->fail || size > (size_t)-1 - sizeof(*header) ||
+      (count->limit != 0 &&
+       (count->bytes > count->limit || size > count->limit - count->bytes)))
     return NULL;
-  memory = malloc(size);
-  if (memory != NULL) {
+  header = malloc(sizeof(*header) + size);
+  memory = NULL;
+  if (header != NULL) {
+    header->size = size;
+    memory = header + 1;
     memset(memory, 0xa5, size);
     ++count->live;
+    count->bytes += size;
+    if (count->bytes > count->peak)
+      count->peak = count->bytes;
   }
   return memory;
 }
 static void tracked_free(void *context, void *memory) {
   allocation_count *count = context;
+  allocation_header *header;
   if (memory != NULL) {
+    header = (allocation_header *)memory - 1;
     assert(count->live != 0);
+    assert(count->bytes >= header->size);
+    count->bytes -= header->size;
     --count->live;
-    free(memory);
+    if (count->live == 0)
+      assert(count->bytes == 0);
+    free(header);
   }
 }
 typedef struct large_stream {
@@ -1704,6 +1728,259 @@ static void spool_fields_test(void) {
   assert(runtime.cleanup(&runtime) == 0);
   lonejson_free(json);
 }
+static void fixed_text_decoding(void) {
+  static const unsigned char invalid[][4] = {
+      {'a', 0},     {0xc0, 0xaf}, {0xed, 0xa0, 0x80}, {0xf4, 0x90, 0x80, 0x80},
+      {0xe2, 0x82}, {0xc3, 0xa9}};
+  static const size_t lengths[] = {2, 2, 3, 4, 2, 2};
+  static const size_t chunks[] = {1, 2, 7, 31, 128, 2048};
+  static const size_t budgets[] = {0, 1, 2, 3, 4, 7};
+  typedef struct small_text {
+    char text[96];
+  } small_text;
+  small_text value;
+  lonejson_field field = fixed_fields[0];
+  lonejson_map map = fixed_map;
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_error error;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  endpoint wire;
+  size_t i, c, b, at, length;
+  int status, trailing, expected;
+  config.json = json;
+  assert(json != NULL && c89cbor_init(&runtime, &config, &error) == 0);
+  field.fixed_capacity = sizeof(value.text);
+  field.overflow_policy = LONEJSON_OVERFLOW_FAIL;
+  map.struct_size = sizeof(value);
+  map.fields = &field;
+  map.field_count = 1;
+  for (i = 0; i <= sizeof(lengths) / sizeof(lengths[0]); ++i)
+    for (c = 0; c < sizeof(chunks) / sizeof(chunks[0]); ++c)
+      for (b = 0; b < sizeof(budgets) / sizeof(budgets[0]); ++b)
+        for (trailing = 0; trailing < 2; ++trailing) {
+          memset(&wire, 0, sizeof(wire));
+          memcpy(wire.output, "\241\144text", 6);
+          at = 6;
+          length = i == 0 ? 72u : lengths[i - 1u];
+          if (length >= 24u) {
+            wire.output[at++] = 0x78;
+            wire.output[at++] = (unsigned char)length;
+          } else
+            wire.output[at++] = (unsigned char)(0x60u + length);
+          if (i == 0)
+            memset(wire.output + at, 'a', length);
+          else
+            memcpy(wire.output + at, invalid[i - 1u], length);
+          at += length;
+          if (trailing)
+            wire.output[at++] = 0;
+          wire.used = at;
+          wire.fragment = chunks[c];
+          options.chunk = chunks[c];
+          options.step_events = budgets[b];
+          assert(lonejson_init(json, &map, &value, &jerror) ==
+                 LONEJSON_STATUS_OK);
+          expected = i == 0 || i == 6 ? C89CBOR_DONE
+                     : i == 1         ? C89CBOR_SCHEMA
+                                      : C89CBOR_MALFORMED;
+          if (trailing && expected == C89CBOR_DONE)
+            expected = C89CBOR_MALFORMED;
+          status =
+              decode_record(&runtime, &wire, &map, &value, &options, &error);
+          assert(status == expected);
+          if (status == C89CBOR_DONE)
+            assert(strlen(value.text) == length);
+          if (i != 0 && i != 6)
+            assert(strcmp(error.path, "/text") == 0);
+          assert(json->cleanup(json, &map, &value, &jerror) ==
+                 LONEJSON_STATUS_OK);
+        }
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+}
+static void bounded_workspace(void) {
+  static const size_t chunks[] = {1, 31, 0, 2049};
+  static const size_t depths[] = {32, 33, 64};
+  static const unsigned char prefix[] = {0xa3, 0x62, 'i', 'd',  0x18,
+                                         42,   0x64, 'n', 'a',  'm',
+                                         'e',  0x61, 'x', 0x61, 'x'};
+  static const unsigned char array_wire[] = {0xa1, 0x67, 's', 't',  'r',  'i',
+                                             'n',  'g',  's', 0x9f, 0x7f, 0x61,
+                                             'a',  0x61, 'b', 0xff, 0xff};
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  allocation_count allocations;
+  child input, output;
+  value_record captured;
+  record array;
+  lonejson_map array_map = record_map;
+  c89cbor_sink sink;
+  endpoint wire;
+  size_t c, d, at, i, nesting, calls, point;
+  int status, extra;
+  memset(&allocations, 0, sizeof(allocations));
+  config.json = json;
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
+  assert(json != NULL && c89cbor_init(&runtime, &config, &error) == 0);
+  assert(lonejson_init(json, &child_map, &input, &jerror) ==
+         LONEJSON_STATUS_OK);
+  input.id = 42;
+  assert(lonejson_record_assign_string(json, &child_map, &input,
+                                       child_fields + 1, "small", 5,
+                                       &jerror) == LONEJSON_STATUS_OK);
+  allocations.limit = 8192;
+  sink.context = &wire;
+  sink.write = write_bytes;
+  for (c = 0; c < sizeof(chunks) / sizeof(chunks[0]); ++c) {
+    options.chunk = chunks[c];
+    memset(&wire, 0, sizeof(wire));
+    wire.fragment = chunks[c] == 0 ? sizeof(wire.output) : chunks[c];
+    wire.pause = 1;
+    assert(runtime.encode_map_init(&runtime, &operation, &child_map, &input,
+                                   sizeof(input), &sink, &options,
+                                   &error) == 0);
+    calls = allocations.calls;
+    assert(drive(&operation, &error) == C89CBOR_DONE &&
+           allocations.calls == calls);
+    assert(operation.cleanup(&operation) == 0);
+    assert(lonejson_init(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(decode_record(&runtime, &wire, &child_map, &output, &options,
+                         &error) == C89CBOR_DONE);
+    assert(output.id == 42 && strcmp(output.name, "small") == 0);
+    assert(json->cleanup(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(allocations.bytes == 0 && allocations.peak <= allocations.limit);
+  }
+  /* Keep the full wire depth for skipped values, including external wire
+   * frames above the public codec's embedded default capacity. */
+  allocations.limit = 16384;
+  options = c89cbor_default_options();
+  options.allow_unknown_fields = 1;
+  options.active_keys = options.active_key_bytes = 1;
+  options.step_events = 7;
+  for (d = 0; d < sizeof(depths) / sizeof(depths[0]); ++d)
+    for (extra = 0; extra < 2; ++extra) {
+      options.depth = depths[d];
+      nesting = depths[d] - 1u + (size_t)extra;
+      memset(&wire, 0, sizeof(wire));
+      memcpy(wire.output, prefix, sizeof(prefix));
+      at = sizeof(prefix);
+      for (i = 0; i < nesting; ++i)
+        wire.output[at++] = 0x81;
+      wire.output[at++] = 0;
+      wire.used = at;
+      wire.fragment = 7;
+      assert(lonejson_init(json, &child_map, &output, &jerror) ==
+             LONEJSON_STATUS_OK);
+      assert(decode_record(&runtime, &wire, &child_map, &output, &options,
+                           &error) == (extra ? C89CBOR_LIMIT : C89CBOR_DONE));
+      assert(json->cleanup(json, &child_map, &output, &jerror) ==
+             LONEJSON_STATUS_OK);
+      assert(allocations.live == 0);
+    }
+  /* Four mapped levels remain available for array/text/definite chunks. */
+  array_map.fields = &fields[11];
+  array_map.field_count = 1;
+  options = c89cbor_default_options();
+  for (extra = 0; extra < 2; ++extra) {
+    options.depth = extra ? 3u : 32u;
+    memset(&wire, 0, sizeof(wire));
+    memcpy(wire.output, array_wire, sizeof(array_wire));
+    wire.used = sizeof(array_wire);
+    wire.fragment = 1;
+    assert(lonejson_init(json, &array_map, &array, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(decode_record(&runtime, &wire, &array_map, &array, &options,
+                         &error) == (extra ? C89CBOR_LIMIT : C89CBOR_DONE));
+    if (!extra)
+      assert(array.strings.count == 1 &&
+             strcmp(array.strings.items[0], "ab") == 0);
+    assert(json->cleanup(json, &array_map, &array, &jerror) ==
+           LONEJSON_STATUS_OK);
+  }
+  /* Exercise every failure during geometric growth, rather than reserving a
+   * full 64 KiB field buffer for a few hundred bytes of indefinite text. */
+  options = c89cbor_default_options();
+  allocations.limit = 12288;
+  for (point = 1; point < 16; ++point) {
+    allocations.calls = 0;
+    allocations.fail = point;
+    memset(&wire, 0, sizeof(wire));
+    memcpy(wire.output, prefix, 11);
+    wire.output[0] = 0xa2;
+    at = 11;
+    wire.output[at++] = 0x7f;
+    for (i = 0; i < 300; ++i) {
+      wire.output[at++] = 0x61;
+      wire.output[at++] = 'a';
+    }
+    wire.output[at++] = 0xff;
+    wire.used = at;
+    wire.fragment = 7;
+    assert(lonejson_init(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+    status =
+        decode_record(&runtime, &wire, &child_map, &output, &options, &error);
+    assert(status == C89CBOR_DONE || status == C89CBOR_NOMEM);
+    if (status == C89CBOR_DONE) {
+      assert(strlen(output.name) == 300);
+      for (i = 0; i < 300; ++i)
+        assert(output.name[i] == 'a');
+    }
+    assert(json->cleanup(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(allocations.bytes == 0);
+    if (status == C89CBOR_DONE)
+      break;
+  }
+  assert(point >= 6 && point < 16);
+  allocations.fail = allocations.limit = 0;
+  /* Embedded JSON keeps the wire budget and preserves capture prefixes across
+   * scratch growth even though the containing schema is a leaf. */
+  for (d = 0; d < sizeof(depths) / sizeof(depths[0]); ++d) {
+    options.depth = depths[d];
+    nesting = depths[d] - 1u;
+    memset(&wire, 0, sizeof(wire));
+    memcpy(wire.output, "\242\145value", 7);
+    at = 7;
+    for (i = 0; i < nesting; ++i)
+      wire.output[at++] = 0x81;
+    wire.output[at++] = 0;
+    memcpy(wire.output + at, "\145after\030\052", 8);
+    at += 8;
+    wire.used = at;
+    wire.fragment = 3;
+    assert(lonejson_init(json, &value_map, &captured, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(lonejson_json_value_enable_parse_capture(&captured.value, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(decode_record(&runtime, &wire, &value_map, &captured, &options,
+                         &error) == C89CBOR_DONE);
+    assert(captured.after == 42 && captured.value.len == 2u * nesting + 1u);
+    for (i = 0; i < nesting; ++i) {
+      assert(captured.value.json[i] == '[');
+      assert(captured.value.json[2u * nesting - i] == ']');
+    }
+    assert(captured.value.json[nesting] == '0');
+    assert(json->cleanup(json, &value_map, &captured, &jerror) ==
+           LONEJSON_STATUS_OK);
+  }
+  assert(json->cleanup(json, &child_map, &input, &jerror) ==
+         LONEJSON_STATUS_OK);
+  assert(runtime.cleanup(&runtime) == 0 && allocations.bytes == 0);
+  lonejson_free(json);
+}
 static void *run_tests(void *unused) {
   (void)unused;
   roundtrip();
@@ -1723,6 +2000,8 @@ static void *run_tests(void *unused) {
   scalar_value_validation();
   policies_and_views();
   spool_fields_test();
+  bounded_workspace();
+  fixed_text_decoding();
   return NULL;
 }
 int main(void) {

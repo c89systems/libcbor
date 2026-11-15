@@ -133,41 +133,43 @@ static int prepare_source(c89_map_state *state, c89_map_frame *frame,
   const lonejson_source *source;
   const lonejson_json_value *json;
   int status;
+  if (state->payload == NULL)
+    return c89_map_fail(state, C89CBOR_INVALID, "mapped source schema changed");
   c89_map_payload_close(state);
   frame->streaming = 1;
   frame->indefinite = 1;
   if (field->kind == LONEJSON_FIELD_KIND_STRING_STREAM ||
       field->kind == LONEJSON_FIELD_KIND_BASE64_STREAM) {
-    state->payload.cursor = *(const lonejson_spooled *)slot;
-    state->payload.spool = 1;
+    state->payload->cursor = *(const lonejson_spooled *)slot;
+    state->payload->spool = 1;
     frame->indefinite = 0;
     frame->expected = (uint64_t)lonejson_spooled_size(slot);
     if (frame->expected == 0)
       return C89CBOR_OK;
     status = c89_map_dependency(
         state,
-        lonejson_spooled_rewind(&state->payload.cursor, &state->json_error));
+        lonejson_spooled_rewind(&state->payload->cursor, &state->json_error));
     return status;
   }
   if (field->kind == LONEJSON_FIELD_KIND_JSON_VALUE) {
     json = slot;
     switch (json->kind) {
     case LONEJSON_JSON_VALUE_BUFFER:
-      state->payload.memory = (const unsigned char *)json->json;
-      state->payload.length = json->len;
+      state->payload->memory = (const unsigned char *)json->json;
+      state->payload->length = json->len;
       break;
     case LONEJSON_JSON_VALUE_READER:
-      state->payload.reader = json->reader;
-      state->payload.reader_context = json->reader_user;
+      state->payload->reader = json->reader;
+      state->payload->reader_context = json->reader_user;
       break;
     case LONEJSON_JSON_VALUE_FILE:
-      state->payload.file = json->fp;
+      state->payload->file = json->fp;
       break;
     case LONEJSON_JSON_VALUE_FD:
-      state->payload.descriptor = json->fd;
+      state->payload->descriptor = json->fd;
       break;
     case LONEJSON_JSON_VALUE_PATH:
-      state->payload.path = json->path;
+      state->payload->path = json->path;
       break;
     default:
       return c89_map_fail(state, C89CBOR_SCHEMA,
@@ -178,13 +180,13 @@ static int prepare_source(c89_map_state *state, c89_map_frame *frame,
   source = slot;
   switch (source->kind) {
   case LONEJSON_SOURCE_FILE:
-    state->payload.file = source->fp;
+    state->payload->file = source->fp;
     break;
   case LONEJSON_SOURCE_FD:
-    state->payload.descriptor = source->fd;
+    state->payload->descriptor = source->fd;
     break;
   case LONEJSON_SOURCE_PATH:
-    state->payload.path = source->path;
+    state->payload->path = source->path;
     break;
   default:
     return c89_map_fail(state, C89CBOR_SCHEMA, "invalid mapped source kind");
@@ -488,12 +490,12 @@ static int text_token(c89_map_state *state, c89_map_frame *frame,
       frame->phase = ENCODE_END;
       return C89CBOR_OK;
     }
-    memcpy(state->input, state->payload.carry, state->payload.carry_length);
-    take = state->input_capacity - state->payload.carry_length;
+    memcpy(state->input, state->payload->carry, state->payload->carry_length);
+    take = state->input_capacity - state->payload->carry_length;
     if (take > state->options.chunk)
       take = state->options.chunk;
     status = c89_map_payload_read(
-        state, state->input + state->payload.carry_length, take, &count);
+        state, state->input + state->payload->carry_length, take, &count);
     if (count > take)
       return c89_map_fail(state, C89CBOR_IO,
                           "source exceeded offered capacity");
@@ -502,7 +504,7 @@ static int text_token(c89_map_state *state, c89_map_frame *frame,
       return status;
     if (status != 0)
       return c89_map_fail(state, C89CBOR_IO, "mapped source read failed");
-    take = state->payload.carry_length + count;
+    take = state->payload->carry_length + count;
     if (count == 0) {
       if (take != 0 ||
           (!frame->indefinite && frame->text_seen != frame->expected))
@@ -514,12 +516,12 @@ static int text_token(c89_map_state *state, c89_map_frame *frame,
     prefix = frame->indefinite && frame->target == C89CBOR_TEXT
                  ? utf8_prefix(state->input, take)
                  : take;
-    state->payload.carry_length = take - prefix;
-    if (state->payload.carry_length > sizeof(state->payload.carry))
+    state->payload->carry_length = take - prefix;
+    if (state->payload->carry_length > sizeof(state->payload->carry))
       return c89_map_fail(state, C89CBOR_MALFORMED,
                           "invalid mapped UTF-8 source");
-    memcpy(state->payload.carry, state->input + prefix,
-           state->payload.carry_length);
+    memcpy(state->payload->carry, state->input + prefix,
+           state->payload->carry_length);
     if (prefix == 0)
       return C89CBOR_OK;
     frame->data = state->input;

@@ -380,6 +380,19 @@ int c89_decoder_text(c89cbor_decoder *d, const unsigned char *text,
   return status == 0 ? C89CBOR_TOKEN
                      : c89_error(&d->lifetime, status, "decoder");
 }
+/* Drain a complete, already opened string from the caller's bounded input
+ * chunk. Reuse the ordinary DATA and END grammar/UTF-8 checks. */
+int c89_decoder_span(c89cbor_decoder *d, const void *input, size_t length) {
+  c89cbor_frame *frame = top(&d->state);
+  int status;
+  if (frame == NULL || frame->remaining != (uint64_t)length)
+    return C89CBOR_INVALID;
+  status = data_take(&d->state, input, length);
+  d->lifetime.progress.input += (uint64_t)length;
+  if (status == 0)
+    status = end(&d->state, frame->type);
+  return status < 0 ? c89_error(&d->lifetime, status, "decoder") : status;
+}
 static int decoder_finish_work(c89cbor_decoder *d) {
   if (d == NULL || d->state.frames == NULL)
     return C89CBOR_INVALID;

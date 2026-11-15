@@ -128,7 +128,11 @@ Files and descriptors supplied by callers remain borrowed. Paths are opened by
 the operation and closed on completion or cancellation. Opening performs no I/O.
 
 Allocated strings use a borrowed complete input span when available, otherwise
-one bounded field scratch buffer. Defaults bound materialized strings to 64 KiB,
+one reusable field scratch buffer that grows with the stored value. Growth can
+fail with NOMEM during a step and temporarily retains the old and new buffers.
+Flat schemas reserve fewer mapped frames without reducing the configured wire
+depth; source workspace is reserved during construction when the schema can
+require it. Defaults bound materialized strings to 64 KiB,
 new logical record storage to 1 MiB, and materialized array items to 16384.
 Use source fields, configured stream fields, or explicit field sinks for larger
 payloads. A spool is an explicit destination storage choice and follows its

@@ -7,7 +7,7 @@
 
 static size_t path_chain(c89_map_state *state, size_t frame) {
   size_t count = 0;
-  while (frame != (size_t)-1 && count < state->options.depth) {
+  while (frame != (size_t)-1 && count < state->frame_capacity) {
     state->path_stack[count++] = frame;
     frame = state->frames[frame].parent;
   }
@@ -169,7 +169,7 @@ void *c89_map_allocate(c89_map_state *state, size_t count, size_t size) {
 int c89_map_push(c89_map_state *state, c89_map_kind kind, size_t parent,
                  const lonejson_field *field, uint64_t index) {
   c89_map_frame *frame;
-  if (state->depth == state->options.depth)
+  if (state->depth == state->frame_capacity)
     return c89_map_fail(state, C89CBOR_LIMIT,
                         "mapped value exceeds nesting limit");
   frame = &state->frames[state->depth];
@@ -247,17 +247,19 @@ int c89_map_bridge_status(c89_map_state *state, int status,
   return status;
 }
 void c89_map_payload_close(c89_map_state *state) {
-  if (state->payload.fd_ready)
-    (void)state->payload.fd.cleanup(&state->payload.fd);
-  if (state->payload.owned_file && state->payload.file != NULL)
-    (void)fclose(state->payload.file);
-  memset(&state->payload, 0, sizeof(state->payload));
-  state->payload.descriptor = -1;
+  if (state->payload == NULL)
+    return;
+  if (state->payload->fd_ready)
+    (void)state->payload->fd.cleanup(&state->payload->fd);
+  if (state->payload->owned_file && state->payload->file != NULL)
+    (void)fclose(state->payload->file);
+  memset(state->payload, 0, sizeof(*state->payload));
+  state->payload->descriptor = -1;
 }
 int c89_map_payload_read(void *context, void *buffer, size_t capacity,
                          size_t *count) {
   c89_map_state *state = context;
-  c89_map_payload *source = &state->payload;
+  c89_map_payload *source = state->payload;
   lonejson_read_result result;
   size_t take;
   int status, saved_errno;
@@ -386,6 +388,7 @@ static int validate_bindings(c89_map_state *state) {
  * allocator callback. Contents initialize when their frames/spans are used. */
 typedef union workspace_alignment {
   c89_map_frame mapped;
+  c89_map_payload payload;
   c89cbor_frame wire;
   c89_map_key key;
   const lonejson_map *schema;
@@ -397,40 +400,92 @@ typedef struct workspace_probe {
 } workspace_probe;
 typedef struct workspace_layout {
   size_t total, wire_frames, frames, schema_path, schema_inline, path_stack;
-  size_t input, output, key, unknown_keys, unknown_storage;
+  size_t input, output, key, unknown_keys, unknown_storage, payload;
 } workspace_layout;
 /* The compiler supplies native slice alignment for the usual bounds. This is
  * a heap layout, never a stack object; other bounds use the checked layout. */
 typedef struct default_workspace {
   c89_map_state state;
-  c89cbor_frame wire_frames[C89CBOR_DEPTH];
   c89_map_frame frames[C89CBOR_DEPTH];
   const lonejson_map *schema_path[C89CBOR_DEPTH];
   unsigned char schema_inline[C89CBOR_DEPTH];
   size_t path_stack[C89CBOR_DEPTH];
-  unsigned char input[C89CBOR_CHUNK];
   unsigned char buffer[C89CBOR_CHUNK];
+  unsigned char input[C89CBOR_CHUNK];
+  c89_map_payload payload;
 } default_workspace;
-static const workspace_layout default_layout = {
-    sizeof(default_workspace),
-    offsetof(default_workspace, wire_frames),
-    offsetof(default_workspace, frames),
-    offsetof(default_workspace, schema_path),
-    offsetof(default_workspace, schema_inline),
-    offsetof(default_workspace, path_stack),
-    offsetof(default_workspace, input),
-    offsetof(default_workspace, buffer),
-    offsetof(default_workspace, buffer),
-    0,
-    0};
+#define LEAF_DEPTH 4u
+typedef struct leaf_workspace {
+  c89_map_state state;
+  c89_map_frame frames[LEAF_DEPTH];
+  const lonejson_map *schema_path[LEAF_DEPTH];
+  unsigned char schema_inline[LEAF_DEPTH];
+  size_t path_stack[LEAF_DEPTH];
+  unsigned char buffer[C89CBOR_CHUNK];
+  unsigned char input[C89CBOR_CHUNK];
+  c89_map_payload payload;
+} leaf_workspace;
+#define WORKSPACE_LAYOUT(type)                                                 \
+  {sizeof(type),                                                               \
+   0,                                                                          \
+   offsetof(type, frames),                                                     \
+   offsetof(type, schema_path),                                                \
+   offsetof(type, schema_inline),                                              \
+   offsetof(type, path_stack),                                                 \
+   offsetof(type, input),                                                      \
+   offsetof(type, buffer),                                                     \
+   offsetof(type, buffer),                                                     \
+   0,                                                                          \
+   0,                                                                          \
+   offsetof(type, payload)}
+static const workspace_layout default_layout =
+    WORKSPACE_LAYOUT(default_workspace);
+static const workspace_layout leaf_layout = WORKSPACE_LAYOUT(leaf_workspace);
+#undef WORKSPACE_LAYOUT
+/* A leaf record needs at most object/array/text/chunk mapped frames. Unknown
+ * values and embedded JSON still use the full independent wire-depth budget.
+ * This sizes storage only; normal schema and value validation remains
+ * mandatory. */
+static size_t mapped_capacity(const lonejson_map *map, size_t extent,
+                              size_t depth, int *payload) {
+  size_t i;
+  *payload = 0;
+  if (map->struct_size == 0 || map->struct_size > extent ||
+      (map->fields == NULL && map->field_count != 0) ||
+      map->field_count > (size_t)-1 / sizeof(*map->fields))
+    return depth;
+  for (i = 0; i < map->field_count; ++i) {
+    lonejson_field_kind kind = map->fields[i].kind;
+    if (kind == LONEJSON_FIELD_KIND_OBJECT ||
+        kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY ||
+        kind == LONEJSON_FIELD_KIND_MAPPED_ARRAY_STREAM) {
+      *payload = 1;
+      return depth;
+    }
+    if (kind == LONEJSON_FIELD_KIND_STRING_STREAM ||
+        kind == LONEJSON_FIELD_KIND_BASE64_STREAM ||
+        kind == LONEJSON_FIELD_KIND_STRING_SOURCE ||
+        kind == LONEJSON_FIELD_KIND_BASE64_SOURCE ||
+        kind == LONEJSON_FIELD_KIND_JSON_VALUE)
+      *payload = 1;
+  }
+  return depth < LEAF_DEPTH ? depth : LEAF_DEPTH;
+}
 static int layout_workspace(const c89cbor_options *options, int encode,
+                            size_t frame_capacity, int payload,
                             workspace_layout *layout) {
   size_t used = sizeof(c89_map_state), count, size, padding;
   size_t alignment = offsetof(workspace_probe, value);
   if (options->depth == C89CBOR_DEPTH && options->chunk == C89CBOR_CHUNK &&
       (encode || (!options->allow_unknown_fields &&
                   options->key_bytes == C89CBOR_CHUNK))) {
-    *layout = default_layout;
+    *layout = frame_capacity == LEAF_DEPTH ? leaf_layout : default_layout;
+    if (!payload) {
+      layout->total = layout->payload;
+      layout->payload = 0;
+    }
+    if (encode && !payload)
+      layout->total = layout->input;
     return C89CBOR_OK;
   }
   if (options->depth == (size_t)-1 || options->chunk > (size_t)-1 - 4u)
@@ -447,20 +502,28 @@ static int layout_workspace(const c89cbor_options *options, int encode,
     layout->member = used;                                                     \
     used += count * size;                                                      \
   } while (0)
-  PART(wire_frames, options->depth);
-  PART(frames, options->depth);
-  PART(schema_path, options->depth);
-  PART(schema_inline, options->depth);
-  PART(path_stack, options->depth);
-  PART(input, options->chunk < 4u ? 4u : options->chunk);
+  if (options->depth > C89CBOR_DEPTH) {
+    PART(wire_frames, options->depth);
+  }
+  PART(frames, frame_capacity);
+  PART(schema_path, frame_capacity);
+  PART(schema_inline, frame_capacity);
+  PART(path_stack, frame_capacity);
   if (encode) {
     PART(output, options->chunk);
-  } else {
+  }
+  if (!encode || payload) {
+    PART(input, options->chunk < 4u ? 4u : options->chunk);
+  }
+  if (!encode) {
     PART(key, options->key_bytes);
     if (options->allow_unknown_fields) {
       PART(unknown_keys, options->active_keys);
       PART(unknown_storage, options->active_key_bytes);
     }
+  }
+  if (payload) {
+    PART(payload, 1);
   }
 #undef PART
   layout->total = used;
@@ -470,12 +533,25 @@ static void attach_workspace(c89_map_state *state,
                              const workspace_layout *layout) {
 #define PART(member)                                                           \
   state->member = (void *)((unsigned char *)state + layout->member)
-  PART(wire_frames);
+  if (state->options.depth > C89CBOR_DEPTH) {
+    PART(wire_frames);
+  } else {
+    state->wire_frames = state->encode
+                             ? state->codec.encoder.state.local_frames
+                             : state->codec.decoder.state.local_frames;
+  }
   PART(frames);
   PART(schema_path);
   PART(schema_inline);
   PART(path_stack);
-  PART(input);
+  if (layout->payload != 0) {
+    PART(payload);
+    memset(state->payload, 0, sizeof(*state->payload));
+    state->payload->descriptor = -1;
+  }
+  if (!state->encode || state->payload != NULL) {
+    PART(input);
+  }
   if (state->encode) {
     PART(output);
   } else {
@@ -505,7 +581,7 @@ static int prepare_map(c89_map_state *state, size_t extent) {
   if (!state->encode &&
       state->seen_stride > sizeof(state->frames[0].seen_bits)) {
     state->seen =
-        c89_map_allocate(state, state->options.depth, state->seen_stride);
+        c89_map_allocate(state, state->frame_capacity, state->seen_stride);
   }
   if (state->owner->lifetime.error.status != 0)
     return state->owner->lifetime.error.status;
@@ -550,7 +626,8 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
   c89_map_state *state;
   c89cbor_options resolved;
   workspace_layout layout = {0};
-  int status = c89_conversion_prepare(runtime, conversion, error);
+  size_t frame_capacity;
+  int payload, status = c89_conversion_prepare(runtime, conversion, error);
   if (status != 0)
     return status;
   if (map == NULL || (encode ? input_record == NULL : output_record == NULL) ||
@@ -563,7 +640,9 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
   }
   conversion->lifetime.busy = 1;
   c89_options_resolve(runtime, options, &resolved);
-  status = layout_workspace(&resolved, encode, &layout);
+  frame_capacity = mapped_capacity(map, extent, resolved.depth, &payload);
+  status = layout_workspace(&resolved, encode, frame_capacity,
+                            encode && payload, &layout);
   state = status == 0
               ? conversion->lifetime.allocator.alloc(
                     conversion->lifetime.allocator.context, layout.total)
@@ -572,8 +651,8 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
     status = c89_error(&conversion->lifetime,
                        status == 0 ? C89CBOR_NOMEM : status, "mapped-record");
   } else {
-    /* Only the selected codec is initialized below. Its embedded frames are
-     * unused because mapped traversal supplies workspace frames. */
+    /* Only the selected codec is initialized below. Its embedded frames also
+     * supply the usual wire-depth budget without a duplicate frame array. */
     memset(state, 0, offsetof(c89_map_state, codec));
     memset((unsigned char *)state + offsetof(c89_map_state, wire_frames), 0,
            sizeof(*state) - offsetof(c89_map_state, wire_frames));
@@ -588,7 +667,7 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
     state->json = json;
     state->encode = encode;
     state->error_frame = (size_t)-1;
-    state->payload.descriptor = -1;
+    state->frame_capacity = frame_capacity;
     if (encode) {
       state->sink = *sink;
       state->record.input = input_record;

@@ -114,7 +114,55 @@ Do not turn noisy shared-host throughput into a correctness threshold. Performan
 objective: exceed established implementations on the declared workload with equal
 semantics, without relaxing validation, streaming or memory bounds.
 
-## Mapped optimization measurement
+## Workspace memory and short-text follow-up
+
+The follow-up uses the same Release compiler/options and CPU affinity 7. The
+before executable links the verified SDK built from the production sources at
+`70ab496`; both native executables use identical benchmark objects. The host
+remains shared. With the system allocator and output comparisons outside timing,
+two reversed-order passes of 1000000 records per round gave these ten-round
+medians in microseconds per record:
+
+| Profile | Before | After | PJK DOM |
+| --- | ---: | ---: | ---: |
+| Short ASCII encode | 0.446 | 0.396 | 0.331 |
+| Short ASCII decode | 0.628 | 0.567 | 0.407 |
+| Scalars encode | 0.557 | 0.499 | 0.545 |
+| Scalars decode | 0.858 | 0.781 | 0.824 |
+
+Short ASCII improves by approximately 11% on encode and 10% on decode; it still
+trails PJK. A separate reversed-order comparison retained the complete-text
+decoder shortcut after it reduced short ASCII/UTF-8 decode medians by about
+17% versus workspace reduction alone. Instruction profiling points to generic
+decode dispatch and operation setup for further investigation; UTF-8 validation
+accounted for about 2.2% of that run's instructions, not its elapsed CPU time.
+
+Allocator-tracked peak user bytes, including the prepared runtime baseline and
+excluding caller storage and allocator headers, fell as follows:
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| Scalar/short-text encode, 2 KiB chunks | 18752 | 7176 |
+| Scalar/short-text decode, 2 KiB chunks | 18752 | 9224 |
+| Short ASCII decode, 16-byte chunks | 82256 | 7320 |
+| Large ASCII decode, 2 KiB chunks | 84288 | 74760 |
+
+The default scalar/short-text fixtures retain one allocation per operation.
+Nested records still reserve a conservative stack and source workspace: their peaks are 17744
+encode and 16416 decode. PJK's short-ASCII peaks remain much smaller at 351/375
+bytes. Large ASCII still leads in the full tracked comparison: 9.465/11.827
+native encode/decode versus 149.699/149.919 PJK, approximately 16/13 times faster.
+
+The flat workspace reuses embedded codec frames, reserves four mapped frames,
+and includes input/source state only when needed. Fragmented materialized text
+and captured JSON grow scratch within the field limit instead of reserving
+64 KiB for the first small fragment; growth may temporarily hold two buffers.
+The allocation-cap, depth, fragmentation and failure tests cover these cases.
+Raw measurements and context are under `build/bench/memory-*.jsonl` and
+`memory-comparison-context.txt`; retain per-round variability when interpreting
+the timing differences.
+
+## Initial mapped optimization measurement
 
 Measured on 2026-11-15 with the same pinned compiler and PJK version below,
 Release `-O3`, no LTO, default 2 KiB chunks and CPU affinity 7. The host remains

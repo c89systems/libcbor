@@ -458,8 +458,12 @@ There is a deliberate distinction between streaming and constructing a
 record. Decoding an allocated string or a materialized array fills the
 caller-selected destination and uses the memory that representation
 requires. For string setters that require a contiguous value, use a
-borrowed contiguous span where available or one bounded field scratch
-buffer. Report the limit before exceeding it. Do not assemble the
+borrowed contiguous span where available or one reusable field scratch
+buffer that grows within the field limit. Allocation accounting includes the
+temporary overlap of old and new buffers during growth. Size mapped traversal
+storage to the schema's needs while preserving the full configured wire budget
+for unknown values and embedded JSON. Reserve source-transfer workspace during
+construction. Report the limit before exceeding it. Do not assemble the
 enclosing object or serialize it as JSON. Use stream fields for large
 payloads. A declared lonejson spool can spill as final storage. libcbor
 must never create one as an internal staging step.

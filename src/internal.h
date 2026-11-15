@@ -24,6 +24,8 @@ int c89_encoder_buffer_pair(c89cbor_encoder *encoder,
                             size_t capacity, size_t *written);
 int c89_decoder_text(c89cbor_decoder *decoder, const unsigned char *input,
                      size_t length, size_t *consumed, int matched);
+int c89_decoder_span(c89cbor_decoder *decoder, const void *input,
+                     size_t length);
 void c89_options_resolve(const c89cbor *runtime, const c89cbor_options *options,
                          c89cbor_options *resolved);
 int c89_conversion_prepare(c89cbor *runtime, c89cbor_conversion *conversion,

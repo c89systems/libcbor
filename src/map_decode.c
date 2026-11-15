@@ -378,9 +378,38 @@ static size_t complete_utf8_prefix(const unsigned char *data, size_t length) {
   needed = byte >= 0xf0u ? 4u : byte >= 0xe0u ? 3u : byte >= 0xc0u ? 2u : 1u;
   return length - begin < needed ? begin : length;
 }
+static int reserve_scratch(c89_map_state *state, size_t needed, size_t used) {
+  unsigned char *storage;
+  size_t capacity = state->scratch_capacity;
+  if (needed > state->options.field_bytes)
+    return c89_map_fail(state, C89CBOR_LIMIT,
+                        "mapped scratch exceeds field limit");
+  if (needed <= capacity)
+    return C89CBOR_OK;
+  if (capacity == 0)
+    capacity =
+        state->options.field_bytes < 64u ? state->options.field_bytes : 64u;
+  while (capacity < needed) {
+    capacity = capacity > state->options.field_bytes / 2u
+                   ? state->options.field_bytes
+                   : capacity * 2u;
+  }
+  storage = c89_map_allocate(state, capacity, 1);
+  if (storage == NULL)
+    return state->owner->lifetime.error.status;
+  if (used != 0)
+    memcpy(storage, state->scratch, used);
+  if (state->scratch != NULL)
+    state->allocator.free(state->allocator.context, state->scratch);
+  state->scratch = storage;
+  state->scratch_capacity = capacity;
+  return C89CBOR_OK;
+}
 static int collect_text(c89_map_state *state, c89_map_frame *frame,
                         const c89cbor_token *token) {
   size_t limit = string_limit(state, frame), take = token->length;
+  size_t reserve;
+  int status;
   int may_truncate =
       frame->field->kind == LONEJSON_FIELD_KIND_STRING &&
       frame->field->storage == LONEJSON_STORAGE_FIXED &&
@@ -406,12 +435,13 @@ static int collect_text(c89_map_state *state, c89_map_frame *frame,
     return C89CBOR_OK;
   }
   if (take != 0) {
-    if (state->scratch == NULL) {
-      state->scratch = c89_map_allocate(state, state->options.field_bytes, 1);
-      if (state->scratch == NULL)
-        return state->owner->lifetime.error.status;
-      state->scratch_capacity = state->options.field_bytes;
-    }
+    reserve = frame->materialized + take;
+    if (!frame->indefinite)
+      reserve =
+          frame->expected < (uint64_t)limit ? (size_t)frame->expected : limit;
+    status = reserve_scratch(state, reserve, frame->materialized);
+    if (status != 0)
+      return status;
     memcpy(state->scratch + frame->materialized, token->data, take);
     frame->materialized += take;
   }
@@ -751,12 +781,14 @@ static int json_sink(void *context, const void *bytes, size_t length,
   if (length > state->options.field_bytes - state->scratch_length)
     return c89_map_fail(state, C89CBOR_LIMIT,
                         "captured JSON exceeds its field limit");
-  if (state->scratch == NULL) {
-    state->scratch = c89_map_allocate(state, state->options.field_bytes, 1);
-    if (state->scratch == NULL)
-      return C89CBOR_NOMEM;
-    state->scratch_capacity = state->options.field_bytes;
+  if (length == 0) {
+    *count = 0;
+    return C89CBOR_OK;
   }
+  status = reserve_scratch(state, state->scratch_length + length,
+                           state->scratch_length);
+  if (status != 0)
+    return status;
   memcpy(state->scratch + state->scratch_length, bytes, length);
   state->scratch_length += length;
   *count = length;
@@ -1135,7 +1167,7 @@ static int dispatch_token(c89_map_state *state) {
 int c89_map_decode_step(void *context) {
   c89_map_state *state = context;
   const unsigned char *key;
-  c89_map_frame *object;
+  c89_map_frame *object, *text;
   size_t events = 0, consumed, count, capacity, available, length, index;
   int status;
   if (state->done)
@@ -1162,6 +1194,37 @@ int c89_map_decode_step(void *context) {
       ++events;
       if (status != 0 || state->consumer_paused)
         return state->consumer_paused && status >= 0 ? C89CBOR_OUTPUT : status;
+      /* Complete fixed text can stay within this input chunk. Keep the normal
+       * collection, truncation, storage-budget and presence behavior while
+       * combining its DATA/END decoder dispatch. Fragmented/bound text resumes
+       * through the ordinary event path. */
+      if (state->pending.type == C89CBOR_TEXT && !state->pending_valid &&
+          state->depth != 0 && state->options.step_events - events >= 2u) {
+        text = &state->frames[state->depth - 1u];
+        available = state->input_length - state->input_offset;
+        if (text->kind == C89_MAP_TEXT && text->phase == TEXT_MATERIALIZED &&
+            !text->indefinite && text->text_seen == 0 && text->expected != 0 &&
+            text->expected <= (uint64_t)available &&
+            text->expected <= (uint64_t)state->options.chunk &&
+            text->field->kind == LONEJSON_FIELD_KIND_STRING &&
+            text->field->storage == LONEJSON_STORAGE_FIXED) {
+          length = (size_t)text->expected;
+          key = state->input + state->input_offset;
+          status = c89_decoder_span(&state->codec.decoder, key, length);
+          state->input_offset += length;
+          if (status != 0)
+            return c89_map_fail(state, status, "invalid CBOR mapped input");
+          state->pending.type = C89CBOR_DATA;
+          state->pending.data = key;
+          state->pending.length = length;
+          status = collect_text(state, text, &state->pending);
+          if (status == 0)
+            status = finish_text(state, text);
+          events += 2u;
+          if (status != 0)
+            return status;
+        }
+      }
       if (state->step_written == state->options.step_output)
         return C89CBOR_OK;
       continue;

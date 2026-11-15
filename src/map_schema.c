@@ -167,7 +167,7 @@ static int validate_map(c89_map_state *state, const lonejson_map *map,
       map->field_count > (size_t)-1 / sizeof(lonejson_field) ||
       (map->field_count != 0 && map->fields == NULL))
     return c89_map_fail(state, C89CBOR_INVALID, "invalid mapped record extent");
-  if (depth == state->options.depth)
+  if (depth == state->frame_capacity)
     return c89_map_fail(state, C89CBOR_LIMIT, "schema exceeds nesting limit");
   state->schema_path[depth] = map;
   if (state->max_fields < map->field_count)

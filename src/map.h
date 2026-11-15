@@ -108,6 +108,7 @@ typedef struct c89_map_state {
   c89_map_codec codec;
   c89cbor_frame *wire_frames;
   c89_map_frame *frames;
+  size_t frame_capacity;
   size_t depth;
   size_t max_fields;
   size_t seen_stride;
@@ -134,7 +135,7 @@ typedef struct c89_map_state {
   size_t scratch_length;
   size_t stored_bytes;
   size_t stored_elements;
-  c89_map_payload payload;
+  c89_map_payload *payload;
   c89cbor_token pending;
   size_t pending_offset;
   int pending_valid;
