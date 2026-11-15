@@ -11,48 +11,66 @@ extern "C" {
 #endif
 /** Framing policy; no wire version marker or automatic negotiation. */
 typedef enum c89cbor_framing {
-  C89CBOR_SINGLE = 0, /**< Exactly one item, including for one UDP datagram. */
-  C89CBOR_SEQUENCE =
-      1, /**< RFC 8742 concatenation; unknown-length items allowed. */
-  C89CBOR_LENGTH32 =
-      2 /**< Big-endian 4-byte length then one item, cai-compatible. */
+  /** Exactly one item, including for one UDP datagram. */
+  C89CBOR_SINGLE = 0,
+  /** RFC 8742 concatenation; unknown-length items allowed. */
+  C89CBOR_SEQUENCE = 1,
+  /** Big-endian 4-byte length then one item, cai-compatible. */
+  C89CBOR_LENGTH32 = 2
 } c89cbor_framing;
 /** Framing events; content is provisional until RECORD_END. */
 typedef enum c89cbor_event_type {
-  C89CBOR_RECORD_BEGIN =
-      0, /**< Record begins; length known only in LENGTH32. */
-  C89CBOR_RECORD_TOKEN = 1, /**< One borrowed token. */
-  C89CBOR_RECORD_END = 2 /**< One validated record; not an admission receipt. */
+  /** Record begins; length known only in LENGTH32. */
+  C89CBOR_RECORD_BEGIN = 0,
+  /** One borrowed token. */
+  C89CBOR_RECORD_TOKEN = 1,
+  /** One validated record; not an admission receipt. */
+  C89CBOR_RECORD_END = 2
 } c89cbor_event_type;
 /** Borrowed event returned by reader_next; never retain its DATA unpinned. */
 typedef struct c89cbor_event {
-  c89cbor_event_type type; /**< Event kind. */
-  uint32_t length;     /**< Encoded payload size in LENGTH32; zero otherwise. */
-  c89cbor_token token; /**< Initialized only for RECORD_TOKEN. */
+  /** Event kind. */
+  c89cbor_event_type type;
+  /** Encoded payload size in LENGTH32; zero otherwise. */
+  uint32_t length;
+  /** Initialized only for RECORD_TOKEN. */
+  c89cbor_token token;
 } c89cbor_event;
 /** Caller-owned framed reader; fields are private. */
 typedef struct c89cbor_reader {
+  /** Decode one framing event. */
   int (*next)(struct c89cbor_reader *, const void *, size_t, size_t *,
-              c89cbor_event *);           /**< Decode one framing event. */
-  int (*finish)(struct c89cbor_reader *); /**< Validate record EOF. */
-  int (*reset)(
-      struct c89cbor_reader *); /**< Reuse a successfully finished reader. */
-  int (*cleanup)(struct c89cbor_reader
-                     *); /**< Release state, preserving caller storage. */
-  int (*destroy)(
-      struct c89cbor_reader *); /**< Free a constructor-owned shell. */
-  int (*diagnostic)(const struct c89cbor_reader *,
-                    c89cbor_error *); /**< Copy the first error. */
-  c89cbor_lifetime lifetime;          /**< Private lifecycle storage. */
-  c89cbor_decoder decoder;            /**< Private item decoder. */
-  c89cbor_framing framing;            /**< Selected framing mode. */
-  uint32_t limit;                     /**< Maximum LENGTH32 payload. */
-  uint32_t length;                    /**< Current declared length. */
-  uint32_t remaining;                 /**< Current remaining payload. */
-  unsigned int have;                  /**< Partial prefix byte count. */
-  int active;                         /**< Private record marker. */
-  int complete; /**< Private single-item completion marker. */
-  int failed;   /**< Sticky error. */
+              c89cbor_event *);
+  /** Validate record EOF. */
+  int (*finish)(struct c89cbor_reader *);
+  /** Reuse a successfully finished reader. */
+  int (*reset)(struct c89cbor_reader *);
+  /** Release state, preserving caller storage. */
+  int (*cleanup)(struct c89cbor_reader *);
+  /** Free a constructor-owned shell. */
+  int (*destroy)(struct c89cbor_reader *);
+  /** Copy the first error. */
+  int (*diagnostic)(const struct c89cbor_reader *, c89cbor_error *);
+  /** Private lifecycle storage. */
+  c89cbor_lifetime lifetime;
+  /** Private item decoder. */
+  c89cbor_decoder decoder;
+  /** Selected framing mode. */
+  c89cbor_framing framing;
+  /** Maximum LENGTH32 payload. */
+  uint32_t limit;
+  /** Current declared length. */
+  uint32_t length;
+  /** Current remaining payload. */
+  uint32_t remaining;
+  /** Partial prefix byte count. */
+  unsigned int have;
+  /** Private record marker. */
+  int active;
+  /** Private single-item completion marker. */
+  int complete;
+  /** Sticky error. */
+  int failed;
 } c89cbor_reader;
 /** Initialize framing. limit == 0 selects cai's 128 KiB record bound in
  * LENGTH32; it does not bound individual items in other modes. Core chunk and
@@ -86,42 +104,64 @@ typedef int (*c89cbor_write_fn)(void *context, const void *bytes, size_t length,
                                 size_t *count);
 /** Native input endpoint; caller owns context and all referenced storage. */
 typedef struct c89cbor_source {
-  void *context;        /**< Borrowed callback context. */
-  c89cbor_read_fn read; /**< Required native callback. */
+  /** Borrowed callback context. */
+  void *context;
+  /** Required native callback. */
+  c89cbor_read_fn read;
 } c89cbor_source;
 /** Native output endpoint, independently usable by typed application codecs. */
 typedef struct c89cbor_sink {
-  void *context;          /**< Borrowed callback context. */
-  c89cbor_write_fn write; /**< Required native callback. */
+  /** Borrowed callback context. */
+  void *context;
+  /** Required native callback. */
+  c89cbor_write_fn write;
 } c89cbor_sink;
 /** Caller-owned validated byte transfer. Fields are private except totals. */
 typedef struct c89cbor_transfer {
-  int (*step)(struct c89cbor_transfer *); /**< Advance one bounded I/O step. */
-  int (*progress)(const struct c89cbor_transfer *,
-                  c89cbor_progress *); /**< Copy totals. */
-  int (*cleanup)(struct c89cbor_transfer
-                     *); /**< Release state, preserving caller storage. */
-  int (*destroy)(
-      struct c89cbor_transfer *); /**< Free a constructor-owned shell. */
-  int (*diagnostic)(const struct c89cbor_transfer *,
-                    c89cbor_error *);  /**< Copy the first error. */
-  c89cbor_lifetime lifetime;           /**< Private lifecycle storage. */
-  c89cbor_reader reader;               /**< Private validator. */
-  c89cbor_source source;               /**< Borrowed source copy. */
-  c89cbor_sink sink;                   /**< Borrowed sink copy. */
-  unsigned char buffer[C89CBOR_CHUNK]; /**< Bounded pending transport chunk. */
-  size_t offset;                       /**< Private pending output offset. */
-  size_t length;                       /**< Private pending output length. */
-  size_t validation_offset; /**< Private validation position in buffer. */
-  size_t input_budget;      /**< Private configured input budget. */
-  size_t output_budget;     /**< Private configured output budget. */
-  size_t event_budget;      /**< Private configured event budget. */
-  int validated;            /**< Private output validation marker. */
-  uint64_t read_bytes;      /**< Input bytes accepted so far. */
-  uint64_t written_bytes;   /**< Output bytes delivered so far. */
-  int finished;             /**< Private successful EOF marker. */
-  int failed;               /**< Sticky terminal status. */
-  int busy;                 /**< Private reentry guard. */
+  /** Advance one bounded I/O step. */
+  int (*step)(struct c89cbor_transfer *);
+  /** Copy totals. */
+  int (*progress)(const struct c89cbor_transfer *, c89cbor_progress *);
+  /** Release state, preserving caller storage. */
+  int (*cleanup)(struct c89cbor_transfer *);
+  /** Free a constructor-owned shell. */
+  int (*destroy)(struct c89cbor_transfer *);
+  /** Copy the first error. */
+  int (*diagnostic)(const struct c89cbor_transfer *, c89cbor_error *);
+  /** Private lifecycle storage. */
+  c89cbor_lifetime lifetime;
+  /** Private validator. */
+  c89cbor_reader reader;
+  /** Borrowed source copy. */
+  c89cbor_source source;
+  /** Borrowed sink copy. */
+  c89cbor_sink sink;
+  /** Bounded pending transport chunk. */
+  unsigned char buffer[C89CBOR_CHUNK];
+  /** Private pending output offset. */
+  size_t offset;
+  /** Private pending output length. */
+  size_t length;
+  /** Private validation position in buffer. */
+  size_t validation_offset;
+  /** Private configured input budget. */
+  size_t input_budget;
+  /** Private configured output budget. */
+  size_t output_budget;
+  /** Private configured event budget. */
+  size_t event_budget;
+  /** Private output validation marker. */
+  int validated;
+  /** Input bytes accepted so far. */
+  uint64_t read_bytes;
+  /** Output bytes delivered so far. */
+  uint64_t written_bytes;
+  /** Private successful EOF marker. */
+  int finished;
+  /** Sticky terminal status. */
+  int failed;
+  /** Private reentry guard. */
+  int busy;
 } c89cbor_transfer;
 /** Initialize a native-to-native transfer without allocation. Endpoints and
  * their owners must outlive it. No Lua callback or token conversion is needed.
@@ -143,17 +183,20 @@ C89CBOR_API int c89cbor_transfer_step(c89cbor_transfer *transfer);
  * SIGPIPE where MSG_NOSIGNAL exists; pipe SIGPIPE policy belongs to the caller.
  */
 typedef struct c89cbor_fd {
-  int (*source)(struct c89cbor_fd *,
-                c89cbor_source *); /**< Obtain a borrowed source view. */
-  int (*sink)(struct c89cbor_fd *,
-              c89cbor_sink *); /**< Obtain a borrowed sink view. */
-  int (*cleanup)(
-      struct c89cbor_fd *); /**< Release state, preserving caller storage. */
-  int (*destroy)(struct c89cbor_fd *); /**< Free a constructor-owned shell. */
-  int (*diagnostic)(const struct c89cbor_fd *,
-                    c89cbor_error *); /**< Copy the first error. */
-  c89cbor_lifetime lifetime;          /**< Private lifecycle storage. */
-  int descriptor; /**< Open descriptor owned by the caller. */
+  /** Obtain a borrowed source view. */
+  int (*source)(struct c89cbor_fd *, c89cbor_source *);
+  /** Obtain a borrowed sink view. */
+  int (*sink)(struct c89cbor_fd *, c89cbor_sink *);
+  /** Release state, preserving caller storage. */
+  int (*cleanup)(struct c89cbor_fd *);
+  /** Free a constructor-owned shell. */
+  int (*destroy)(struct c89cbor_fd *);
+  /** Copy the first error. */
+  int (*diagnostic)(const struct c89cbor_fd *, c89cbor_error *);
+  /** Private lifecycle storage. */
+  c89cbor_lifetime lifetime;
+  /** Open descriptor owned by the caller. */
+  int descriptor;
 } c89cbor_fd;
 /** Initialize an fd and optional source/sink views; at least one view required.
  * Both views borrow fd, which must remain alive. No descriptor I/O on init. */
@@ -216,16 +259,20 @@ C89CBOR_API int c89cbor_fd_sink(c89cbor_fd *fd, c89cbor_sink *sink);
  * BUSY, just as it does during an active step.
  */
 typedef struct c89cbor_conversion {
-  int (*step)(struct c89cbor_conversion *,
-              c89cbor_error *); /**< Advance one bounded step. */
-  int (*progress)(const struct c89cbor_conversion *,
-                  c89cbor_progress *); /**< Copy cumulative totals. */
-  int (*diagnostic)(const struct c89cbor_conversion *,
-                    c89cbor_error *);          /**< Copy the retained error. */
-  int (*cleanup)(struct c89cbor_conversion *); /**< Release operation state. */
-  int (*destroy)(struct c89cbor_conversion *); /**< Free an allocated shell. */
-  c89cbor_lifetime lifetime;                   /**< Private lifecycle state. */
-  void *state; /**< Private bounded adapter state. */
+  /** Advance one bounded step. */
+  int (*step)(struct c89cbor_conversion *, c89cbor_error *);
+  /** Copy cumulative totals. */
+  int (*progress)(const struct c89cbor_conversion *, c89cbor_progress *);
+  /** Copy the retained error. */
+  int (*diagnostic)(const struct c89cbor_conversion *, c89cbor_error *);
+  /** Release operation state. */
+  int (*cleanup)(struct c89cbor_conversion *);
+  /** Free an allocated shell. */
+  int (*destroy)(struct c89cbor_conversion *);
+  /** Private lifecycle state. */
+  c89cbor_lifetime lifetime;
+  /** Private bounded adapter state. */
+  void *state;
 } c89cbor_conversion;
 
 #ifdef __cplusplus

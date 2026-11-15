@@ -11,18 +11,27 @@ extern "C" {
 /** Borrowed input and sender address; invalidated by the next receive/reset or
  * stream-source read. No bytes are exposed before full datagram validation. */
 typedef struct c89cbor_datagram_message {
-  const void *bytes; /**< One complete CBOR item. */
-  size_t length;     /**< Wire bytes, bounded at construction. */
-  const void *peer;  /**< sockaddr bytes, or NULL for an unnamed socket peer. */
-  size_t peer_length; /**< Address length for send/set_peer. */
+  /** One complete CBOR item. */
+  const void *bytes;
+  /** Wire bytes, bounded at construction. */
+  size_t length;
+  /** sockaddr bytes, or NULL for an unnamed socket peer. */
+  const void *peer;
+  /** Address length for send/set_peer. */
+  size_t peer_length;
 } c89cbor_datagram_message;
 /** Cumulative successful traffic and discarded invalid datagrams. */
 typedef struct c89cbor_datagram_counts {
-  uint64_t input;    /**< Received wire bytes admitted after CBOR validation. */
-  uint64_t output;   /**< Atomically sent wire bytes. */
-  uint64_t received; /**< Successfully validated datagrams. */
-  uint64_t sent;     /**< Successfully sent datagrams. */
-  uint64_t rejected; /**< Invalid/oversized received datagrams. */
+  /** Received wire bytes admitted after CBOR validation. */
+  uint64_t input;
+  /** Atomically sent wire bytes. */
+  uint64_t output;
+  /** Successfully validated datagrams. */
+  uint64_t received;
+  /** Successfully sent datagrams. */
+  uint64_t sent;
+  /** Invalid/oversized received datagrams. */
+  uint64_t rejected;
 } c89cbor_datagram_counts;
 /** Datagram receiver/sender shell. Init fixes the wire bound; zero selects
  * 2 KiB. This bound is not a path-MTU promise. Three bounded allocations occur
@@ -30,40 +39,41 @@ typedef struct c89cbor_datagram_counts {
  * nesting bound. Preserve the shell's address until cleanup.
  * Serialize calls on one shell. Endpoints borrow it until their cleanup. */
 typedef struct c89cbor_datagram {
-  int (*receive)(struct c89cbor_datagram *, c89cbor_datagram_message *,
-                 c89cbor_error *);
-  /**< Receive one datagram: OK, INPUT on would-block, or a negative status.
+  /** Receive one datagram: OK, INPUT on would-block, or a negative status.
    * Failure clears the output; another receive can recover from a bad packet.
    */
+  int (*receive)(struct c89cbor_datagram *, c89cbor_datagram_message *,
+                 c89cbor_error *);
+  /** Validate/send one item atomically; OUTPUT means retry the same bytes.
+   * NULL peer uses set_peer, or the socket's connected destination. */
   int (*send)(struct c89cbor_datagram *, const void *, size_t, const void *,
               size_t, c89cbor_error *);
-  /**< Validate/send one item atomically; OUTPUT means retry the same bytes.
-   * NULL peer uses set_peer, or the socket's connected destination. */
+  /** Copy an optional default sockaddr. NULL/zero restores connected send. */
   int (*set_peer)(struct c89cbor_datagram *, const void *, size_t);
-  /**< Copy an optional default sockaddr. NULL/zero restores connected send. */
-  int (*source)(struct c89cbor_datagram *, c89cbor_source *);
-  /**< Message-scoped source of the last received item; INPUT before receive,
+  /** Message-scoped source of the last received item; INPUT before receive,
    * EOF only after its bytes are consumed. Getter performs no socket I/O. */
-  int (*stream_source)(struct c89cbor_datagram *, c89cbor_source *);
-  /**< Read successive validated datagrams; INPUT on would-block, never EOF.
+  int (*source)(struct c89cbor_datagram *, c89cbor_source *);
+  /** Read successive validated datagrams; INPUT on would-block, never EOF.
    * COSE authenticates sequence/final markers; UDP does not restore order. */
-  int (*sink)(struct c89cbor_datagram *, c89cbor_sink *);
-  /**< Collect at most one bounded item and send atomically. Standard partial
+  int (*stream_source)(struct c89cbor_datagram *, c89cbor_source *);
+  /** Collect at most one bounded item and send atomically. Standard partial
    * acceptance applies; retain/retry every unaccepted input byte. */
-  int (*reset)(struct c89cbor_datagram *);
-  /**< Cancel pending item/source state and clear errors, preserving counters.
+  int (*sink)(struct c89cbor_datagram *, c89cbor_sink *);
+  /** Cancel pending item/source state and clear errors, preserving counters.
    */
+  int (*reset)(struct c89cbor_datagram *);
+  /** Copy cumulative counters, clearing output first. */
   int (*progress)(const struct c89cbor_datagram *, c89cbor_datagram_counts *);
-  /**< Copy cumulative counters, clearing output first. */
+  /** Copy the latest endpoint failure. */
   int (*diagnostic)(const struct c89cbor_datagram *, c89cbor_error *);
-  /**< Copy the latest endpoint failure. */
-  int (*cleanup)(
-      struct c89cbor_datagram *); /**< Idempotent; never close socket. */
-  int (*destroy)(
-      struct c89cbor_datagram *); /**< Free constructor storage only. */
-  c89cbor_lifetime
-      lifetime; /**< Private allocator, parent and reentry guard. */
-  void *state;  /**< Private bounded buffers and framing state. */
+  /** Idempotent; never close socket. */
+  int (*cleanup)(struct c89cbor_datagram *);
+  /** Free constructor storage only. */
+  int (*destroy)(struct c89cbor_datagram *);
+  /** Private allocator, parent and reentry guard. */
+  c89cbor_lifetime lifetime;
+  /** Private bounded buffers and framing state. */
+  void *state;
 } c89cbor_datagram;
 /** Initialize fresh caller storage, borrowing a SOCK_DGRAM descriptor. The
  * descriptor must be nonnegative; no packet I/O or polling occurs. */

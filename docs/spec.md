@@ -1,8 +1,7 @@
 # libcbor specification
 
-This specification defines the implemented product's contracts and verification
-requirements. Build and execution evidence is recorded by the local lifecycle;
-cross-compilation alone does not establish target runtime behavior.
+This specification defines the implemented contracts. Start with the
+[C API guide](c-api.md) or [Lua guide](lua.md) for usage and examples.
 
 The encryption layer is specified separately in [COSE encryption](cose.md):
 both Encrypt0 and Encrypt, with standalone objects and authenticated record streams.
@@ -19,7 +18,7 @@ schema, protocol negotiation, authorization and business logic.
 | --- | --- |
 | Product, repository and library basename | `libcbor`. Install `libcbor.a` and the platform's versioned `libcbor.so` or `libcbor.dylib`. |
 | Public C symbols and types | `c89cbor_*`, with `C89CBOR_*` constants and a `c89cbor` receiver type. |
-| Public headers | `<c89cbor/cbor.h>`, `<c89cbor/io.h>`, `<c89cbor/lonejson.h>` and `<c89cbor/lua.h>`. |
+| Public headers | `<c89cbor/cbor.h>`, `<c89cbor/io.h>`, `<c89cbor/lonejson.h>`, `<c89cbor/cose.h>`, `<c89cbor/cwt.h>`, `<c89cbor/datagram.h>` and `<c89cbor/lua.h>`. |
 | Package discovery | Retain `C89Cbor::static`, `C89Cbor::shared` and pkg-config `c89cbor` as discovery identifiers to distinguish the C89 Systems SDK. Both link modes expose the full receiver. |
 | Lua | `require('cbor')` on Lua 5.5.1 through its public C API, without a cpkt Lua facade. Native interop uses typed C pointers and owner references. |
 | Required dependency | [c89systems/lonejson 0.50.0](https://github.com/c89systems/lonejson/releases/tag/v0.50.0), shared ABI 29. |
@@ -674,44 +673,25 @@ preserving validation and bounded memory. A performance claim requires
 the matching comparison results. A fixed throughput threshold on the
 shared host is not a correctness gate.
 
-## Delivery and implementation order
+## Delivery
 
-The seven SDK targets cover x86_64, aarch64 and armhf Linux with glibc
-and musl, plus arm64 Darwin. Keep strict
-`-std=c89`, documented POSIX integer facilities and the normal clangd
-compilation database. All targets ship static and shared libcbor,
-documented public headers, relocatable metadata and the required lonejson
-dependency declaration. Produce source and Lua artifacts in addition to
-the seven SDK archives. Verify extracted consumers and target library
-identities. Darwin cross-link and native runtime proof are separate.
+Ship the seven static/shared SDKs, full source and Lua source products listed in
+[delivery](delivery.md). Verify extracted consumers, target identities, public
+exports and transitive README links. Preserve strict C89 and the normal clangd
+compilation databases. Native macOS diagnostics and Darwin release artifact
+inspection have separate roles.
 
-Document every public C type and entry point in clangd-readable header
-comments, including ownership, lifetime, errors and allocation behavior
-where applicable. Comment each public Lua surface in the module sources
-and give Lua equivalent coverage for all public codec and receiver
-operations.
+Every public C declaration needs a leading clangd-readable comment covering its
+behavior and applicable ownership, errors and allocation rules. The Lua editor
+definitions must cover every registered constructor, method and constant, with
+matching receiver and option types. Compile and run the README examples against
+the implementation and extracted SDKs.
 
-The receiver layout and binary filename cutover must update the examples,
-Lua bindings, CMake/pkg-config metadata, export checks, package
-verification and benchmark isolation together. Do not add a parallel
-legacy library or wire-format version. Apply the repository's shared ABI
-rule against the latest released artifact or tag before choosing a
-SONAME. A development candidate alone does not establish a released ABI
-baseline.
+Public structs, symbols and interop declarations define the shared ABI. Apply
+the ABI rule against the latest released artifact or tag when changing them;
+repository release identity is independent. Follow the [delivery lifecycle](delivery.md)
+for signing, tagging and release.
 
-1. Establish the required lonejson SDK pin and the receiver API. Complete
-   the libcbor filename cutover and prove the existing native paths.
-2. Ship both direct mapped operations and both resumable JSON conversions
-   against 0.50.0. Prove type, ownership, bounded streaming, pause/resume
-   and interoperable bytes, including mapped transfers with compatible
-   endpoints. Keep the same value mapping and record ownership rules.
-3. Integrate cai against the installed public SDK in its own repository.
-   Verify its existing wire profile and use actual message shapes for
-   performance work.
-
-Follow the [delivery lifecycle](delivery.md) for the signed release
-boundary and artifact inventory.
-
-The [COSE profile](cose.md) and [Sign1/Mac0/CWT extension](sign1-cwt.md)
-specify the transport-independent security layers, bounded tokens, native
-lonejson claim-policy integration and their verification requirements.
+The [COSE profile](cose.md) and [Sign1/Mac0/CWT contracts](sign1-cwt.md) specify
+authenticated objects, ordered record streams, bounded tokens and native
+lonejson claim-policy integration.

@@ -175,3 +175,24 @@ translation unit is linked.
 The installed example `examples/copy.c` shows the complete blocking descriptor
 workflow. Its input and output need no size pass. Use caller-controlled polling
 with transfer_step when descriptors are nonblocking.
+
+## Datagrams
+
+
+`<c89cbor/datagram.h>` provides init/create receiver constructors and twins for
+receive/send/set_peer, source/stream_source/sink, reset, progress and diagnostics.
+The [API inventory](api-inventory.md) covers C and Lua surfaces. Fixed allocation
+at construction bounds packet memory; calls perform no libcbor allocation.
+Receive rejects truncation even if the retained prefix is valid CBOR, and returns
+no borrowed bytes for invalid packets. The next receive can recover. The scoped
+source ends after one explicitly received packet; the continuous source waits
+for subsequent validated datagrams and never invents EOF.
+
+The kernel/IP layer reassembles IP fragments. UDP supplies no acknowledgement,
+application admission feedback, ordering, retransmission or duplicate filter.
+Applications own deadlines and replay policies; our authenticated ordered record
+profile rejects gaps, duplicates and reordering without a reorder queue. Dropping
+a final packet needs an application deadline. Buffer capacity is not a PMTU
+promise; choose a payload/header budget that fits the application's packet budget.
+The sink's final byte is accepted only after a successful atomic packet send, so
+would-block cannot silently lose a completed item. Reset cancels pending work.

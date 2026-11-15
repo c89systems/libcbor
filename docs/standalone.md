@@ -4,7 +4,7 @@
 using libcbor's public receiver API. `make build` builds `cbor-peer` under
 `build/x86_64-linux-gnu-debug/`; SDKs also ship the source. Link it with
 `C89Cbor::static` or `C89Cbor::shared`, defining `_POSIX_C_SOURCE=200809L` and
-compiling with `-std=c89`. It has no cai dependency.
+compiling with `-std=c89`.
 
 Generate two independent identities in existing private directories:
 
@@ -16,10 +16,9 @@ build/x86_64-linux-gnu-debug/cbor-peer keygen build/peer/server
 
 Keygen uses OS entropy and creates four raw 32-byte files per identity:
 `sign.key` (Ed25519 seed), `sign.pub`, `encrypt.key` (X25519 private key) and
-`encrypt.pub`. Creation is exclusive, with mode 0600. It never overwrites files;
+`encrypt.pub`. Creation is exclusive, with mode 0600;
 a failed invocation can leave partial output. Keep private files at their owner;
 distribute and authenticate public files through your application's trust setup.
-The example does not discover or trust public keys received over the wire.
 
 Run the server in one terminal:
 
@@ -82,7 +81,7 @@ shells, borrows the socket, cleans receivers before keys/root, and closes the
 socket itself. Errors terminate with nonzero exit status. No plaintext request
 is acted on before decryption, signature, claim policy and replay admission.
 
-## Executable proof
+## Integration tests
 
 `standalone-peer` in CTest executes the actual keygen, server and client programs.
 It covers all four transports, trusted/wrong peer keys, wrong AAD, missing

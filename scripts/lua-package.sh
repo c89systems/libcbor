@@ -12,15 +12,14 @@ mkdir -p "$stage"/lua "$stage"/include/c89cbor "$stage"/cmake "$stage"/docs "$st
 cp lua/cbor.c lua/cose.inc.h lua/cwt.inc.h lua/datagram.inc.h lua/cbor.lua lua/CMakeLists.txt lua/exports.map "$stage/lua/"
 cp include/c89cbor/lua.h "$stage/include/c89cbor/"
 cp cmake/Runtime.cmake cmake/FindLua.cmake cmake/Sanitizers.cmake "$stage/cmake/"
-cp LICENSE "$stage/"
+cp LICENSE README.md "$stage/"
 cp docs/*.md "$stage/docs/"
-cp examples/cbor-peer.c "$stage/examples/"
-cat > "$stage/README.md" <<'README'
-# libcbor Lua facade
-
-This source package builds against the installed c89.systems CBOR SDK and Lua
-5.5.1 public headers. See the [Lua API](docs/lua.md) and [delivery guide](docs/delivery.md).
-README
+cp examples/copy.c examples/cbor-peer.c "$stage/examples/"
+# LuaRocks installs doc/ as a unit; preserve the README's relative links there.
+mkdir -p "$stage/doc/lua"
+cp LICENSE README.md "$stage/doc/"
+cp -R "$stage/docs" "$stage/examples" "$stage/doc/"
+cp lua/cbor.lua "$stage/doc/lua/"
 printf '%s\n' "$version" > "$stage/VERSION"
 # Lua source package builds the facade only against installed SDKs.
 cat > "$stage/CMakeLists.txt" <<'CMAKE'

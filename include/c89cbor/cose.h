@@ -9,15 +9,21 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+/** COSE bounds and borrowed metadata, defined by <c89cbor/lonejson.h>. */
 struct c89cbor_cose_options;
 /** Nonsecret authenticated stream metadata. No ID is returned before the first
  * successful record authentication. Applications own replay admission. */
 typedef struct c89cbor_cose_stream_info {
-  unsigned char stream_id[16]; /**< First authenticated stream identifier. */
-  int encrypt;   /**< True only for Encrypt; tag distinguishes all families. */
-  int tag;       /**< Authenticated COSE family: 16, 96, 18 or 17. */
-  int algorithm; /**< Authenticated body algorithm identifier. */
-  int complete;  /**< True only after successful final-record delivery/DONE. */
+  /** First authenticated stream identifier. */
+  unsigned char stream_id[16];
+  /** True only for Encrypt; tag distinguishes all families. */
+  int encrypt;
+  /** Authenticated COSE family: 16, 96, 18 or 17. */
+  int tag;
+  /** Authenticated body algorithm identifier. */
+  int algorithm;
+  /** True only after successful final-record delivery/DONE. */
+  int complete;
 } c89cbor_cose_stream_info;
 /** COSE operation receiver. Decryption retains read-ahead after DONE and next
  * starts another object/logical stream on the same source. Keep its address
@@ -25,47 +31,60 @@ typedef struct c89cbor_cose_stream_info {
  * shares only the generic drive/lifecycle machinery, not JSON behavior.
  */
 typedef struct c89cbor_cose_operation {
+  /** Advance bounded work; DONE leaves following messages buffered. */
   int (*step)(struct c89cbor_cose_operation *, c89cbor_error *);
-  /**< Advance bounded work; DONE leaves following messages buffered. */
+  /** After successful decrypt DONE, keep the source and select the next
+   * sink/AAD. */
   int (*next)(struct c89cbor_cose_operation *, const c89cbor_sink *,
               const struct c89cbor_cose_options *, c89cbor_error *);
-  /**< After successful decrypt DONE, keep the source and select the next
-   * sink/AAD. */
+  /** Copy cumulative I/O/record totals, including retained input read-ahead.
+   */
   int (*progress)(const struct c89cbor_cose_operation *, c89cbor_progress *);
-  /**< Copy cumulative I/O/record totals, including retained input read-ahead.
+  /** Read authenticated ID/family, including from a plaintext sink callback.
+   * INPUT before authentication; UNSUPPORTED for standalone/sealing operations.
    */
   int (*stream_info)(const struct c89cbor_cose_operation *,
                      c89cbor_cose_stream_info *);
-  /**< Read authenticated ID/family, including from a plaintext sink callback.
-   * INPUT before authentication; UNSUPPORTED for standalone/sealing operations.
-   */
+  /** Copy the first terminal error. */
   int (*diagnostic)(const struct c89cbor_cose_operation *, c89cbor_error *);
-  /**< Copy the first terminal error. */
-  int (*cleanup)(
-      struct c89cbor_cose_operation *); /**< Cancel and release pins. */
-  int (*destroy)(
-      struct c89cbor_cose_operation *); /**< Free constructor storage. */
-  int owned; /**< Private ownership flag for the complete COSE shell. */
-  c89cbor_conversion conversion; /**< Private shared lifecycle and driver. */
+  /** Cancel and release pins. */
+  int (*cleanup)(struct c89cbor_cose_operation *);
+  /** Free constructor storage. */
+  int (*destroy)(struct c89cbor_cose_operation *);
+  /** Private ownership flag for the complete COSE shell. */
+  int owned;
+  /** Private shared lifecycle and driver. */
+  c89cbor_conversion conversion;
 } c89cbor_cose_operation;
 /** Symmetric content/wrapping keys and X25519 recipient keys are 32 bytes. */
 typedef enum c89cbor_cose_key_kind {
-  C89CBOR_COSE_A256GCM = 0,       /**< AES-256-GCM content key only. */
-  C89CBOR_COSE_A256KW = 1,        /**< AES-256 key-wrapping key only. */
-  C89CBOR_COSE_X25519_PUBLIC = 2, /**< Trusted recipient public key. */
-  C89CBOR_COSE_X25519_PRIVATE =
-      3, /**< Recipient private key; public export allowed. */
-  C89CBOR_COSE_ED25519_PUBLIC = 4,  /**< Ed25519 verification key. */
-  C89CBOR_COSE_ED25519_PRIVATE = 5, /**< Ed25519 signing seed. */
-  C89CBOR_COSE_P256_PUBLIC = 6,  /**< Uncompressed SEC1 P-256 public point. */
-  C89CBOR_COSE_P256_PRIVATE = 7, /**< Big-endian P-256 private scalar. */
-  C89CBOR_COSE_HMAC256 = 8 /**< HMAC-SHA-256 key, separate from AES keys. */
+  /** AES-256-GCM content key only. */
+  C89CBOR_COSE_A256GCM = 0,
+  /** AES-256 key-wrapping key only. */
+  C89CBOR_COSE_A256KW = 1,
+  /** Trusted recipient public key. */
+  C89CBOR_COSE_X25519_PUBLIC = 2,
+  /** Recipient private key; public export allowed. */
+  C89CBOR_COSE_X25519_PRIVATE = 3,
+  /** Ed25519 verification key. */
+  C89CBOR_COSE_ED25519_PUBLIC = 4,
+  /** Ed25519 signing seed. */
+  C89CBOR_COSE_ED25519_PRIVATE = 5,
+  /** Uncompressed SEC1 P-256 public point. */
+  C89CBOR_COSE_P256_PUBLIC = 6,
+  /** Big-endian P-256 private scalar. */
+  C89CBOR_COSE_P256_PRIVATE = 7,
+  /** HMAC-SHA-256 key, separate from AES keys. */
+  C89CBOR_COSE_HMAC256 = 8
 } c89cbor_cose_key_kind;
 /** Copied nonsecret metadata. The unused key_id suffix is zero. */
 typedef struct c89cbor_cose_key_info {
-  c89cbor_cose_key_kind kind; /**< Imported key family. */
-  size_t key_id_length;       /**< Number of meaningful key_id bytes. */
-  unsigned char key_id[64]; /**< Binary identifier; never a trust assertion. */
+  /** Imported key family. */
+  c89cbor_cose_key_kind kind;
+  /** Number of meaningful key_id bytes. */
+  size_t key_id_length;
+  /** Binary identifier; never a trust assertion. */
+  unsigned char key_id[64];
 } c89cbor_cose_key_info;
 /** Immutable imported key receiver. Active conversions pin it. Private bytes
  * are copied on import and cleared on cleanup; OpenSSL owns its native objects.
@@ -74,18 +93,20 @@ typedef struct c89cbor_cose_key_info {
  * the configured libcbor allocator.
  */
 typedef struct c89cbor_cose_key {
+  /** Copy nonsecret metadata; initialize output before validation. */
   int (*metadata)(const struct c89cbor_cose_key *, c89cbor_cose_key_info *);
-  /**< Copy nonsecret metadata; initialize output before validation. */
+  /** Copy 32 X25519/Ed25519 or 65 SEC1 P-256 public bytes. */
   int (*public_key)(const struct c89cbor_cose_key *, void *, size_t, size_t *);
-  /**< Copy 32 X25519/Ed25519 or 65 SEC1 P-256 public bytes. */
+  /** Copy the first retained failure without allocating. */
   int (*diagnostic)(const struct c89cbor_cose_key *, c89cbor_error *);
-  /**< Copy the first retained failure without allocating. */
-  int (*cleanup)(
-      struct c89cbor_cose_key *); /**< Idempotent; BUSY while borrowed. */
-  int (*destroy)(
-      struct c89cbor_cose_key *); /**< Free constructor storage only. */
-  c89cbor_lifetime lifetime; /**< Private lifecycle and recorded allocator. */
-  void *state; /**< Private owned key and synchronized usage state. */
+  /** Idempotent; BUSY while borrowed. */
+  int (*cleanup)(struct c89cbor_cose_key *);
+  /** Free constructor storage only. */
+  int (*destroy)(struct c89cbor_cose_key *);
+  /** Private lifecycle and recorded allocator. */
+  c89cbor_lifetime lifetime;
+  /** Private owned key and synchronized usage state. */
+  void *state;
 } c89cbor_cose_key;
 /** COSE limits and borrowed authenticated context. Initialize through defaults.
  * Zero size limits select defaults. Nonces are 12 bytes and stream IDs 16.
@@ -95,19 +116,30 @@ typedef struct c89cbor_cose_key {
  * handles.
  */
 typedef struct c89cbor_cose_options {
-  const void *aad; /**< External application AAD; NULL only for zero length. */
-  size_t aad_length; /**< Default maximum 2 KiB, fixed by header_bytes. */
-  const unsigned char *nonce;     /**< Optional explicit standalone nonce. */
-  const unsigned char *stream_id; /**< Optional sender/expected receiver ID. */
-  size_t record_bytes; /**< Maximum plaintext per object; default 2 KiB. */
-  size_t header_bytes; /**< Encoded metadata and separate application AAD caps;
-                        * default 2 KiB each. */
-  size_t recipients; /**< Maximum recipient count; default eight, at most 32. */
-  size_t step_input; /**< New input per step; zero selects runtime defaults. */
-  size_t step_output; /**< Delivered output per step; zero selects defaults. */
-  size_t step_events; /**< Converted records/events per step; zero selects
+  /** External application AAD; NULL only for zero length. */
+  const void *aad;
+  /** Default maximum 2 KiB, fixed by header_bytes. */
+  size_t aad_length;
+  /** Optional explicit standalone nonce. */
+  const unsigned char *nonce;
+  /** Optional sender/expected receiver ID. */
+  const unsigned char *stream_id;
+  /** Maximum plaintext per object; default 2 KiB. */
+  size_t record_bytes;
+  /** Encoded metadata and separate application AAD caps;
+   * default 2 KiB each. */
+  size_t header_bytes;
+  /** Maximum recipient count; default eight, at most 32. */
+  size_t recipients;
+  /** New input per step; zero selects runtime defaults. */
+  size_t step_input;
+  /** Delivered output per step; zero selects defaults. */
+  size_t step_output;
+  /** Converted records/events per step; zero selects
                          defaults. */
-  int encrypt; /**< Stream seal uses Encrypt when true, Encrypt0 when false. */
+  size_t step_events;
+  /** Stream seal uses Encrypt when true, Encrypt0 when false. */
+  int encrypt;
 } c89cbor_cose_options;
 /** Receiver twin; advance bounded work without polling blocked endpoints. */
 C89CBOR_API int c89cbor_cose_operation_step(c89cbor_cose_operation *,

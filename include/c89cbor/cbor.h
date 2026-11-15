@@ -8,6 +8,7 @@
 #define C89CBOR_H
 #include <stddef.h>
 #include <stdint.h>
+/** Export a public declaration from the shared library or Lua module. */
 #if defined(__GNUC__)
 #define C89CBOR_API __attribute__((visibility("default")))
 #else
@@ -23,46 +24,71 @@ extern "C" {
 /** Operation result; positive values are resumable, negative values terminal.
  */
 typedef enum c89cbor_status {
-  C89CBOR_OK = 0,       /**< Operation succeeded. */
-  C89CBOR_TOKEN = 1,    /**< One borrowed token is available. */
-  C89CBOR_INPUT = 2,    /**< Supply more input; consumed bytes stay consumed. */
-  C89CBOR_OUTPUT = 3,   /**< Drain output before submitting another token. */
-  C89CBOR_DONE = 4,     /**< Exactly one complete item; reset for the next. */
-  C89CBOR_INVALID = -1, /**< Invalid argument or operation order. */
-  C89CBOR_MALFORMED = -2, /**< Invalid CBOR grammar, UTF-8, or truncation. */
-  C89CBOR_LIMIT = -3,     /**< Configured nesting or framing limit exceeded. */
-  C89CBOR_NOMEM = -4,     /**< Optional constructor allocation failed. */
-  C89CBOR_BUSY = -6, /**< Handle has active callbacks or dependent borrows. */
-  C89CBOR_UNSUPPORTED =
-      -7,              /**< Value or endpoint has no supported conversion. */
-  C89CBOR_SCHEMA = -8, /**< Mapped record violates its schema. */
-  C89CBOR_AUTH =
-      -9, /**< Authentication or authenticated stream policy failed. */
-  C89CBOR_CRYPTO =
-      -10,        /**< Cryptographic backend or secure randomness failed. */
-  C89CBOR_IO = -5 /**< Adapter I/O failed; stream cannot be resumed. */
+  /** Operation succeeded. */
+  C89CBOR_OK = 0,
+  /** One borrowed token is available. */
+  C89CBOR_TOKEN = 1,
+  /** Supply more input; consumed bytes stay consumed. */
+  C89CBOR_INPUT = 2,
+  /** Drain output before submitting another token. */
+  C89CBOR_OUTPUT = 3,
+  /** Exactly one complete item; reset for the next. */
+  C89CBOR_DONE = 4,
+  /** Invalid argument or operation order. */
+  C89CBOR_INVALID = -1,
+  /** Invalid CBOR grammar, UTF-8, or truncation. */
+  C89CBOR_MALFORMED = -2,
+  /** Configured nesting or framing limit exceeded. */
+  C89CBOR_LIMIT = -3,
+  /** Optional constructor allocation failed. */
+  C89CBOR_NOMEM = -4,
+  /** Handle has active callbacks or dependent borrows. */
+  C89CBOR_BUSY = -6,
+  /** Value or endpoint has no supported conversion. */
+  C89CBOR_UNSUPPORTED = -7,
+  /** Mapped record violates its schema. */
+  C89CBOR_SCHEMA = -8,
+  /** Authentication or authenticated stream policy failed. */
+  C89CBOR_AUTH = -9,
+  /** Cryptographic backend or secure randomness failed. */
+  C89CBOR_CRYPTO = -10,
+  /** Adapter I/O failed; stream cannot be resumed. */
+  C89CBOR_IO = -5
 } c89cbor_status;
 /** Token kinds. A TAG begins one child and has an END like other containers. */
 typedef enum c89cbor_type {
-  C89CBOR_UINT = 0,     /**< Unsigned integer; argument is the value. */
-  C89CBOR_NEGATIVE = 1, /**< Mathematical value -1-argument, including 2^64. */
-  C89CBOR_BYTES = 2, /**< Begin bytes; argument is length unless indefinite. */
-  C89CBOR_TEXT = 3,  /**< Begin UTF-8 text; embedded NUL is valid. */
-  C89CBOR_ARRAY = 4, /**< Begin array; argument is item count. */
-  C89CBOR_MAP = 5,   /**< Begin map; argument is pair count, never doubled. */
-  C89CBOR_TAG = 6,   /**< Begin uninterpreted tag; argument is tag number. */
-  C89CBOR_BOOL = 7,  /**< Boolean; argument must be 0 or 1. */
-  C89CBOR_NULL = 8,  /**< Null; argument must be zero. */
-  C89CBOR_UNDEFINED = 9, /**< Undefined; argument must be zero. */
-  C89CBOR_SIMPLE = 10,   /**< Simple value 0..19 or 32..255. */
-  C89CBOR_FLOAT16 =
-      11, /**< Raw IEEE binary16 bits in argument's low 16 bits. */
-  C89CBOR_FLOAT32 =
-      12, /**< Raw IEEE binary32 bits in argument's low 32 bits. */
-  C89CBOR_FLOAT64 =
-      13,            /**< Raw IEEE binary64 bits; all bit patterns accepted. */
-  C89CBOR_DATA = 14, /**< Borrowed fragment of a definite bytes/text value. */
-  C89CBOR_END = 15   /**< Close value; argument is the matching begin kind. */
+  /** Unsigned integer; argument is the value. */
+  C89CBOR_UINT = 0,
+  /** Mathematical value -1-argument, including 2^64. */
+  C89CBOR_NEGATIVE = 1,
+  /** Begin bytes; argument is length unless indefinite. */
+  C89CBOR_BYTES = 2,
+  /** Begin UTF-8 text; embedded NUL is valid. */
+  C89CBOR_TEXT = 3,
+  /** Begin array; argument is item count. */
+  C89CBOR_ARRAY = 4,
+  /** Begin map; argument is pair count, never doubled. */
+  C89CBOR_MAP = 5,
+  /** Begin uninterpreted tag; argument is tag number. */
+  C89CBOR_TAG = 6,
+  /** Boolean; argument must be 0 or 1. */
+  C89CBOR_BOOL = 7,
+  /** Null; argument must be zero. */
+  C89CBOR_NULL = 8,
+  /** Undefined; argument must be zero. */
+  C89CBOR_UNDEFINED = 9,
+  /** Simple value 0..19 or 32..255. */
+  C89CBOR_SIMPLE = 10,
+  /** Raw IEEE binary16 bits in argument's low 16 bits. */
+  C89CBOR_FLOAT16 = 11,
+  /** Raw IEEE binary32 bits in argument's low 32 bits. */
+  C89CBOR_FLOAT32 = 12,
+  /** Raw IEEE binary64 bits; all bit patterns accepted. */
+  C89CBOR_FLOAT64 = 13,
+  /** Borrowed fragment of a definite bytes/text value. */
+  C89CBOR_DATA = 14,
+  /** Close value; argument is the matching begin kind. */
+  C89CBOR_END = 15
 } c89cbor_type;
 /** Zero-initialize before constructing a token. Decoder tokens borrow input
  * until that input is reused; encoder DATA is borrowed until fully drained.
@@ -71,130 +97,187 @@ typedef enum c89cbor_type {
  * DATA fragmentation is independent of encoded indefinite-string boundaries.
  */
 typedef struct c89cbor_token {
-  c89cbor_type type; /**< Kind of this event. */
-  uint64_t argument; /**< Value, raw float bits, length, tag, or END kind. */
-  const void *data;  /**< Borrowed DATA bytes; NULL only for zero length. */
-  size_t length;     /**< DATA byte count; zero for other kinds. */
-  int indefinite;    /**< Nonzero only for indefinite strings/arrays/maps. */
+  /** Kind of this event. */
+  c89cbor_type type;
+  /** Value, raw float bits, length, tag, or END kind. */
+  uint64_t argument;
+  /** Borrowed DATA bytes; NULL only for zero length. */
+  const void *data;
+  /** DATA byte count; zero for other kinds. */
+  size_t length;
+  /** Nonzero only for indefinite strings/arrays/maps. */
+  int indefinite;
 } c89cbor_token;
 /** Root receiver, defined by <c89cbor/lonejson.h>. */
 typedef struct c89cbor c89cbor;
 /** Optional per-object allocator. Both functions required; context outlives
  * object. */
 typedef struct c89cbor_allocator {
-  void *context; /**< Passed unchanged to both callbacks. */
-  void *(*alloc)(void *context,
-                 size_t size); /**< Return aligned storage or NULL. */
-  void (*free)(void *context,
-               void *ptr); /**< Release a successful allocation. */
+  /** Passed unchanged to both callbacks. */
+  void *context;
+  /** Return aligned storage or NULL. */
+  void *(*alloc)(void *context, size_t size);
+  /** Release a successful allocation. */
+  void (*free)(void *context, void *ptr);
 } c89cbor_allocator;
 
 /** Fixed diagnostic copied into caller storage; no allocation is required. */
 typedef struct c89cbor_error {
-  int status;       /**< libcbor status, zero on success. */
-  int cause;        /**< Preserved dependency status when applicable. */
-  int system_errno; /**< Endpoint errno when available. */
-  uint64_t offset;  /**< Accepted input offset. */
-  int shortened;    /**< Field path was shortened to fit path. */
-  int truncated;  /**< A mapped overflow policy retained only a value prefix. */
-  char layer[24]; /**< Failed codec or adapter layer. */
-  char message[160]; /**< Human-readable error text. */
-  char path[160];    /**< Mapped field path when available. */
+  /** libcbor status, zero on success. */
+  int status;
+  /** Preserved dependency status when applicable. */
+  int cause;
+  /** Endpoint errno when available. */
+  int system_errno;
+  /** Accepted input offset. */
+  uint64_t offset;
+  /** Field path was shortened to fit path. */
+  int shortened;
+  /** A mapped overflow policy retained only a value prefix. */
+  int truncated;
+  /** Failed codec or adapter layer. */
+  char layer[24];
+  /** Human-readable error text. */
+  char message[160];
+  /** Mapped field path when available. */
+  char path[160];
 } c89cbor_error;
 /** Cumulative operation progress, available after completion or failure. */
 typedef struct c89cbor_progress {
-  uint64_t input;   /**< Accepted source bytes. */
-  uint64_t output;  /**< Delivered sink bytes. */
-  uint64_t records; /**< Successfully completed records. */
+  /** Accepted source bytes. */
+  uint64_t input;
+  /** Delivered sink bytes. */
+  uint64_t output;
+  /** Successfully completed records. */
+  uint64_t records;
 } c89cbor_progress;
 /** Private lifecycle storage shared by receiver shells. Never edit fields. */
 typedef struct c89cbor_lifetime {
-  c89cbor *parent;             /**< Borrowed parent until cleanup. */
-  c89cbor_allocator allocator; /**< Recorded allocator and borrowed context. */
-  c89cbor_error error;         /**< First terminal diagnostic. */
-  c89cbor_progress progress;   /**< Cumulative accepted bytes and records. */
-  size_t dependents;           /**< Tracked child borrows. */
-  unsigned int magic;          /**< Initialization marker. */
-  int live;                    /**< Initialized resource state. */
-  int owned;                   /**< Shell was allocated by its constructor. */
-  int busy;                    /**< Callback reentry guard. */
+  /** Borrowed parent until cleanup. */
+  c89cbor *parent;
+  /** Recorded allocator and borrowed context. */
+  c89cbor_allocator allocator;
+  /** First terminal diagnostic. */
+  c89cbor_error error;
+  /** Cumulative accepted bytes and records. */
+  c89cbor_progress progress;
+  /** Tracked child borrows. */
+  size_t dependents;
+  /** Initialization marker. */
+  unsigned int magic;
+  /** Initialized resource state. */
+  int live;
+  /** Shell was allocated by its constructor. */
+  int owned;
+  /** Callback reentry guard. */
+  int busy;
 } c89cbor_lifetime;
 
 /** One caller-owned grammar frame. Fields are private implementation state. */
 typedef struct c89cbor_frame {
-  uint64_t remaining; /**< Private remaining byte/item/pair count. */
-  uint32_t scalar;    /**< Private incremental Unicode scalar. */
-  uint32_t minimum;   /**< Private shortest UTF-8 scalar threshold. */
-  unsigned int utf8;  /**< Private UTF-8 continuation count. */
-  unsigned int odd;   /**< Private map key/value parity. */
-  int indefinite;     /**< Private indefinite marker. */
-  c89cbor_type type;  /**< Private frame kind. */
+  /** Private remaining byte/item/pair count. */
+  uint64_t remaining;
+  /** Private incremental Unicode scalar. */
+  uint32_t scalar;
+  /** Private shortest UTF-8 scalar threshold. */
+  uint32_t minimum;
+  /** Private UTF-8 continuation count. */
+  unsigned int utf8;
+  /** Private map key/value parity. */
+  unsigned int odd;
+  /** Private indefinite marker. */
+  int indefinite;
+  /** Private frame kind. */
+  c89cbor_type type;
 } c89cbor_frame;
 /** Shared grammar state. Fields are private; use init/reset functions. */
 typedef struct c89cbor_state {
-  c89cbor_frame *frames; /**< Borrowed caller storage, or local_frames. */
-  size_t capacity;       /**< Frame capacity fixed at initialization. */
-  size_t depth;          /**< Current private nesting depth. */
-  size_t chunk;          /**< Maximum DATA span per next/read, never zero. */
-  int complete;          /**< Private root completion marker. */
-  int failed;            /**< Sticky negative status. */
-  c89cbor_frame local_frames[C89CBOR_DEPTH]; /**< Default bounded storage. */
+  /** Borrowed caller storage, or local_frames. */
+  c89cbor_frame *frames;
+  /** Frame capacity fixed at initialization. */
+  size_t capacity;
+  /** Current private nesting depth. */
+  size_t depth;
+  /** Maximum DATA span per next/read, never zero. */
+  size_t chunk;
+  /** Private root completion marker. */
+  int complete;
+  /** Sticky negative status. */
+  int failed;
+  /** Default bounded storage. */
+  c89cbor_frame local_frames[C89CBOR_DEPTH];
 } c89cbor_state;
 /** Caller-owned decoder; initialize before use. Never copy an active context.
  */
 typedef struct c89cbor_decoder {
+  /** Consume the next tag header. */
   int (*next_tag)(struct c89cbor_decoder *, const void *, size_t, size_t *,
-                  uint64_t *); /**< Consume the next tag header. */
+                  uint64_t *);
+  /** Decode one borrowed event. */
   int (*next)(struct c89cbor_decoder *, const void *, size_t, size_t *,
-              c89cbor_token *); /**< Decode one borrowed event. */
-  int (*finish)(
-      struct c89cbor_decoder *); /**< Validate the final item at EOF. */
-  int (*reset)(struct c89cbor_decoder
-                   *); /**< Start another item after successful finish. */
-  int (*cleanup)(struct c89cbor_decoder
-                     *); /**< Release resources, preserving shell storage. */
-  int (*destroy)(
-      struct c89cbor_decoder *); /**< Free a constructor-owned shell. */
-  int (*diagnostic)(const struct c89cbor_decoder *,
-                    c89cbor_error *); /**< Copy the retained error. */
-  c89cbor_lifetime lifetime;          /**< Private lifecycle storage. */
-  c89cbor_state state;                /**< Private grammar state. */
-  unsigned char header[9];            /**< Private partial scalar header. */
-  size_t have; /**< Private number of header bytes retained. */
-  size_t need; /**< Private required header length. */
+              c89cbor_token *);
+  /** Validate the final item at EOF. */
+  int (*finish)(struct c89cbor_decoder *);
+  /** Start another item after successful finish. */
+  int (*reset)(struct c89cbor_decoder *);
+  /** Release resources, preserving shell storage. */
+  int (*cleanup)(struct c89cbor_decoder *);
+  /** Free a constructor-owned shell. */
+  int (*destroy)(struct c89cbor_decoder *);
+  /** Copy the retained error. */
+  int (*diagnostic)(const struct c89cbor_decoder *, c89cbor_error *);
+  /** Private lifecycle storage. */
+  c89cbor_lifetime lifetime;
+  /** Private grammar state. */
+  c89cbor_state state;
+  /** Private partial scalar header. */
+  unsigned char header[9];
+  /** Private number of header bytes retained. */
+  size_t have;
+  /** Private required header length. */
+  size_t need;
 } c89cbor_decoder;
 /** Caller-owned encoder; initialize before use. Never copy an active context.
  */
 typedef struct c89cbor_encoder {
-  int (*tag)(struct c89cbor_encoder *,
-             uint64_t);                     /**< Begin an application tag. */
-  int (*end_tag)(struct c89cbor_encoder *); /**< End its completed payload. */
-  int (*put)(struct c89cbor_encoder *,
-             const c89cbor_token *); /**< Submit one token. */
-  int (*read)(struct c89cbor_encoder *, void *, size_t,
-              size_t *); /**< Copy bounded pending bytes. */
-  int (*peek)(struct c89cbor_encoder *, const void **,
-              size_t *); /**< Borrow validated pending output. */
-  int (*advance)(struct c89cbor_encoder *,
-                 size_t); /**< Accept bytes from the last peek. */
-  int (*finish)(
-      struct c89cbor_encoder *); /**< Require a complete, drained item. */
-  int (*reset)(struct c89cbor_encoder
-                   *); /**< Start another item after successful finish. */
-  int (*cleanup)(struct c89cbor_encoder
-                     *); /**< Release resources, preserving shell storage. */
-  int (*destroy)(
-      struct c89cbor_encoder *); /**< Free a constructor-owned shell. */
-  int (*diagnostic)(const struct c89cbor_encoder *,
-                    c89cbor_error *); /**< Copy the retained error. */
-  c89cbor_lifetime lifetime;          /**< Private lifecycle storage. */
-  c89cbor_state state;                /**< Private grammar state. */
-  unsigned char header[9];            /**< Private pending encoded header. */
-  size_t offset;                      /**< Private pending header offset. */
-  size_t size;                        /**< Private pending header size. */
-  const unsigned char *data;          /**< Private borrowed pending DATA. */
-  size_t remaining;                   /**< Private pending DATA length. */
-  size_t validated; /**< Private validated DATA prefix for peek/advance. */
+  /** Begin an application tag. */
+  int (*tag)(struct c89cbor_encoder *, uint64_t);
+  /** End its completed payload. */
+  int (*end_tag)(struct c89cbor_encoder *);
+  /** Submit one token. */
+  int (*put)(struct c89cbor_encoder *, const c89cbor_token *);
+  /** Copy bounded pending bytes. */
+  int (*read)(struct c89cbor_encoder *, void *, size_t, size_t *);
+  /** Borrow validated pending output. */
+  int (*peek)(struct c89cbor_encoder *, const void **, size_t *);
+  /** Accept bytes from the last peek. */
+  int (*advance)(struct c89cbor_encoder *, size_t);
+  /** Require a complete, drained item. */
+  int (*finish)(struct c89cbor_encoder *);
+  /** Start another item after successful finish. */
+  int (*reset)(struct c89cbor_encoder *);
+  /** Release resources, preserving shell storage. */
+  int (*cleanup)(struct c89cbor_encoder *);
+  /** Free a constructor-owned shell. */
+  int (*destroy)(struct c89cbor_encoder *);
+  /** Copy the retained error. */
+  int (*diagnostic)(const struct c89cbor_encoder *, c89cbor_error *);
+  /** Private lifecycle storage. */
+  c89cbor_lifetime lifetime;
+  /** Private grammar state. */
+  c89cbor_state state;
+  /** Private pending encoded header. */
+  unsigned char header[9];
+  /** Private pending header offset. */
+  size_t offset;
+  /** Private pending header size. */
+  size_t size;
+  /** Private borrowed pending DATA. */
+  const unsigned char *data;
+  /** Private pending DATA length. */
+  size_t remaining;
+  /** Private validated DATA prefix for peek/advance. */
+  size_t validated;
 } c89cbor_encoder;
 /** Static human-readable status text. Never allocated; never free. */
 C89CBOR_API const char *c89cbor_status_string(c89cbor *runtime, int status);

@@ -1,12 +1,12 @@
 # Signatures, MACs and CBOR Web Tokens
 
-This specification extends [the encryption profile](cose.md). All payload and
-key processing stays in C, including calls made through Lua. JSON JWT/JWS/JWE
-wire formats are outside this milestone.
+Sign1, Mac0 and CWT extend [the encryption profile](cose.md) with sender
+authentication and native claim policy. Payload and key processing stays in C,
+including calls made through Lua.
 
 ## COSE authentication
 
-Implement the tagged and untagged Sign1 and Mac0 structures from
+The API supports tagged and untagged Sign1 and Mac0 structures from
 [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052.html). Emit tags 18 and 17,
 respectively. Payloads are attached byte strings. Detached payloads and
 countersignatures are unsupported. Authenticate the original protected bytes,
@@ -169,7 +169,7 @@ receivers can then process tokens concurrently with shared immutable keys and
 root. A receiver's own calls remain serialized. Workspace contains plaintext
 and is cleared after failed verification and during cleanup.
 
-Use the [datagram receiver](hardening.md#datagram-integration) for UDP and Unix
+Use the [datagram receiver](c-api.md#datagrams) for UDP and Unix
 datagrams. It preserves complete packets and rejects truncation before feeding
 COSE. `c89cbor_fd` remains for files/pipes/stream sockets. Neither silence nor
 an empty packet becomes successful byte-stream EOF on the continuous source.

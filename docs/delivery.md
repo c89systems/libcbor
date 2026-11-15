@@ -58,6 +58,15 @@ of `make release`; see [hardening](hardening.md).
 rockspec, rebuilds both entrypoints against the extracted native SDK and runs
 all registered Lua tests, including lifetime and GC cases, against each extracted
 module. Its runner uses the extracted native SDK and a checkout-owned Lua runtime;
-it does not rebuild the native library. Package verification checks the transitive
-local documentation links from the shipped README. `make package-checksums`
+it does not rebuild the native library.
+
+Every SDK and source product ships the root README, its linked guides,
+LuaLS declarations, examples and license with relative paths preserved. SDK
+documentation lives under `share/doc/C89Cbor`; Lua CMake installs use
+`share/doc/C89CborLua`. The Lua archive and source rock carry the same README
+as the full source. LuaRocks installs the complete documentation tree in the
+rock's `doc` directory. Package verification traverses local links recursively,
+and installed-SDK consumers compile and run its C example. Lua verification runs
+its Lua example and compares editor declarations with the loaded module.
+`make package-checksums`
 verifies the complete inventory.

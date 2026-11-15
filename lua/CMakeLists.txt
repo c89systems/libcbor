@@ -32,6 +32,11 @@ target_compile_options(cbor PRIVATE -std=c89 -Wall -Wextra -Werror -Wpedantic -W
 target_compile_definitions(cbor PRIVATE _POSIX_C_SOURCE=200809L)
 install(TARGETS cbor LIBRARY DESTINATION lib/lua/5.5)
 install(FILES cbor.lua DESTINATION share/lua/5.5/cbor-doc)
+install(FILES "${source_root}/README.md" "${source_root}/LICENSE" DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(DIRECTORY "${source_root}/docs/" DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
+install(FILES cbor.lua DESTINATION ${CMAKE_INSTALL_DOCDIR}/lua)
+install(FILES "${source_root}/examples/copy.c" "${source_root}/examples/cbor-peer.c"
+  DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples)
 if(BUILD_TESTING)
   find_package(Threads REQUIRED)
   add_executable(cose_lua_benchmark ../bench/cose.c ../bench/measure.c)
@@ -53,6 +58,14 @@ if(BUILD_TESTING)
   target_compile_definitions(lua_test PRIVATE _POSIX_C_SOURCE=200809L)
   c89_runtime(lua_test)
   add_test(NAME lua-api COMMAND lua_test "${test_module}" "${source_root}/tests/lua_test.lua")
+  include("${source_root}/cmake/ReadmeExample.cmake")
+  c89_readme_example("${source_root}/README.md" lua "${CMAKE_CURRENT_BINARY_DIR}/readme.lua")
+  add_test(NAME lua-readme COMMAND lua_test "${test_module}" "${CMAKE_CURRENT_BINARY_DIR}/readme.lua" --script)
+  add_test(NAME lua-docs COMMAND lua_test "${test_module}" "${source_root}/tests/lua_docs.lua" --script)
+  set_tests_properties(lua-docs PROPERTIES TIMEOUT 30 LABELS "lua;integration"
+    ENVIRONMENT "GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0;C89CBOR_LUA_DOCS=${source_root}/lua/cbor.lua")
+  set_tests_properties(lua-readme PROPERTIES TIMEOUT 30 LABELS "lua;integration"
+    ENVIRONMENT "GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0")
   foreach(group codec runtime policy gc transfer snapshot)
     add_test(NAME lua-lifetime-${group} COMMAND lua_test "${test_module}" "${source_root}/tests/lua_lifetime_test.lua")
     set_tests_properties(lua-lifetime-${group} PROPERTIES TIMEOUT 30 LABELS "lua;integration;lifetime"
@@ -64,6 +77,7 @@ if(BUILD_TESTING)
   set_tests_properties(lua-test-inventory PROPERTIES TIMEOUT 15 LABELS "pipeline;offline")
   add_test(NAME lua-exports COMMAND ${CMAKE_COMMAND} "-DNM=${CMAKE_NM}" "-DMODULE=${test_module}"
     "-DHEADER=${source_root}/include/c89cbor/lua.h" "-DDARWIN=${APPLE}"
+    "-DPUBLIC_HEADERS=${source_root}/include/c89cbor"
     "-DINSPECT=$<IF:$<BOOL:${APPLE}>,${CMAKE_OTOOL},${CMAKE_READELF}>" -P "${source_root}/tests/lua_exports.cmake")
   set_tests_properties(lua-api PROPERTIES TIMEOUT 30 LABELS "lua;integration" ENVIRONMENT "GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0")
 endif()

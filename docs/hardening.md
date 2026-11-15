@@ -1,14 +1,13 @@
 # Interoperability and prerelease hardening
 
-Use the [production-hardening specification](production-hardening.md) for the
-accepted behavior and [standalone application](standalone.md) for local peers.
-These checks prepare an unreleased ABI 0; they do not release or migrate cai.
+The [C API](c-api.md), [COSE](cose.md) and [CWT](sign1-cwt.md) guides define
+runtime behavior. The [standalone application](standalone.md) supplies the
+authenticated client/server used by the local peer tests.
 
 Unit tests cover the full SDK target matrix using the declared runners. E2E
 tests (`standalone-peer`, `reference-peer` and `cose-c-peer`) run only in the
 native x86_64 Linux glibc host context (`x86_64-linux-gnu`), rather than once per SDK target.
-Other targets retain compilation/linking and unit, ABI and package checks;
-they have no deferred E2E runner requirement.
+Other targets retain compilation/linking and unit, ABI and package checks.
 
 ```sh
 make check-native        # normal C/Lua, formatting and shell checks
@@ -20,14 +19,10 @@ make fuzz-long           # 120 seconds per corpus, resumable results
 make prerelease-hardening # normal, sanitizer, memory, peer and long fuzz checks
 ```
 
-`prerelease-hardening` is separate from `prerelease` and `release`. Longer fuzzing
-and the container service are never silently added to the release pipeline.
-Missing declared tools fail the requested command. Native checks use the pinned
-Bootlin compiler/AFL++ and prepared dependencies. They do not run via QEMU or on
-native Darwin. The native sanitizer command targets x86_64 Linux; provider
-libraries are the separately supplied pinned binaries. The intentional child
-stack-guard fault retains the kernel signal rather than ASan's signal handler;
-other ASan/UBSan detection and leak checks remain enabled.
+`prerelease-hardening` runs explicitly, separately from the release pipeline.
+The sanitizer command uses the pinned x86_64 Linux compiler and instruments the
+library, facade and test runners; provider libraries remain the pinned binaries.
+The intentional child stack-guard fault retains the kernel signal handler.
 
 Sanitizers exercise both the native library and the Lua module/test runners.
 Valgrind uses CTest's registered commands, environments and timeouts for the C
@@ -83,12 +78,9 @@ rejects `-31`, and its
 always constructs an EC2 ephemeral key, which rejects the X25519 curve.
 The fixture therefore identifies X25519 separately: an RFC 9053 bounded fixture
 uses cryptography's X25519, HKDF-SHA256, AES-KW and AES-GCM primitives and cbor2.
-Those bidirectional checks provide an independent primitive/encoding check,
-**not** interoperability with another COSE library for X25519. Production headers
-are never rewritten to emulate another algorithm. This upstream limitation is
-not an unresolved libcbor test failure and is not hidden as a passed library test.
+Those checks independently exercise primitives and encoding.
 
-The separate `cose-c-peer` test closes that library-interoperability gap for
+The separate `cose-c-peer` test tests
 Encrypt/A256GCM with X25519 ECDH-ES+A256KW (`-31`). COSE-C commit
 `97d1805e71b7a6770093c5e6790d46611680d563` and cn-cbor commit
 `f713bf67bcf3e076d47e474ce060252ef8be48c7` are pinned by archive URL and SHA-256 in
@@ -110,17 +102,15 @@ these fixtures are buffered objects, not record-stream interoperability tests.
 COSE-C's public `COSE_Enveloped_GetContent` is declared but has no definition.
 Consequently libcbor-to-COSE-C checks require successful authenticated decryption
 (HTTP 204 with no body); COSE-C-to-libcbor checks additionally compare recovered
-plaintext byte-for-byte. No private struct access or replacement getter is used.
-Adapter crashes, timeouts and execution failures return HTTP 500, distinct from
+plaintext byte-for-byte. Adapter crashes, timeouts and execution failures return
+HTTP 500, distinct from
 expected rejection (422). The test requires the exact status for each case.
-Both libraries use OpenSSL, so this establishes independent COSE processing,
-not an independent cryptographic backend.
+Both peers use OpenSSL and independently implement COSE processing.
 
 The upstream build needs CMake's compatibility policy baseline for cn-cbor and
 `-fpermissive` solely on COSE-C's `openssl.cpp`: an EC branch declares the
 OpenSSL 3 const key pointer mutable but only reads it. Our adapter retains strict
-warnings and `-std=c89`; upstream sources are not patched. Python-CWT is also
-unmodified, with no upstream patch or PR required.
+warnings and `-std=c89`. Both adapters build unmodified upstream sources.
 
 Offline tests additionally consume exact COSE WG Encrypt0/A256GCM and
 Mac0/HMAC256 examples from commit
@@ -154,27 +144,6 @@ there is no secondary report/receipt format.
 FUZZ_CASES='cose cose-stream cwt' FUZZ_SECONDS=3600 make fuzz-long
 ```
 
-`FUZZ_SECONDS` is a positive per-case wall-clock duration. The default 120 seconds
-is an initial prerelease campaign, not a claim of exhaustive security assurance.
+`FUZZ_SECONDS` is a positive per-case wall-clock duration. The default is 120 seconds.
 The invoking terminal owns whole-job cancellation. Do not edit sources or share
 mutable build/cache state with another operation during verification.
-
-## Datagram integration
-
-`<c89cbor/datagram.h>` provides init/create receiver constructors and twins for
-receive/send/set_peer, source/stream_source/sink, reset, progress and diagnostics.
-The [API inventory](api-inventory.md) covers C and Lua surfaces. Fixed allocation
-at construction bounds packet memory; calls perform no libcbor allocation.
-Receive rejects truncation even if the retained prefix is valid CBOR, and returns
-no borrowed bytes for invalid packets. The next receive can recover. The scoped
-source ends after one explicitly received packet; the continuous source waits
-for subsequent validated datagrams and never invents EOF.
-
-The kernel/IP layer reassembles IP fragments. UDP supplies no acknowledgement,
-application admission feedback, ordering, retransmission or duplicate filter.
-Applications own deadlines and replay policies; our authenticated ordered record
-profile rejects gaps, duplicates and reordering without a reorder queue. Dropping
-a final packet needs an application deadline. Buffer capacity is not a PMTU
-promise; choose a payload/header budget that fits the application's packet budget.
-The sink's final byte is accepted only after a successful atomic packet send, so
-would-block cannot silently lose a completed item. Reset cancels pending work.

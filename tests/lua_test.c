@@ -749,6 +749,7 @@ static int consume(void *ctx, const void *bytes, size_t n, size_t *count) {
 typedef struct arguments {
   const char *module;
   const char *script;
+  int script_only;
 } arguments;
 typedef struct lua_allocation_probe {
   lua_Alloc allocator;
@@ -883,21 +884,26 @@ static void *run(void *ctx) {
     if (rc != 0)
       fprintf(stderr, "lua: %s\n", lua_tostring(L, -1));
   }
-  assert(rc == 0 && stream.produced == stream.limit &&
-         stream.consumed == stream.limit);
+  assert(rc == 0);
+  if (args->script_only) {
+    assert(stream.produced == 0 && stream.consumed == 0);
+  } else {
+    assert(stream.produced == stream.limit && stream.consumed == stream.limit);
+  }
   assert(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
   assert(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu_end) == 0);
-  printf("{\"case\":\"%s-native-transfer\",\"bytes\":%lu,\"seconds\":%.9f,"
-         "\"cpu_seconds\":%.9f,\"source_calls\":%lu,\"sink_calls\":%lu,"
-         "\"endpoint_copied_bytes\":%lu,\"verified\":true}\n",
-         strcmp(args->script, "--native") == 0 ? "c" : "lua",
-         (unsigned long)stream.limit,
-         (double)(end.tv_sec - begin.tv_sec) +
-             (double)(end.tv_nsec - begin.tv_nsec) / 1e9,
-         (double)(cpu_end.tv_sec - cpu_begin.tv_sec) +
-             (double)(cpu_end.tv_nsec - cpu_begin.tv_nsec) / 1e9,
-         (unsigned long)stream.reads, (unsigned long)stream.writes,
-         (unsigned long)stream.produced);
+  if (!args->script_only)
+    printf("{\"case\":\"%s-native-transfer\",\"bytes\":%lu,\"seconds\":%.9f,"
+           "\"cpu_seconds\":%.9f,\"source_calls\":%lu,\"sink_calls\":%lu,"
+           "\"endpoint_copied_bytes\":%lu,\"verified\":true}\n",
+           strcmp(args->script, "--native") == 0 ? "c" : "lua",
+           (unsigned long)stream.limit,
+           (double)(end.tv_sec - begin.tv_sec) +
+               (double)(end.tv_nsec - begin.tv_nsec) / 1e9,
+           (double)(cpu_end.tv_sec - cpu_begin.tv_sec) +
+               (double)(cpu_end.tv_nsec - cpu_begin.tv_nsec) / 1e9,
+           (unsigned long)stream.reads, (unsigned long)stream.writes,
+           (unsigned long)stream.produced);
   assert(binding.cleanup(&binding) == 0);
   assert(binding.cleanup(&binding) == 0 &&
          binding.check_runtime(&binding, 1) == NULL);
@@ -922,9 +928,10 @@ static void *run(void *ctx) {
 int main(int argc, char **argv) {
   arguments args;
   pthread_t worker;
-  assert(argc == 3);
+  assert(argc == 3 || (argc == 4 && strcmp(argv[3], "--script") == 0));
   args.module = argv[1];
   args.script = argv[2];
+  args.script_only = argc == 4;
   assert(pthread_create(&worker, NULL, run, &args) == 0);
   assert(pthread_join(worker, NULL) == 0);
   return 0;

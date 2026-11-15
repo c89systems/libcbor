@@ -1,322 +1,165 @@
 # Benchmarks
 
-Run `make benchmark VERSION=0.1.0` for Release C encode/decode, native Lua pointer
-transfer, Unix-stream/TCP/pipe bulk transfer and paced UDP/Unix-datagram records.
-One warmup is discarded; five measured rounds remain. JSONL and source/build
-context live under build/bench. No other build/test command is launched during
-measurement. The shared host's unrelated workloads remain uncontrolled.
+## Run and compare
 
-Run `make benchmark-compare VERSION=0.1.0` for PJK/libcbor 0.14.0's allocation-free
-stateless decoder and header-plus-payload encoder using the same Bootlin compiler,
-Release configuration, fixture and payload accounting. Each implementation has
-its own executable, linked exclusively against its own library prefix. Symbol
-checks reject accidental cross-linking. The reference source archive has a pinned
-SHA-256 in compare.sh, with tests/examples/sanitizers disabled. It is never shipped.
+```sh
+make benchmark VERSION=0.1.0
+make benchmark-compare VERSION=0.1.0
+```
 
-The initial codec fixture is repeated definite 1024-byte strings. Decode measures
-borrowed byte access, not payload memory bandwidth; consumers count spans. Encode
-copies into the same bounded output and verifies content. Setup is excluded.
-Our decoder validates structure and tracks complete items; the upstream low-level
-decoder has no enclosing grammar state. Neither byte-string case validates UTF-8.
-Results must preserve this distinction, rather than comparing our streaming path
-against an upstream DOM/materialization API and attributing that cost to CBOR.
+Release workloads cover C encode/decode, mapped records, JSON conversion, native
+Lua transfer, COSE/CWT and Unix/TCP/pipe/datagram transports. Setup and one warmup
+are excluded; five measured rounds remain. JSONL rounds and source/toolchain/run
+context live under `build/bench`. Run measurements serially and retain per-round
+variation: this is a shared host, and throughput is an optimization signal rather
+than a correctness gate.
 
-C-side Lua transfer generates 65536 independently encoded 1024-byte string items.
-A single native call moves them through C source/sink pointers and a 2 KiB buffer.
-The timed interval includes Lua chunk loading and the short wrapper call, but no
-VM creation, module load or endpoint setup. The explicit token-processing API is
-covered separately by tests; token traffic through Lua is an opt-in cost.
-The sink verifies every byte in both the C and Lua runs. Reports include process
-CPU time, native endpoint callback counts and source-copy bytes. Verification is
-timed equally; the sink compares bytes without making another payload copy.
+The independent comparator is PJK/libcbor 0.14.0, built with the same pinned
+Bootlin compiler and Release options. Executables link exclusively to their own
+library prefixes; symbol checks reject accidental cross-linking. PJK source is a
+pinned benchmark dependency. The product uses lonejson for mapped/JSON operations;
+raw codec and transfer paths run directly on native CBOR tokens.
 
-## Records and JSON
+## Mapped records and JSON
 
-`profile_benchmark` measures direct mapped encode/decode, JSON conversion, and
-an explicit JSON serialization/parsing control. Fixtures cover scalar-heavy
-records, nested records, 72-byte ASCII/multibyte text and approximately 64 KiB
-text. Integer fixtures include both signed and unsigned boundaries. All fields
-are required. Native and PJK executables independently emit and consume the same
-CBOR fixtures, using minimal integer encodings and explicit binary64 floats,
-with an exact byte comparison in `interop-reference`.
-That interop check covers this declared profile; it is not a certification of
-every representation accepted by either library.
+Fixtures cover scalar-heavy records, nested records, 72-byte ASCII/multibyte text
+and approximately 64 KiB text. Integer cases include signed/unsigned boundaries.
+All fields are required. `interop-reference` compares exact native/PJK bytes for
+minimal integer encodings and explicit binary64 floats.
 
-The PJK record profile builds a DOM from the same C record for encoding, or loads
-a DOM and checks keys, duplicates, required fields and native ranges for decoding.
-DOM construction and destruction are timed. The native profile opens, runs and
-cleans one conversion per record, including workspace allocation and record
-bounds/value checks. Immutable singleton leaf schemas reuse metadata validation
-through a bounded thread-local cache. Ordinary descriptor copies and schemas
-with submaps or record-dependent handlers validate on each construction.
-Runtime/schema/fixture preparation is reported separately. Native
-decoding resets its initialized destination as required by the public API.
+PJK builds and destroys a DOM per record. Decode validates keys, duplicates,
+required fields and native ranges. The native path opens, runs and cleans one
+conversion per record, including workspace allocation and record/value checks.
+Immutable singleton leaf schemas reuse validation metadata in a bounded
+thread-local cache; other descriptors undergo full validation. Setup includes
+runtime/schema preparation, and decode resets the initialized destination.
+Direct mapped operations use native lonejson records. The separate JSON control
+materializes a document to measure that additional representation boundary.
 
-For focused runs use `profile_benchmark mapped-encode 1000000 0 scalars`
-and `reference_mapped_benchmark encode 1000000 scalars`, substituting `decode`
-for both modes as needed. The native numeric argument before the fixture is
-its input/output chunk bound; zero selects 2 KiB. The reference DOM API takes
-the complete fixture buffer. Unknown fixture names fail without measurements.
+For focused runs:
 
-Three diagnostic controls default to zero. `BENCH_SYSTEM_ALLOCATOR=1` uses
-each library's system allocator without allocation counters.
-`BENCH_NO_VERIFY=1` moves output comparisons outside timed intervals; each
-round and latency pass is still checked. Input/type/range validation remains
-timed. Endpoint copy/read/write counters remain active in both controls.
-`BENCH_TRANSIENT_SCHEMA=1` selects an ordinary native descriptor copy, disabling
-identity-based validation reuse. Descriptor creation remains in setup; this
-control also changes lonejson's reset/analysis path and does not isolate just
-libcbor's cache. `reset-control` measures destination reset on its own.
-The JSONL identifies the selected controls. Keep instrumented and control
-results separate, and reverse execution order when checking shared-host bias.
+```sh
+build/x86_64-linux-gnu-release/profile_benchmark mapped-encode 1000000 0 scalars
+build/x86_64-linux-gnu-release/reference_mapped_benchmark encode 1000000 scalars
+```
 
-The JSON control deliberately materializes one fixture's JSON document in a
-fixed benchmark buffer. It measures the cost of that additional representation
-boundary. Direct mapped operations use no JSON parser or writer. These are
-in-memory fixtures with caller-selected C record and output storage. Generated
-multi-megabyte streaming and delivery-before-EOF proofs live in the conversion
-and mapped tests, independently of benchmark destination buffers.
+Substitute decode modes as needed. The native chunk argument is zero for the 2 KiB default; PJK's
+DOM accepts the complete fixture buffer. `BENCH_REPETITIONS` defaults to 10000
+small records per round; large text uses one sixteenth as many.
+`BENCH_CHUNK` selects the native input chunk bound.
 
-`BENCH_REPETITIONS` defaults to 10000 small records per round. Large text cases
-use one sixteenth as many records. `BENCH_CHUNK` selects the native input chunk
-bound (zero uses the 2 KiB default). Setup and one warmup are excluded; five timed
-rounds remain. A separate latency pass reports distributions of 16-record batch
-means for small fixtures and individual operations for large text. The JSONL
-records include the batch size and sample count, so batch means are not mistaken
-for single-request tail latency.
+Diagnostic controls default to zero:
 
-Record profiles report wall/CPU time, operations per second, allocator call
-counts and peak live user bytes observed through both configured allocators.
-Allocator bookkeeping headers and upstream process metadata outside those hooks
-are excluded. RSS is the process high-water mark, including fixtures and code.
-Endpoint copy counts cover the harness's reads, writes and final record copies;
-they do not count library-internal copies. A zero value therefore does not imply
-that the complete path copies nothing. Timing includes instrumentation on both
-implementations. Keep the individual JSONL rounds when assessing shared-host
-variance.
+| Control | Effect |
+| --- | --- |
+| `BENCH_SYSTEM_ALLOCATOR=1` | Use system allocators without allocation counters. |
+| `BENCH_NO_VERIFY=1` | Verify output outside timing; retain input/type/range validation and endpoint counters. |
+| `BENCH_TRANSIENT_SCHEMA=1` | Use an ordinary descriptor copy, including its different lonejson reset/analysis path. |
+| `reset-control` executable mode | Measure destination reset separately. |
 
-Transport results verify every payload byte and finish the parser after stream
-EOF. Streams cover a large definite item and an unknown-length indefinite item
-generated as bounded 1024-byte chunks. Datagram cases use independent 512-byte
-items, one outstanding at a time with fixture acknowledgments, and therefore
-measure paced request/ack throughput, not unreliable maximum packet flooding.
-Socket setup is excluded; scheduling/startup and endpoint completion remain in
-the elapsed interval. Socket buffers are deliberately small to exercise pressure.
-Transport CPU time sums sender and receiver process times. I/O and poll syscall
-counts include retries but exclude setup, teardown and the separate measurement
-pipe. Wire counts include both endpoints and fixture acknowledgments; each
-transmitted byte is counted twice. Datagram latency quantiles cover the first
-1024 request/ack exchanges, with their sample count reported.
+Keep control results separate and reverse execution order to check host bias.
+JSONL includes the control flags. Latency samples use 16-record batch means for
+small fixtures and individual operations for large text, with sample counts and
+batch sizes reported.
 
-These are reproducible workloads, not a universal fastest claim. Improve against
-measured profiles, retaining differences in validation and representation.
-Do not turn noisy shared-host throughput into a correctness threshold. Performance
-objective: exceed established implementations on the declared workload with equal
-semantics, without relaxing validation, streaming or memory bounds.
+### Current mapped measurements
 
-## Workspace memory and short-text follow-up
+The workspace/short-text optimization (`36c6d4d`) was measured against `70ab496`
+with identical benchmark objects, Release options and CPU affinity 7. The full
+allocator-tracked run used 100000 small records per round and 6251 large records.
+These are five-round medians in microseconds per record:
 
-The follow-up uses the same Release compiler/options and CPU affinity 7. The
-before executable links the verified SDK built from the production sources at
-`70ab496`; both native executables use identical benchmark objects. The host
-remains shared. With the system allocator and output comparisons outside timing,
-two reversed-order passes of 1000000 records per round gave these ten-round
-medians in microseconds per record:
+| Fixture | Native encode | PJK DOM encode | Native decode | PJK DOM decode |
+| --- | ---: | ---: | ---: | ---: |
+| Scalars | 0.512 | 0.613 | 0.787 | 0.949 |
+| Nested | 1.099 | 1.821 | 1.644 | 2.534 |
+| Short ASCII | 0.397 | 0.364 | 0.607 | 0.432 |
+| Short UTF-8 | 0.486 | 0.354 | 0.638 | 0.427 |
+| Large ASCII | 9.465 | 149.699 | 11.827 | 149.919 |
+| Large UTF-8 | 80.527 | 144.722 | 79.109 | 143.646 |
 
-| Profile | Before | After | PJK DOM |
+Two reversed-order system-allocator passes, with output comparisons outside
+timing and 1000000 records per round, produced these ten-round medians:
+
+| Profile | Before | Current | PJK DOM |
 | --- | ---: | ---: | ---: |
 | Short ASCII encode | 0.446 | 0.396 | 0.331 |
 | Short ASCII decode | 0.628 | 0.567 | 0.407 |
 | Scalars encode | 0.557 | 0.499 | 0.545 |
 | Scalars decode | 0.858 | 0.781 | 0.824 |
 
-Short ASCII improves by approximately 11% on encode and 10% on decode; it still
-trails PJK. A separate reversed-order comparison retained the complete-text
-decoder shortcut after it reduced short ASCII/UTF-8 decode medians by about
-17% versus workspace reduction alone. Instruction profiling points to generic
-decode dispatch and operation setup for further investigation; UTF-8 validation
-accounted for about 2.2% of that run's instructions, not its elapsed CPU time.
+Scalar performance meets the PJK comparison, and large ASCII leads by roughly
+16× encode and 13× decode. Short ASCII improved about 11%/10% and remains behind
+PJK. Raw rounds and context are `memory-*.jsonl` and `memory-comparison-context.txt`
+under `build/bench`.
 
-Allocator-tracked peak user bytes, including the prepared runtime baseline and
-excluding caller storage and allocator headers, fell as follows:
+### Memory and accounting
 
-| Workload | Before | After |
+Allocator-tracked peak user bytes include the 1600-byte prepared runtime baseline
+and exclude caller storage and allocator bookkeeping:
+
+| Workload | Before | Current |
 | --- | ---: | ---: |
 | Scalar/short-text encode, 2 KiB chunks | 18752 | 7176 |
 | Scalar/short-text decode, 2 KiB chunks | 18752 | 9224 |
 | Short ASCII decode, 16-byte chunks | 82256 | 7320 |
 | Large ASCII decode, 2 KiB chunks | 84288 | 74760 |
 
-The default scalar/short-text fixtures retain one allocation per operation.
-Nested records still reserve a conservative stack and source workspace: their peaks are 17744
-encode and 16416 decode. PJK's short-ASCII peaks remain much smaller at 351/375
-bytes. Large ASCII still leads in the full tracked comparison: 9.465/11.827
-native encode/decode versus 149.699/149.919 PJK, approximately 16/13 times faster.
+Flat small records use one allocation per operation. Nested records reserve more
+stack/source workspace: 17744 bytes encode and 16416 decode. PJK short-ASCII peaks
+are 351/375 bytes. Fragmented materialized text grows scratch within the field
+limit, including temporary old/new buffers during growth.
 
-The flat workspace reuses embedded codec frames, reserves four mapped frames,
-and includes input/source state only when needed. Fragmented materialized text
-and captured JSON grow scratch within the field limit instead of reserving
-64 KiB for the first small fragment; growth may temporarily hold two buffers.
-The allocation-cap, depth, fragmentation and failure tests cover these cases.
-Raw measurements and context are under `build/bench/memory-*.jsonl` and
-`memory-comparison-context.txt`; retain per-round variability when interpreting
-the timing differences.
+Peak allocation counters observe configured allocator hooks; RSS is the process
+high-water mark. Endpoint copy counts measure harness reads, writes and final
+record copies. Library-internal copies, provider allocations and Lua VM storage
+have separate ownership and are outside those counters.
 
-## Initial mapped optimization measurement
+## Codec, Lua and transport workloads
 
-Measured on 2026-11-15 with the same pinned compiler and PJK version below,
-Release `-O3`, no LTO, default 2 KiB chunks and CPU affinity 7. The host remains
-shared. Values are medians of five round means in microseconds per record,
-with 100000 small or 6251 large records per round. Both paths include operation
-construction, validation and teardown; immutable schemas are prepared once.
+The raw codec fixture repeats definite 1024-byte strings. Decode consumes borrowed
+spans; encode copies to bounded output and verifies it. PJK's low-level decoder
+is stateless, while the native decoder tracks enclosing grammar. This workload
+measures those interfaces separately from the DOM record comparison.
 
-| Fixture | Native encode | PJK DOM encode | Native decode | PJK DOM decode |
-| --- | ---: | ---: | ---: | ---: |
-| Scalars | 0.587 | 0.632 | 0.795 | 0.882 |
-| Nested | 1.126 | 1.747 | 1.656 | 2.580 |
-| Short ASCII | 0.433 | 0.353 | 0.608 | 0.425 |
-| Short UTF-8 | 0.506 | 0.352 | 0.709 | 0.430 |
-| Large ASCII | 8.621 | 148.910 | 10.862 | 147.472 |
-| Large UTF-8 | 84.672 | 141.459 | 92.316 | 140.671 |
+Native Lua transfer generates 65536 independently encoded 1024-byte items through
+C endpoints and a 2 KiB buffer. Timing includes Lua chunk loading and the wrapper
+call; VM/module/endpoint setup is excluded. The sink verifies every byte. Reports
+include CPU time, callback counts and endpoint copies.
 
-Allocator instrumentation matters when assessing scalar parity. With both
-`BENCH_SYSTEM_ALLOCATOR=1` and `BENCH_NO_VERIFY=1`, two reversed-order runs of
-1500000 scalar records per round gave ten-round medians of 0.611/0.885 native
-encode/decode versus 0.593/0.911 PJK. This is approximate parity (within 3.1%),
-not evidence that native always wins. Individual native encode rounds ranged
-from 0.565 to 0.694; PJK ranged from 0.570 to 0.653. The analogous large-ASCII
-control gave 7.058/9.275 versus 146.166/144.973, retaining the lead without
-timed output comparisons. Short text remains slower than PJK in this workload.
+Stream transports cover large definite items and producer-driven indefinite items
+in 1024-byte chunks, including parser finish at EOF. Datagram cases pace independent
+512-byte items with one request/ack outstanding. Small socket buffers exercise
+backpressure. Setup is excluded; scheduling and completion are timed. Transport
+CPU sums both processes; wire counts include both endpoints and acknowledgments.
+Datagram latency samples cover the first 1024 exchanges. Generated streaming tests
+separately verify bounded storage and delivery before producer EOF.
 
-A separate confirmation after the final harness audit gave scalar control
-medians of 0.538/0.841 native versus 0.551/0.803 PJK, again using two reversed
-execution orders. Both scalar comparisons remain within 5%; the direction
-changes between runs on this shared host. Large-ASCII control medians were
-7.267/9.900 versus 145.089/145.889, approximately 20 times faster on encode
-and 15 times on decode. Confirmation rounds and binary/build context are in
-`build/bench/confirmed-*.jsonl` and `confirmed-context.txt`.
+## COSE and CWT
 
-The native small-record path now makes one allocation and peaks at 18752
-tracked user bytes; fragmented large-text decode makes two and peaks at 84288.
-Raw rounds, controls, binary hashes and build context are retained under
-`build/bench/final-*.jsonl` and `final-comparison-context.txt` for this run.
+`cose-<profile>-<mode>.jsonl` covers GCM, A256KW, X25519, eight-recipient fanout,
+Ed25519, P-256 and HMAC. Objects use 1024-byte payloads, including operation
+construction/cleanup; prepared keys belong to setup. The fanout fixture repeats
+one public key with independent ephemeral keys.
 
-## Historical development baseline
+Stream roundtrips use a 4096-byte ring, authenticate before verifying plaintext
+and deliver before producer EOF. Default plaintext records are 2 KiB. JSONL counts
+**1024-byte payload accounting units**: 1000 units mean 1024000 plaintext bytes
+and 501 COSE records, including the empty final record. `mean_ns` and
+`wire_bytes_per_record` use that accounting unit. Stream latency values are
+amortized whole-stream samples; standalone samples cover individual operations.
 
-Measured at `fa06c8d9f560cd11d521cc998e7131dcdf5cadce`, on Linux x86_64,
-AMD EPYC-Rome-v5, Bootlin GCC 15.3.0, `-O3`, with default 2 KiB chunks.
-This historical Lua measurement used the former cpkt facade. Current builds
-use Lua's public C API directly; rerun the Lua/C transfer cases for current data.
-The shared host is uncontrolled. These are medians of five round means in
-microseconds per record, with 10000 small or 626 large records per round.
-Each executable verifies its output. PJK is version 0.14.0; its record path
-uses the DOM described above. Workspace preparation per operation is included.
+C and Lua stream workloads share the public library, endpoints and native
+scheduling. Lua timing includes borrowed-handle preparation and chunk execution.
+Static C object runs and shared C/Lua comparisons are identified separately.
+The common COSE workspace reserves `4 * record_bytes + 8 * header_bytes + 592`
+bytes plus state/recipients. Use current JSONL allocator counters for its peak.
 
-| Fixture | Native encode | PJK DOM encode | Native decode | PJK DOM decode |
-| --- | ---: | ---: | ---: | ---: |
-| Scalars | 3.26 | 0.77 | 3.79 | 1.15 |
-| Nested | 6.58 | 2.32 | 7.26 | 2.69 |
-| Short ASCII | 2.13 | 0.41 | 2.29 | 0.47 |
-| Short UTF-8 | 2.25 | 0.40 | 2.44 | 0.48 |
-| Large ASCII | 12.32 | 155.11 | 18.99 | 158.29 |
-| Large UTF-8 | 97.89 | 151.81 | 106.77 | 150.26 |
-
-Large ASCII maps outperform this DOM workload by about 12.6 times on encode
-and 8.3 times on decode. Small records are slower; per-operation schema
-validation and workspace setup remain optimization targets. The native profile
-makes 12 allocations and peaks at 44168 owned bytes for these small fixtures.
-Fragmented large materialized text adds a bounded 65536-byte scratch allocation.
-PJK's small fixtures peak between 351 and 2011 owned bytes. These memory figures
-exclude the caller's fixtures and the bookkeeping described above.
-
-The raw 1024-byte fixture measured 11938 MiB/s copying encode and 16462 MiB/s
-borrowed decode, versus 22293 and 147531 respectively for the PJK low-level
-helpers. The decode validation difference described above prevents treating
-this as equivalent whole-message parsing work. It still identifies dispatch
-cost worth reducing; this implementation does not yet win every measured path.
-
-Verified native pointer transfer measured 1153 MiB/s through Lua and 1203 MiB/s
-through C, including the same byte comparisons. Both made 32865 source calls
-and 32864 sink calls for 67305472 wire bytes, with no per-token VM traffic.
-Stream transport medians for 8 MiB were Unix 67.7 MiB/s, TCP 114.5 MiB/s and
-pipe 1104.7 MiB/s; indefinite variants were 70.0, 158.8 and 1030.8 MiB/s.
-Scheduling and tiny socket buffers affect these figures. Paced UDP and Unix
-datagrams measured 12.4 and 15.0 MiB/s and must be assessed as request/ack runs.
-
-The reproducible raw rounds, latency distributions, CPU/allocation/copy counters,
-transport syscalls and binary hashes are under `build/bench/*.jsonl`,
-`context.txt` and `comparison-context.txt` after running both benchmark targets.
-
-## COSE
-
-The same benchmark target now writes `cose-<profile>-<mode>.jsonl` for GCM,
-A256KW, X25519 and eight X25519 recipient entries. Standalone seal/open measure
-1024-byte opaque payloads, including operation construction and cleanup. Keys
-and algorithm preparation are outside timing and reported as setup_seconds.
-The eight-entry fixture repeats the same recipient public key with independently
-generated ephemeral keys; it measures fanout cost rather than eight identities.
-
-Stream roundtrips generate input through a fixed 4096-byte ring, authenticate
-before verifying each plaintext byte, and prove delivery before producer EOF.
-A 2 KiB plaintext record is the default. Here the JSONL records count **1024-byte
-payload accounting units**, not cryptographic records. Thus 1000 units represent
-1024000 plaintext bytes and 501 COSE records, including the empty final record.
-wire_bytes_per_record and mean_ns use the same accounting unit. One warmup is
-excluded and five measured rounds remain. Stream latency fields are amortized
-whole-stream values with one sample per round; they are not request-tail latency
-quantiles. Standalone latency samples cover the first 256 individual operations.
-
-The C/Lua comparison uses `cose_lua_benchmark` with the same shared libcbor,
-endpoints and native drive-until-wait scheduling. Lua passes native pointers and
-schedules bounded operations; it performs no per-token payload conversion.
-Its timed interval includes borrowed-handle preparation and Lua chunk execution;
-VM/module creation belongs to setup. Native standalone/core measurements link
-statically. These link modes are intentional and should not be conflated.
-
-The earlier encryption-only development run on the x86_64 host/compiler above, OpenSSL 3.6.5,
-1000 payload units and default bounds produced these medians of five rounds:
-
-| Profile | Standalone seal µs | Standalone open µs | Shared C stream MiB/s | Lua stream MiB/s |
-| --- | ---: | ---: | ---: | ---: |
-| A256GCM | 5.98 | 6.06 | 162.3 | 116.8 |
-| A256KW recipient | 12.85 | 14.87 | 142.8 | 126.1 |
-| X25519 recipient | 114.64 | 61.78 | 120.4 | 111.7 |
-| Eight X25519 entries | 870.29 | 90.85 | 48.7 | 47.1 |
-
-In that earlier implementation each paired stream made six libcbor allocator calls at construction, with 65904
-peak owned bytes including the four prepared key handles. Streaming length does
-not increase this workspace. OpenSSL provider/RNG allocations and Lua VM
-allocations are outside those allocator hooks; this is not allocation-free
-cryptography. Endpoint copy counters exclude internal codec/crypto copies.
-All C/Lua pairs used identical endpoint callback counts and copied-byte totals.
-Shared-host timing varies; these figures establish workloads, not speed gates.
-Binary hashes, dirty-source context, toolchain and configured repetition counts
-are recorded in the normal build/bench/context.txt.
-
-The Sign1/Mac0 extension adds ed25519, p256 and hmac profiles to the same object
-and bounded-ring stream workloads. CWT seal/verify workloads appear separately
-as `cwt-<profile>-<static|shared|lua>.jsonl`. They use native claims and an explicit
-lonejson algorithm/issuer/audience/clock policy; no JSON serialization occurs.
-The Lua CWT workload uses an owned native output span without a Lua string copy.
-Its interval includes Lua userdata allocation and dispatch; the static/shared
-native workload writes caller-owned storage. Provider and Lua allocations remain
-outside the libcbor allocator counters. Internal CBOR, claim and crypto copies
-are not inferred from endpoint counters. COSE object runs use 1024 payload
-bytes; CWT runs use the actual small issuer/audience/expiration map. Throughput
-uses the actual wire bytes per token. Setup includes key/token receiver creation;
-per-token measurements use prepared key bindings and reusable bounded workspaces.
-The configured libcbor allocator records zero calls per native CWT seal/verify;
-backend allocations and Lua output userdata remain separate. Binding replacement
-and construction occur outside the timed interval.
-
-The common COSE workspace now accommodates a bounded signature input:
-`4 * record_bytes + 8 * header_bytes + 592` bytes per operation, plus state and
-recipient storage. Historical allocation peaks above describe the previous
-encryption-only workspace; current JSONL counters are authoritative.
-
-The prepared-receiver x86_64 run with OpenSSL 3.6.5 and 1000 operations per
-round produced these medians of five measured rounds for the small CWT map.
-Every static/shared/Lua CWT interval recorded zero libcbor allocator calls:
+CWT workloads use prepared receivers, native claims and explicit lonejson
+algorithm/issuer/audience/clock policy. Lua produces a native owned output span.
+Wire throughput uses the actual small claim map. Construction/key binding belongs
+to setup; seal/verify uses reusable bounded workspaces. The x86_64 OpenSSL 3.6.5
+run with 1000 operations per round produced these five-round medians:
 
 | Profile | Shared C seal µs | Shared C verify µs | Lua seal µs | Lua verify µs |
 | --- | ---: | ---: | ---: | ---: |
@@ -324,10 +167,6 @@ Every static/shared/Lua CWT interval recorded zero libcbor allocator calls:
 | P-256 | 17.43 | 43.32 | 19.05 | 43.85 |
 | HMAC-SHA-256 | 2.65 | 3.98 | 5.04 | 5.04 |
 
-Earlier shared C bounded-record sign/verify roundtrips measured 21.8 MiB/s for Ed25519,
-32.0 MiB/s for P-256 and 247.8 MiB/s for HMAC, counting authenticated wire bytes.
-Those historical stream figures are initial measurements on a shared host, not comparative speed claims.
-The same run includes static C, native Lua spans, every encryption profile and
-Unix/TCP/UDP/pipe transport measurements under `build/bench/`. Timing and allocator
-context are recorded alongside the JSONL; rerun before drawing optimization or
-release-performance conclusions.
+Those CWT intervals recorded zero libcbor allocator calls; provider and Lua
+allocations are accounted for separately. Reproduce with the recorded compiler,
+fixture and controls when evaluating another change.

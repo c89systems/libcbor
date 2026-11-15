@@ -1,9 +1,8 @@
-# COSE encryption design
+# COSE encryption
 
-The development implementation provides both `COSE_Encrypt0` and `COSE_Encrypt`.
-Standalone bounded objects and
-ordered record streams are in scope. OpenSSL comes from the cpkt SDK; Lua
-continues to use its own public C API directly.
+libcbor provides `COSE_Encrypt0` and `COSE_Encrypt` as bounded objects and
+ordered record streams. OpenSSL comes from the cpkt SDK. Lua calls the same
+implementation through the public C API.
 
 ## Representation and transport
 
@@ -29,13 +28,11 @@ Both structures use the exact protected-header bytes from the wire when computin
 the COSE additional authenticated data. Never decode/re-encode protected headers
 as a substitute for authenticating those original bytes.
 
-## Initial algorithm profile
+## Algorithms
 
-Use a deliberately declared interoperable subset of
-[RFC 9053](https://www.rfc-editor.org/rfc/rfc9053.html). Implementing both object
-structures does not mean accepting every algorithm in the COSE registries.
+The supported [RFC 9053](https://www.rfc-editor.org/rfc/rfc9053.html) algorithms are:
 
-| Purpose | Initial algorithm |
+| Purpose | Algorithm |
 | --- | --- |
 | Content encryption | A256GCM, identifier 3; 32-byte key, 12-byte nonce, 16-byte authentication tag. |
 | Encrypt0 content key | Caller-provisioned 32-byte symmetric key. |
@@ -45,7 +42,7 @@ structures does not mean accepting every algorithm in the COSE registries.
 Standalone Encrypt generates a fresh random content key for each object, then wraps that
 key for every recipient. X25519 recipients use fresh ephemeral private keys;
 only their public COSE_Key values travel in the recipient headers. Recipients
-have no nested recipient layer in this milestone. Unsupported algorithms,
+use one layer. Unsupported algorithms,
 curves and recipient nesting make that recipient unusable; another supported
 recipient can still succeed. Malformed duplicate headers are fatal.
 
@@ -207,9 +204,8 @@ separately specified derivation. Cancellation consumes any reserved nonce/use.
 
 ## Receiver and integration surface
 
-Add `<c89cbor/cose.h>` with complete caller-storage shells, constructors and
-clangd-readable ownership/error comments. Keep OpenSSL types out of public
-structs and method parameters. Runtime factories and exported receiver-first
+`<c89cbor/cose.h>` declares caller-storage shells, constructors and
+ownership/error contracts. Public interfaces use libcbor types. Runtime factories and exported receiver-first
 twins cover key import, standalone encrypt0/encrypt/decrypt and record-stream
 seal/open operations. Default-value helpers also belong to the runtime.
 
@@ -243,28 +239,16 @@ own contexts use OpenSSL allocation and must be accounted for separately.
 
 Lua exposes the same factories, key receivers and conversion handles through the
 public C API. Native mapped records and native source/sink pointers stay in C.
-Explicit byte-string key import is an opt-in Lua copy. Add typed push/check key
-interop on the binding receiver, preserving owner pins and GC order.
+Byte-string key import copies into native storage. Typed push/check key
+interop preserves owner pins and GC order.
 
-## cpkt/OpenSSL and packaging
+## Dependencies and packaging
 
-Use cpkt as the OpenSSL SDK provider, following the lifecycle's provider and
-dependency contracts. The available validated baseline is cpkt 0.8.0, whose
-manifest selects OpenSSL 3.6.5 on all seven targets. Exact release/target/archive-SHA
-pins are recorded in scripts/deps.sh. Do not acquire
-OpenSSL independently, build from a sibling checkout or fall back to host libs.
-
-Consume the provider's public OpenSSL EVP API. The static SDK target is
-`OpenSSL::Crypto`; its shared target is `cpkt::openssl_crypto_shared`. COSE needs
-libcrypto, without linking libssl or the cpkt Lua facade. Preserve the provider's
-package layout and imported target dependency closure. Installed CMake/pkg-config
-metadata must resolve the required provider component from its own prefix.
-
-Ship COSE with the normal static/shared libcbor SDK and direct Lua facade on all
-seven targets. Adding OpenSSL as a required crypto dependency must update build,
-source smoke, installed consumers, LuaRocks prerequisites, exports and manifests
-together. Choose any necessary ABI change against the latest released artifact,
-independently of development version strings.
+COSE uses OpenSSL 3.6.5 from the pinned cpkt 0.8.0 SDK on all seven targets.
+Static consumers link `OpenSSL::Crypto`; the core shared target uses
+`cpkt::openssl_crypto_shared`. The public SDK keeps provider types private and
+propagates the installed dependency closure. See [development](development.md)
+for preparation and [delivery](delivery.md) for SDK and LuaRocks packaging.
 
 ## Verification and performance
 

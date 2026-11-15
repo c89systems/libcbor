@@ -17,104 +17,113 @@ struct lua_State;
  * Cleanup leaves Lua and all pushed handles alive with their independent pins.
  */
 typedef struct c89cbor_lua c89cbor_lua;
+/** Typed bridge methods for one live Lua state; initialize before use. */
 struct c89cbor_lua {
-  int (*push_datagram)(c89cbor_lua *, c89cbor_datagram *,
-                       int); /**< Borrow a datagram shell, pinning its owner. */
-  c89cbor_datagram *(*check_datagram)(
-      c89cbor_lua *, int); /**< Check a live typed datagram shell or NULL. */
-  int (*push_cwt)(c89cbor_lua *, c89cbor_cwt *,
-                  int); /**< Borrow native cwt, pin owner. */
-  c89cbor_cwt *(*check_cwt)(c89cbor_lua *,
-                            int); /**< Check live typed cwt or NULL. */
-  int (*push_cwt_options)(c89cbor_lua *, c89cbor_cwt_options *,
-                          int); /**< Borrow native cwt_options, pin owner. */
-  c89cbor_cwt_options *(*check_cwt_options)(
-      c89cbor_lua *, int); /**< Check live typed cwt_options or NULL. */
-  int (*push_jwt_claims)(c89cbor_lua *, lonejson_jwt_claims *,
-                         int); /**< Borrow native jwt_claims, pin owner. */
-  lonejson_jwt_claims *(*check_jwt_claims)(
-      c89cbor_lua *, int); /**< Check live typed jwt_claims or NULL. */
-  int (*push_jwt_policy)(c89cbor_lua *, lonejson_jwt_claim_policy *,
-                         int); /**< Borrow native jwt_policy, pin owner. */
-  lonejson_jwt_claim_policy *(*check_jwt_policy)(
-      c89cbor_lua *, int); /**< Check live typed jwt_policy or NULL. */
+  /** Borrow a datagram shell, pinning its owner. */
+  int (*push_datagram)(c89cbor_lua *, c89cbor_datagram *, int);
+  /** Check a live typed datagram shell or NULL. */
+  c89cbor_datagram *(*check_datagram)(c89cbor_lua *, int);
+  /** Borrow native cwt, pin owner. */
+  int (*push_cwt)(c89cbor_lua *, c89cbor_cwt *, int);
+  /** Check live typed cwt or NULL. */
+  c89cbor_cwt *(*check_cwt)(c89cbor_lua *, int);
+  /** Borrow native cwt_options, pin owner. */
+  int (*push_cwt_options)(c89cbor_lua *, c89cbor_cwt_options *, int);
+  /** Check live typed cwt_options or NULL. */
+  c89cbor_cwt_options *(*check_cwt_options)(c89cbor_lua *, int);
+  /** Borrow native jwt_claims, pin owner. */
+  int (*push_jwt_claims)(c89cbor_lua *, lonejson_jwt_claims *, int);
+  /** Check live typed jwt_claims or NULL. */
+  lonejson_jwt_claims *(*check_jwt_claims)(c89cbor_lua *, int);
+  /** Borrow native jwt_policy, pin owner. */
+  int (*push_jwt_policy)(c89cbor_lua *, lonejson_jwt_claim_policy *, int);
+  /** Check live typed jwt_policy or NULL. */
+  lonejson_jwt_claim_policy *(*check_jwt_policy)(c89cbor_lua *, int);
+  /** Push borrowed immutable key and pin its Lua owner. */
   int (*push_cose_key)(c89cbor_lua *, c89cbor_cose_key *, int);
-  /**< Push borrowed immutable key and pin its Lua owner. */
+  /** Return a live typed key, or NULL without raising a Lua error. */
   c89cbor_cose_key *(*check_cose_key)(c89cbor_lua *, int);
-  /**< Return a live typed key, or NULL without raising a Lua error. */
+  /** Push borrowed persistent operation and pin its Lua owner. */
   int (*push_cose_operation)(c89cbor_lua *, c89cbor_cose_operation *, int);
-  /**< Push borrowed persistent operation and pin its Lua owner. */
+  /** Return a live typed operation, or NULL. */
   c89cbor_cose_operation *(*check_cose_operation)(c89cbor_lua *, int);
-  /**< Return a live typed operation, or NULL. */
+  /** Push borrowed options; the owner preserves their pointed-to bytes. */
   int (*push_cose_options)(c89cbor_lua *, c89cbor_cose_options *, int);
-  /**< Push borrowed options; the owner preserves their pointed-to bytes. */
+  /** Return live borrowed options, or NULL. */
   c89cbor_cose_options *(*check_cose_options)(c89cbor_lua *, int);
-  /**< Return live borrowed options, or NULL. */
-  int (*push_options)(c89cbor_lua *, c89cbor_options *,
-                      int); /**< Push borrowed conversion configuration. */
-  c89cbor_options *(*check_options)(
-      c89cbor_lua *, int); /**< Check conversion configuration. */
-  int (*push_config)(c89cbor_lua *, c89cbor_config *,
-                     int); /**< Push borrowed runtime configuration. */
-  c89cbor_config *(*check_config)(c89cbor_lua *,
-                                  int); /**< Check runtime configuration. */
-  int (*push_runtime)(c89cbor_lua *, c89cbor *,
-                      int); /**< Push borrowed runtime. */
-  c89cbor *(*check_runtime)(c89cbor_lua *,
-                            int); /**< Check live runtime or NULL. */
-  int (*push_conversion)(c89cbor_lua *, c89cbor_conversion *,
-                         int); /**< Push borrowed conversion. */
-  c89cbor_conversion *(*check_conversion)(
-      c89cbor_lua *, int); /**< Check live conversion or NULL. */
-  int (*push_record_view)(c89cbor_lua *, lonejson_record_view *,
-                          int); /**< Push borrowed record_view. */
-  lonejson_record_view *(*check_record_view)(
-      c89cbor_lua *, int); /**< Check live record_view or NULL. */
-  int (*push_decoder)(c89cbor_lua *, c89cbor_decoder *,
-                      int); /**< Push borrowed decoder. */
-  c89cbor_decoder *(*check_decoder)(c89cbor_lua *,
-                                    int); /**< Check live decoder or NULL. */
-  int (*push_encoder)(c89cbor_lua *, c89cbor_encoder *,
-                      int); /**< Push borrowed encoder. */
-  c89cbor_encoder *(*check_encoder)(c89cbor_lua *,
-                                    int); /**< Check live encoder or NULL. */
-  int (*push_reader)(c89cbor_lua *, c89cbor_reader *,
-                     int); /**< Push borrowed reader. */
-  c89cbor_reader *(*check_reader)(c89cbor_lua *,
-                                  int); /**< Check live reader or NULL. */
-  int (*push_source)(c89cbor_lua *, c89cbor_source *,
-                     int); /**< Push borrowed source. */
-  c89cbor_source *(*check_source)(c89cbor_lua *,
-                                  int); /**< Check live source or NULL. */
-  int (*push_sink)(c89cbor_lua *, c89cbor_sink *,
-                   int); /**< Push borrowed sink. */
-  c89cbor_sink *(*check_sink)(c89cbor_lua *,
-                              int); /**< Check live sink or NULL. */
-  int (*push_transfer)(c89cbor_lua *, c89cbor_transfer *,
-                       int); /**< Push borrowed transfer. */
-  c89cbor_transfer *(*check_transfer)(c89cbor_lua *,
-                                      int); /**< Check live transfer or NULL. */
-  int (*push_fd)(c89cbor_lua *, c89cbor_fd *, int); /**< Push borrowed fd. */
-  c89cbor_fd *(*check_fd)(c89cbor_lua *, int); /**< Check live fd or NULL. */
-  int (*push_allocator)(c89cbor_lua *, c89cbor_allocator *,
-                        int); /**< Push borrowed allocator. */
-  c89cbor_allocator *(*check_allocator)(
-      c89cbor_lua *, int); /**< Check live allocator or NULL. */
-  int (*push_span)(c89cbor_lua *, const void *, size_t,
-                   int); /**< Push borrowed bytes. */
-  int (*check_span)(c89cbor_lua *, int, const void **,
-                    size_t *);   /**< Check span. */
-  int (*cleanup)(c89cbor_lua *); /**< Invalidate binding. */
-  int (*destroy)(c89cbor_lua *); /**< Free allocated binding. */
-  int (*diagnostic)(const c89cbor_lua *,
-                    c89cbor_error *); /**< Copy diagnostic. */
-  struct lua_State *state;            /**< Private borrowed state. */
-  c89cbor_allocator allocator;        /**< Private recorded allocator. */
-  c89cbor_error error;                /**< Private retained diagnostic. */
-  int active;                         /**< Private initialization flag. */
-  int owned;                          /**< Private ownership flag. */
+  /** Push borrowed conversion configuration. */
+  int (*push_options)(c89cbor_lua *, c89cbor_options *, int);
+  /** Check conversion configuration. */
+  c89cbor_options *(*check_options)(c89cbor_lua *, int);
+  /** Push borrowed runtime configuration. */
+  int (*push_config)(c89cbor_lua *, c89cbor_config *, int);
+  /** Check runtime configuration. */
+  c89cbor_config *(*check_config)(c89cbor_lua *, int);
+  /** Push borrowed runtime. */
+  int (*push_runtime)(c89cbor_lua *, c89cbor *, int);
+  /** Check live runtime or NULL. */
+  c89cbor *(*check_runtime)(c89cbor_lua *, int);
+  /** Push borrowed conversion. */
+  int (*push_conversion)(c89cbor_lua *, c89cbor_conversion *, int);
+  /** Check live conversion or NULL. */
+  c89cbor_conversion *(*check_conversion)(c89cbor_lua *, int);
+  /** Push borrowed record_view. */
+  int (*push_record_view)(c89cbor_lua *, lonejson_record_view *, int);
+  /** Check live record_view or NULL. */
+  lonejson_record_view *(*check_record_view)(c89cbor_lua *, int);
+  /** Push borrowed decoder. */
+  int (*push_decoder)(c89cbor_lua *, c89cbor_decoder *, int);
+  /** Check live decoder or NULL. */
+  c89cbor_decoder *(*check_decoder)(c89cbor_lua *, int);
+  /** Push borrowed encoder. */
+  int (*push_encoder)(c89cbor_lua *, c89cbor_encoder *, int);
+  /** Check live encoder or NULL. */
+  c89cbor_encoder *(*check_encoder)(c89cbor_lua *, int);
+  /** Push borrowed reader. */
+  int (*push_reader)(c89cbor_lua *, c89cbor_reader *, int);
+  /** Check live reader or NULL. */
+  c89cbor_reader *(*check_reader)(c89cbor_lua *, int);
+  /** Push borrowed source. */
+  int (*push_source)(c89cbor_lua *, c89cbor_source *, int);
+  /** Check live source or NULL. */
+  c89cbor_source *(*check_source)(c89cbor_lua *, int);
+  /** Push borrowed sink. */
+  int (*push_sink)(c89cbor_lua *, c89cbor_sink *, int);
+  /** Check live sink or NULL. */
+  c89cbor_sink *(*check_sink)(c89cbor_lua *, int);
+  /** Push borrowed transfer. */
+  int (*push_transfer)(c89cbor_lua *, c89cbor_transfer *, int);
+  /** Check live transfer or NULL. */
+  c89cbor_transfer *(*check_transfer)(c89cbor_lua *, int);
+  /** Push borrowed fd. */
+  int (*push_fd)(c89cbor_lua *, c89cbor_fd *, int);
+  /** Check live fd or NULL. */
+  c89cbor_fd *(*check_fd)(c89cbor_lua *, int);
+  /** Push borrowed allocator. */
+  int (*push_allocator)(c89cbor_lua *, c89cbor_allocator *, int);
+  /** Check live allocator or NULL. */
+  c89cbor_allocator *(*check_allocator)(c89cbor_lua *, int);
+  /** Push borrowed bytes. */
+  int (*push_span)(c89cbor_lua *, const void *, size_t, int);
+  /** Check span. */
+  int (*check_span)(c89cbor_lua *, int, const void **, size_t *);
+  /** Invalidate binding. */
+  int (*cleanup)(c89cbor_lua *);
+  /** Free allocated binding. */
+  int (*destroy)(c89cbor_lua *);
+  /** Copy diagnostic. */
+  int (*diagnostic)(const c89cbor_lua *, c89cbor_error *);
+  /** Private borrowed state. */
+  struct lua_State *state;
+  /** Private recorded allocator. */
+  c89cbor_allocator allocator;
+  /** Private retained diagnostic. */
+  c89cbor_error error;
+  /** Private initialization flag. */
+  int active;
+  /** Private ownership flag. */
+  int owned;
 };
-/** Standard Lua module opener; bootstrap exception to receiver parity. */
 /** Borrow a datagram shell; descriptor/storage remain caller-owned. */
 C89CBOR_API int c89cbor_lua_push_datagram(c89cbor_lua *, c89cbor_datagram *,
                                           int owner_index);
@@ -147,6 +156,7 @@ C89CBOR_API int c89cbor_lua_push_jwt_policy(c89cbor_lua *,
 /** Check live typed jwt_policy, returning NULL without raising on mismatch. */
 C89CBOR_API lonejson_jwt_claim_policy *
 c89cbor_lua_check_jwt_policy(c89cbor_lua *, int index);
+/** Open the native cbor module on the stack; returns one module table. */
 C89CBOR_API int luaopen_cbor(struct lua_State *state);
 /** Borrow a native key; no secret copy or ownership transfer. Pin owner_index
  * until close/GC; zero selects caller-managed native lifetime. */
