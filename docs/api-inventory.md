@@ -1,0 +1,227 @@
+# Public API inventory
+
+Generated from the public headers by CMake. Receiver twins share their
+implementation. The API surface tests compare their function pointers in
+installed static/shared consumers; Lua exports and native interop are checked
+separately. Lua cleanup/destroy are aliases for close with Lua ownership rules.
+Map methods accept a typed native record view. Binding methods are native C
+embedding interfaces and do not move records through Lua tables.
+
+| Export | C receiver or exception | Lua surface |
+| --- | --- | --- |
+| `c89cbor_cbor_to_json` | runtime.cbor_to_json | runtime:cbor_to_json |
+| `c89cbor_cbor_to_json_init` | runtime.cbor_to_json_init | runtime:cbor_to_json_init |
+| `c89cbor_cbor_to_json_open` | runtime.cbor_to_json_open | runtime:cbor_to_json_open |
+| `c89cbor_cleanup` | runtime.cleanup | runtime:cleanup |
+| `c89cbor_conversion_cleanup` | conversion.cleanup | conversion:cleanup |
+| `c89cbor_conversion_destroy` | conversion.destroy | conversion:destroy |
+| `c89cbor_conversion_diagnostic` | conversion.diagnostic | conversion:diagnostic |
+| `c89cbor_conversion_progress` | conversion.progress | conversion:progress |
+| `c89cbor_conversion_step` | conversion.step | conversion:step |
+| `c89cbor_cose_decrypt` | runtime.cose_decrypt | runtime:cose_decrypt |
+| `c89cbor_cose_decrypt_init` | runtime.cose_decrypt_init | runtime:cose_decrypt_init |
+| `c89cbor_cose_decrypt_open` | runtime.cose_decrypt_open | runtime:cose_decrypt_open |
+| `c89cbor_cose_decrypt_stream` | runtime.cose_decrypt_stream | runtime:cose_decrypt_stream |
+| `c89cbor_cose_decrypt_stream_init` | runtime.cose_decrypt_stream_init | runtime:cose_decrypt_stream_init |
+| `c89cbor_cose_decrypt_stream_open` | runtime.cose_decrypt_stream_open | runtime:cose_decrypt_stream_open |
+| `c89cbor_cose_encrypt` | runtime.cose_encrypt | runtime:cose_encrypt |
+| `c89cbor_cose_encrypt0` | runtime.cose_encrypt0 | runtime:cose_encrypt0 |
+| `c89cbor_cose_encrypt0_init` | runtime.cose_encrypt0_init | runtime:cose_encrypt0_init |
+| `c89cbor_cose_encrypt0_open` | runtime.cose_encrypt0_open | runtime:cose_encrypt0_open |
+| `c89cbor_cose_encrypt_init` | runtime.cose_encrypt_init | runtime:cose_encrypt_init |
+| `c89cbor_cose_encrypt_open` | runtime.cose_encrypt_open | runtime:cose_encrypt_open |
+| `c89cbor_cose_encrypt_stream` | runtime.cose_encrypt_stream | runtime:cose_encrypt_stream |
+| `c89cbor_cose_encrypt_stream_init` | runtime.cose_encrypt_stream_init | runtime:cose_encrypt_stream_init |
+| `c89cbor_cose_encrypt_stream_open` | runtime.cose_encrypt_stream_open | runtime:cose_encrypt_stream_open |
+| `c89cbor_cose_key_cleanup` | cose_key.cleanup | cose_key:cleanup |
+| `c89cbor_cose_key_create` | runtime.cose_key_create | runtime:cose_key_create |
+| `c89cbor_cose_key_destroy` | cose_key.destroy | cose_key:destroy |
+| `c89cbor_cose_key_diagnostic` | cose_key.diagnostic | cose_key:diagnostic |
+| `c89cbor_cose_key_init` | runtime.cose_key_init | runtime:cose_key_init |
+| `c89cbor_cose_key_metadata` | cose_key.metadata | cose_key:metadata |
+| `c89cbor_cose_key_public_key` | cose_key.public_key | cose_key:public_key |
+| `c89cbor_cose_mac0` | runtime.cose_mac0 | runtime:cose_mac0 |
+| `c89cbor_cose_mac0_init` | runtime.cose_mac0_init | runtime:cose_mac0_init |
+| `c89cbor_cose_mac0_open` | runtime.cose_mac0_open | runtime:cose_mac0_open |
+| `c89cbor_cose_mac0_stream` | runtime.cose_mac0_stream | runtime:cose_mac0_stream |
+| `c89cbor_cose_mac0_stream_init` | runtime.cose_mac0_stream_init | runtime:cose_mac0_stream_init |
+| `c89cbor_cose_mac0_stream_open` | runtime.cose_mac0_stream_open | runtime:cose_mac0_stream_open |
+| `c89cbor_cose_operation_cleanup` | cose_operation.cleanup | cose_operation:cleanup |
+| `c89cbor_cose_operation_destroy` | cose_operation.destroy | cose_operation:destroy |
+| `c89cbor_cose_operation_diagnostic` | cose_operation.diagnostic | cose_operation:diagnostic |
+| `c89cbor_cose_operation_next` | cose_operation.next | cose_operation:next |
+| `c89cbor_cose_operation_progress` | cose_operation.progress | cose_operation:progress |
+| `c89cbor_cose_operation_step` | cose_operation.step | cose_operation:step |
+| `c89cbor_cose_operation_stream_info` | cose_operation.stream_info | cose_operation:stream_info |
+| `c89cbor_cose_sign1` | runtime.cose_sign1 | runtime:cose_sign1 |
+| `c89cbor_cose_sign1_init` | runtime.cose_sign1_init | runtime:cose_sign1_init |
+| `c89cbor_cose_sign1_open` | runtime.cose_sign1_open | runtime:cose_sign1_open |
+| `c89cbor_cose_sign1_stream` | runtime.cose_sign1_stream | runtime:cose_sign1_stream |
+| `c89cbor_cose_sign1_stream_init` | runtime.cose_sign1_stream_init | runtime:cose_sign1_stream_init |
+| `c89cbor_cose_sign1_stream_open` | runtime.cose_sign1_stream_open | runtime:cose_sign1_stream_open |
+| `c89cbor_cose_verify1` | runtime.cose_verify1 | runtime:cose_verify1 |
+| `c89cbor_cose_verify1_init` | runtime.cose_verify1_init | runtime:cose_verify1_init |
+| `c89cbor_cose_verify1_open` | runtime.cose_verify1_open | runtime:cose_verify1_open |
+| `c89cbor_cose_verify1_stream` | runtime.cose_verify1_stream | runtime:cose_verify1_stream |
+| `c89cbor_cose_verify1_stream_init` | runtime.cose_verify1_stream_init | runtime:cose_verify1_stream_init |
+| `c89cbor_cose_verify1_stream_open` | runtime.cose_verify1_stream_open | runtime:cose_verify1_stream_open |
+| `c89cbor_cose_verify_mac0` | runtime.cose_verify_mac0 | runtime:cose_verify_mac0 |
+| `c89cbor_cose_verify_mac0_init` | runtime.cose_verify_mac0_init | runtime:cose_verify_mac0_init |
+| `c89cbor_cose_verify_mac0_open` | runtime.cose_verify_mac0_open | runtime:cose_verify_mac0_open |
+| `c89cbor_cose_verify_mac0_stream` | runtime.cose_verify_mac0_stream | runtime:cose_verify_mac0_stream |
+| `c89cbor_cose_verify_mac0_stream_init` | runtime.cose_verify_mac0_stream_init | runtime:cose_verify_mac0_stream_init |
+| `c89cbor_cose_verify_mac0_stream_open` | runtime.cose_verify_mac0_stream_open | runtime:cose_verify_mac0_stream_open |
+| `c89cbor_create` | Runtime bootstrap | cbor.create |
+| `c89cbor_cwt_claim` | cwt.claim | cwt:claim |
+| `c89cbor_cwt_cleanup` | cwt.cleanup | cwt:cleanup |
+| `c89cbor_cwt_create` | runtime.cwt_create | runtime:cwt_create |
+| `c89cbor_cwt_destroy` | cwt.destroy | cwt:destroy |
+| `c89cbor_cwt_diagnostic` | cwt.diagnostic | cwt:diagnostic |
+| `c89cbor_cwt_init` | runtime.cwt_init | runtime:cwt_init |
+| `c89cbor_cwt_seal` | cwt.seal | cwt:seal |
+| `c89cbor_cwt_set_claims` | cwt.set_claims | cwt:set_claims |
+| `c89cbor_cwt_set_lonejson` | cwt.set_lonejson | cwt:set_lonejson |
+| `c89cbor_cwt_set_seal_keys` | cwt.set_seal_keys | cwt:set_seal_keys |
+| `c89cbor_cwt_set_verify_keys` | cwt.set_verify_keys | cwt:set_verify_keys |
+| `c89cbor_cwt_verify` | cwt.verify | cwt:verify |
+| `c89cbor_cwt_view_get` | cwt.view_get | cwt:view_get |
+| `c89cbor_datagram_cleanup` | datagram.cleanup | datagram:cleanup |
+| `c89cbor_datagram_create` | runtime.datagram_create | runtime:datagram_create |
+| `c89cbor_datagram_destroy` | datagram.destroy | datagram:destroy |
+| `c89cbor_datagram_diagnostic` | datagram.diagnostic | datagram:diagnostic |
+| `c89cbor_datagram_init` | runtime.datagram_init | runtime:datagram_init |
+| `c89cbor_datagram_progress` | datagram.progress | datagram:progress |
+| `c89cbor_datagram_receive` | datagram.receive | datagram:receive |
+| `c89cbor_datagram_reset` | datagram.reset | datagram:reset |
+| `c89cbor_datagram_send` | datagram.send | datagram:send |
+| `c89cbor_datagram_set_peer` | datagram.set_peer | datagram:set_peer |
+| `c89cbor_datagram_sink` | datagram.sink | datagram:sink |
+| `c89cbor_datagram_source` | datagram.source | datagram:source |
+| `c89cbor_datagram_stream_source` | datagram.stream_source | datagram:stream_source |
+| `c89cbor_decode_map` | runtime.decode_map | runtime:decode_map |
+| `c89cbor_decode_map_init` | runtime.decode_map_init | runtime:decode_map_init |
+| `c89cbor_decode_map_open` | runtime.decode_map_open | runtime:decode_map_open |
+| `c89cbor_decode_map_view` | runtime.decode_map_view | runtime:decode_map_view |
+| `c89cbor_decode_map_view_init` | runtime.decode_map_view_init | runtime:decode_map_view_init |
+| `c89cbor_decode_map_view_open` | runtime.decode_map_view_open | runtime:decode_map_view_open |
+| `c89cbor_decoder_cleanup` | decoder.cleanup | decoder:cleanup |
+| `c89cbor_decoder_create` | runtime.decoder_create | runtime:decoder_create |
+| `c89cbor_decoder_destroy` | decoder.destroy | decoder:destroy |
+| `c89cbor_decoder_diagnostic` | decoder.diagnostic | decoder:diagnostic |
+| `c89cbor_decoder_finish` | decoder.finish | decoder:finish |
+| `c89cbor_decoder_init` | runtime.decoder_init | runtime:decoder_init |
+| `c89cbor_decoder_next` | decoder.next | decoder:next |
+| `c89cbor_decoder_next_tag` | decoder.next_tag | decoder:next_tag |
+| `c89cbor_decoder_reset` | decoder.reset | decoder:reset |
+| `c89cbor_default_allocator` | Value helper; runtime.default_allocator twin | cbor.default_allocator |
+| `c89cbor_default_config` | Value helper; runtime.default_config twin | cbor.default_config |
+| `c89cbor_default_cose_options` | Value helper; runtime.default_cose_options twin | cbor.default_cose_options |
+| `c89cbor_default_cwt_options` | Value helper; runtime.default_cwt_options twin | cbor.default_cwt_options |
+| `c89cbor_default_options` | Value helper; runtime.default_options twin | cbor.default_options |
+| `c89cbor_destroy` | runtime.destroy | runtime:destroy |
+| `c89cbor_diagnostic` | runtime.diagnostic | runtime:diagnostic |
+| `c89cbor_encode_map` | runtime.encode_map | runtime:encode_map |
+| `c89cbor_encode_map_init` | runtime.encode_map_init | runtime:encode_map_init |
+| `c89cbor_encode_map_open` | runtime.encode_map_open | runtime:encode_map_open |
+| `c89cbor_encode_map_view` | runtime.encode_map_view | runtime:encode_map_view |
+| `c89cbor_encode_map_view_init` | runtime.encode_map_view_init | runtime:encode_map_view_init |
+| `c89cbor_encode_map_view_open` | runtime.encode_map_view_open | runtime:encode_map_view_open |
+| `c89cbor_encoder_advance` | encoder.advance | encoder:advance |
+| `c89cbor_encoder_cleanup` | encoder.cleanup | encoder:cleanup |
+| `c89cbor_encoder_create` | runtime.encoder_create | runtime:encoder_create |
+| `c89cbor_encoder_destroy` | encoder.destroy | encoder:destroy |
+| `c89cbor_encoder_diagnostic` | encoder.diagnostic | encoder:diagnostic |
+| `c89cbor_encoder_end_tag` | encoder.end_tag | encoder:end_tag |
+| `c89cbor_encoder_finish` | encoder.finish | encoder:finish |
+| `c89cbor_encoder_init` | runtime.encoder_init | runtime:encoder_init |
+| `c89cbor_encoder_peek` | encoder.peek | encoder:peek |
+| `c89cbor_encoder_put` | encoder.put | encoder:put |
+| `c89cbor_encoder_read` | encoder.read | encoder:read |
+| `c89cbor_encoder_reset` | encoder.reset | encoder:reset |
+| `c89cbor_encoder_tag` | encoder.tag | encoder:tag |
+| `c89cbor_fd_cleanup` | fd.cleanup | fd:cleanup |
+| `c89cbor_fd_create` | runtime.fd_create | runtime:fd_create |
+| `c89cbor_fd_destroy` | fd.destroy | fd:destroy |
+| `c89cbor_fd_diagnostic` | fd.diagnostic | fd:diagnostic |
+| `c89cbor_fd_init` | runtime.fd_init | runtime:fd_init |
+| `c89cbor_fd_sink` | fd.sink | fd:sink |
+| `c89cbor_fd_source` | fd.source | fd:source |
+| `c89cbor_float64_get` | runtime.float64_get | runtime:float64_get |
+| `c89cbor_float64_set` | runtime.float64_set | runtime:float64_set |
+| `c89cbor_init` | Runtime bootstrap | cbor.init |
+| `c89cbor_json_to_cbor` | runtime.json_to_cbor | runtime:json_to_cbor |
+| `c89cbor_json_to_cbor_init` | runtime.json_to_cbor_init | runtime:json_to_cbor_init |
+| `c89cbor_json_to_cbor_open` | runtime.json_to_cbor_open | runtime:json_to_cbor_open |
+| `c89cbor_length32` | runtime.length32 | runtime:length32 |
+| `c89cbor_lua_check_allocator` | binding.check_allocator | Native binding.check_allocator |
+| `c89cbor_lua_check_config` | binding.check_config | Native binding.check_config |
+| `c89cbor_lua_check_conversion` | binding.check_conversion | Native binding.check_conversion |
+| `c89cbor_lua_check_cose_key` | binding.check_cose_key | Native binding.check_cose_key |
+| `c89cbor_lua_check_cose_operation` | binding.check_cose_operation | Native binding.check_cose_operation |
+| `c89cbor_lua_check_cose_options` | binding.check_cose_options | Native binding.check_cose_options |
+| `c89cbor_lua_check_cwt` | binding.check_cwt | Native binding.check_cwt |
+| `c89cbor_lua_check_cwt_options` | binding.check_cwt_options | Native binding.check_cwt_options |
+| `c89cbor_lua_check_datagram` | binding.check_datagram | Native binding.check_datagram |
+| `c89cbor_lua_check_decoder` | binding.check_decoder | Native binding.check_decoder |
+| `c89cbor_lua_check_encoder` | binding.check_encoder | Native binding.check_encoder |
+| `c89cbor_lua_check_fd` | binding.check_fd | Native binding.check_fd |
+| `c89cbor_lua_check_jwt_claims` | binding.check_jwt_claims | Native binding.check_jwt_claims |
+| `c89cbor_lua_check_jwt_policy` | binding.check_jwt_policy | Native binding.check_jwt_policy |
+| `c89cbor_lua_check_options` | binding.check_options | Native binding.check_options |
+| `c89cbor_lua_check_reader` | binding.check_reader | Native binding.check_reader |
+| `c89cbor_lua_check_record_view` | binding.check_record_view | Native binding.check_record_view |
+| `c89cbor_lua_check_runtime` | binding.check_runtime | Native binding.check_runtime |
+| `c89cbor_lua_check_sink` | binding.check_sink | Native binding.check_sink |
+| `c89cbor_lua_check_source` | binding.check_source | Native binding.check_source |
+| `c89cbor_lua_check_span` | binding.check_span | Native binding.check_span |
+| `c89cbor_lua_check_transfer` | binding.check_transfer | Native binding.check_transfer |
+| `c89cbor_lua_cleanup` | binding.cleanup | Native binding.cleanup |
+| `c89cbor_lua_create` | Binding bootstrap | Native embedder |
+| `c89cbor_lua_destroy` | binding.destroy | Native binding.destroy |
+| `c89cbor_lua_diagnostic` | binding.diagnostic | Native binding.diagnostic |
+| `c89cbor_lua_init` | Binding bootstrap | Native embedder |
+| `c89cbor_lua_push_allocator` | binding.push_allocator | Native binding.push_allocator |
+| `c89cbor_lua_push_config` | binding.push_config | Native binding.push_config |
+| `c89cbor_lua_push_conversion` | binding.push_conversion | Native binding.push_conversion |
+| `c89cbor_lua_push_cose_key` | binding.push_cose_key | Native binding.push_cose_key |
+| `c89cbor_lua_push_cose_operation` | binding.push_cose_operation | Native binding.push_cose_operation |
+| `c89cbor_lua_push_cose_options` | binding.push_cose_options | Native binding.push_cose_options |
+| `c89cbor_lua_push_cwt` | binding.push_cwt | Native binding.push_cwt |
+| `c89cbor_lua_push_cwt_options` | binding.push_cwt_options | Native binding.push_cwt_options |
+| `c89cbor_lua_push_datagram` | binding.push_datagram | Native binding.push_datagram |
+| `c89cbor_lua_push_decoder` | binding.push_decoder | Native binding.push_decoder |
+| `c89cbor_lua_push_encoder` | binding.push_encoder | Native binding.push_encoder |
+| `c89cbor_lua_push_fd` | binding.push_fd | Native binding.push_fd |
+| `c89cbor_lua_push_jwt_claims` | binding.push_jwt_claims | Native binding.push_jwt_claims |
+| `c89cbor_lua_push_jwt_policy` | binding.push_jwt_policy | Native binding.push_jwt_policy |
+| `c89cbor_lua_push_options` | binding.push_options | Native binding.push_options |
+| `c89cbor_lua_push_reader` | binding.push_reader | Native binding.push_reader |
+| `c89cbor_lua_push_record_view` | binding.push_record_view | Native binding.push_record_view |
+| `c89cbor_lua_push_runtime` | binding.push_runtime | Native binding.push_runtime |
+| `c89cbor_lua_push_sink` | binding.push_sink | Native binding.push_sink |
+| `c89cbor_lua_push_source` | binding.push_source | Native binding.push_source |
+| `c89cbor_lua_push_span` | binding.push_span | Native binding.push_span |
+| `c89cbor_lua_push_transfer` | binding.push_transfer | Native binding.push_transfer |
+| `c89cbor_reader_cleanup` | reader.cleanup | reader:cleanup |
+| `c89cbor_reader_create` | runtime.reader_create | runtime:reader_create |
+| `c89cbor_reader_destroy` | reader.destroy | reader:destroy |
+| `c89cbor_reader_diagnostic` | reader.diagnostic | reader:diagnostic |
+| `c89cbor_reader_finish` | reader.finish | reader:finish |
+| `c89cbor_reader_init` | runtime.reader_init | runtime:reader_init |
+| `c89cbor_reader_next` | reader.next | reader:next |
+| `c89cbor_reader_reset` | reader.reset | reader:reset |
+| `c89cbor_runtime_default_allocator` | runtime.default_allocator | runtime:default_allocator |
+| `c89cbor_runtime_default_config` | runtime.default_config | runtime:default_config |
+| `c89cbor_runtime_default_cose_options` | runtime.default_cose_options | runtime:default_cose_options |
+| `c89cbor_runtime_default_cwt_options` | runtime.default_cwt_options | runtime:default_cwt_options |
+| `c89cbor_runtime_default_options` | runtime.default_options | runtime:default_options |
+| `c89cbor_status_string` | runtime.status_string | runtime:status_string |
+| `c89cbor_transfer_cleanup` | transfer.cleanup | transfer:cleanup |
+| `c89cbor_transfer_create` | runtime.transfer_create | runtime:transfer_create |
+| `c89cbor_transfer_destroy` | transfer.destroy | transfer:destroy |
+| `c89cbor_transfer_diagnostic` | transfer.diagnostic | transfer:diagnostic |
+| `c89cbor_transfer_init` | runtime.transfer_init | runtime:transfer_init |
+| `c89cbor_transfer_progress` | transfer.progress | transfer:progress |
+| `c89cbor_transfer_step` | transfer.step | transfer:step |
+| `c89cbor_version` | runtime.version | runtime:version |
+| `luaopen_cbor` | Module opener bootstrap | require('cbor') |

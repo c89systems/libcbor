@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname -- "$0")/workspace.sh"
+# The independently reconstructed source supplies the native Release lane.
+scripts/source.sh "${1:-}"
+scripts/source-smoke.sh "${1:-}"
+for target in x86_64-linux-musl aarch64-linux-gnu aarch64-linux-musl armhf-linux-gnu armhf-linux-musl arm64-apple-darwin; do
+  scripts/build.sh core "$target" Release "${1:-}"
+  if [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]]; then
+    scripts/build.sh test "$target" Release
+  fi
+  scripts/build.sh lua "$target" Release
+  if [[ $target != arm64-apple-darwin || $(uname -s) == Darwin ]]; then
+    scripts/build.sh lua-test "$target" Release
+  else
+    ctest --test-dir "build/lua-$target-release" -R '^lua-exports$' --output-on-failure --stop-on-failure --no-tests=error
+  fi
+  scripts/package.sh "$target" Release "${1:-}"
+  scripts/verify-package.sh "$target" Release "${1:-}"
+done

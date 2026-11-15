@@ -1,0 +1,4 @@
+{
+  global: luaopen_cbor; c89cbor_lua_*;
+  local: *;
+};

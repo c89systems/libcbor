@@ -1,0 +1,297 @@
+cmake_minimum_required(VERSION 3.21)
+set(work "${BINARY}/lifecycle-${CASE}")
+file(REMOVE_RECURSE "${work}")
+file(MAKE_DIRECTORY "${work}/owner/scripts" "${work}/foreign")
+set(owner "${work}/owner")
+function(run expected)
+  execute_process(COMMAND ${ARGN} WORKING_DIRECTORY "${work}/foreign"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
+  if(expected STREQUAL "pass" AND NOT result EQUAL 0)
+    message(FATAL_ERROR "${CASE}: expected success, got ${result}\n${output}${error}")
+  elseif(expected STREQUAL "fail" AND result EQUAL 0)
+    message(FATAL_ERROR "${CASE}: invalid input accepted\n${output}${error}")
+  endif()
+  set(last_output "${output}${error}" PARENT_SCOPE)
+endfunction()
+if(CASE STREQUAL "clean")
+  file(COPY "${ROOT}/Makefile" DESTINATION "${owner}")
+  file(COPY "${ROOT}/scripts/clean.sh" "${ROOT}/scripts/workspace.sh" DESTINATION "${owner}/scripts")
+  foreach(directory build dist .cache)
+    file(MAKE_DIRECTORY "${owner}/${directory}/.hidden" "${work}/foreign/${directory}")
+    file(WRITE "${owner}/${directory}/.hidden/state" "owned")
+    file(WRITE "${work}/foreign/${directory}/sentinel" "foreign")
+  endforeach()
+  file(WRITE "${owner}/compile_commands.json" "owned")
+  file(WRITE "${work}/foreign/compile_commands.json" "foreign")
+  file(MAKE_DIRECTORY "${work}/global-cache/cpkt/deps")
+  file(WRITE "${work}/global-cache/cpkt/deps/sentinel" "global")
+  run(pass "${CMAKE_COMMAND}" -E env "XDG_CACHE_HOME=${work}/global-cache"
+    "${CMAKE_MAKE_PROGRAM_HOST}" -f "${owner}/Makefile" clean)
+  foreach(path build dist .cache compile_commands.json)
+    if(EXISTS "${owner}/${path}")
+      message(FATAL_ERROR "Owned generated state survived clean: ${path}")
+    endif()
+    if(NOT EXISTS "${work}/foreign/${path}")
+      message(FATAL_ERROR "Foreign state was removed: ${path}")
+    endif()
+  endforeach()
+  if(NOT EXISTS "${work}/global-cache/cpkt/deps/sentinel")
+    message(FATAL_ERROR "Global cache was removed")
+  endif()
+  file(CREATE_LINK "${work}/foreign/build" "${owner}/build" SYMBOLIC)
+  run(fail "${CMAKE_MAKE_PROGRAM_HOST}" -f "${owner}/Makefile" clean)
+  if(NOT EXISTS "${work}/foreign/build/sentinel")
+    message(FATAL_ERROR "Borrowed state was removed")
+  endif()
+  run(pass "${CMAKE_MAKE_PROGRAM_HOST}" -n -f "${ROOT}/Makefile" check-native TARGET=aarch64-linux-gnu CONFIG=Release)
+  if(NOT last_output MATCHES "core \"x86_64-linux-gnu\" \"Debug\"" OR
+     last_output MATCHES "core \"aarch64-linux-gnu\"")
+    message(FATAL_ERROR "check-native did not enforce native Debug: ${last_output}")
+  endif()
+elseif(CASE STREQUAL "cache")
+  file(COPY "${ROOT}/scripts/archive.sh" "${ROOT}/scripts/workspace.sh" DESTINATION "${owner}/scripts")
+  file(MAKE_DIRECTORY "${owner}/bin")
+  file(WRITE "${owner}/payload" "verified fixture bytes\n")
+  file(SHA256 "${owner}/payload" digest)
+  file(WRITE "${owner}/bin/curl" [=[#!/usr/bin/env bash
+set -euo pipefail
+while (($#)); do
+  if [[ $1 == -o ]]; then output=$2; shift 2; else shift; fi
+done
+printf 'acquire\n' >> "$FIXTURE_REQUESTS"
+cp -- "$FIXTURE_PAYLOAD" "$output"
+if [[ ${FIXTURE_DOWNLOAD_FAIL:-0} == 1 ]]; then exit 22; fi
+]=])
+  file(CHMOD "${owner}/bin/curl" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  set(environment "${CMAKE_COMMAND}" -E env "PATH=${owner}/bin:$ENV{PATH}"
+    "FIXTURE_PAYLOAD=${owner}/payload" "FIXTURE_REQUESTS=${owner}/requests"
+    "CPKT_LIFECYCLE_SCRIPTS_DIR=${LIFECYCLE}" "CPKT_DEPENDENCY_CACHE=${owner}/.cache/shared")
+  set(acquire bash "${owner}/scripts/archive.sh" https://fixture.invalid/asset "${digest}" .cache/archives/asset)
+  run(pass ${environment} ${acquire})
+  run(pass ${environment} ${acquire})
+  file(REMOVE_RECURSE "${owner}/.cache/archives")
+  run(pass ${environment} ${acquire})
+  run(pass ${environment} bash "${owner}/scripts/archive.sh" https://fixture.invalid/renamed "${digest}" .cache/archives/renamed)
+  file(READ "${owner}/requests" requests)
+  if(NOT requests STREQUAL "acquire\n")
+    message(FATAL_ERROR "Warm/shared/renamed hits acquired again: ${requests}")
+  endif()
+  set(shared "${owner}/.cache/shared/archives/sha256/${digest}/asset")
+  if(NOT EXISTS "${shared}")
+    message(FATAL_ERROR "Verified archive was not published")
+  endif()
+  file(REMOVE_RECURSE "${owner}/.cache/shared")
+  run(pass ${environment} ${acquire})
+  file(READ "${owner}/requests" requests)
+  if(NOT requests STREQUAL "acquire\n" OR NOT EXISTS "${shared}")
+    message(FATAL_ERROR "Local hit did not seed the shared cache without acquisition")
+  endif()
+  file(WRITE "${owner}/.cache/archives/asset" "corrupt local")
+  run(fail ${environment} ${acquire})
+  file(REMOVE "${owner}/.cache/archives/asset")
+  file(WRITE "${shared}" "corrupt shared")
+  run(fail ${environment} ${acquire})
+  file(READ "${shared}" actual)
+  if(NOT actual STREQUAL "corrupt shared")
+    message(FATAL_ERROR "Corrupt immutable input was silently repaired")
+  endif()
+  string(REPEAT "0" 64 wrong_digest)
+  run(fail ${environment} bash "${owner}/scripts/archive.sh" https://fixture.invalid/bad "${wrong_digest}" .cache/archives/bad)
+  if(EXISTS "${owner}/.cache/shared/archives/sha256/${wrong_digest}/bad")
+    message(FATAL_ERROR "Checksum failure published an archive")
+  endif()
+  run(fail ${environment} "FIXTURE_DOWNLOAD_FAIL=1" bash "${owner}/scripts/archive.sh"
+    https://fixture.invalid/partial "${wrong_digest}" .cache/archives/partial)
+  file(GLOB residue "${owner}/.cache/shared/archives/sha256/${wrong_digest}/.download.*")
+  if(residue)
+    message(FATAL_ERROR "Failed acquisition retained partial state: ${residue}")
+  endif()
+  run(fail ${environment} bash "${owner}/scripts/archive.sh" https://fixture.invalid/escape "${digest}" ../outside)
+  run(fail ${environment} "CPKT_DEPENDENCY_CACHE=${work}/foreign/cache" ${acquire})
+  if(EXISTS "${work}/foreign/cache")
+    message(FATAL_ERROR "Foreign cache override was modified")
+  endif()
+elseif(CASE STREQUAL "deps")
+  file(COPY "${ROOT}/scripts/deps.sh" "${ROOT}/scripts/workspace.sh" DESTINATION "${owner}/scripts")
+  file(MAKE_DIRECTORY "${work}/payload/sdk/include" "${work}/payload/sdk/bin")
+  file(WRITE "${work}/payload/sdk/include/group.h" "fixture header")
+  file(WRITE "${work}/payload/sdk/bin/tool" "fixture executable")
+  file(CHMOD "${work}/payload/sdk/include/group.h" PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ GROUP_WRITE WORLD_READ)
+  file(CHMOD "${work}/payload/sdk/bin/tool" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${owner}/fixture.tar.gz" sdk
+    WORKING_DIRECTORY "${work}/payload" COMMAND_ERROR_IS_FATAL ANY)
+  file(WRITE "${owner}/scripts/archive.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$(dirname -- "$3")"
+cp fixture.tar.gz "$3"
+]=])
+  file(WRITE "${owner}/extract.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+exec bash "$(dirname -- "$0")/scripts/deps.sh" x86_64-linux-gnu cpkt
+]=])
+  run(pass bash "${owner}/extract.sh")
+  set(prefix "${owner}/.cache/deps/cpkt-0.8.0-x86_64-linux-gnu")
+  run(pass stat -c %a "${prefix}/include/group.h" "${prefix}/bin/tool")
+  if(NOT last_output STREQUAL "664\n755\n")
+    message(FATAL_ERROR "Dependency extraction changed verified payload modes under umask 077: ${last_output}")
+  endif()
+elseif(CASE STREQUAL "docs")
+  file(MAKE_DIRECTORY "${owner}/docs")
+  file(WRITE "${owner}/README.md" "# Anchor\n[page](docs/page.md#page) [external](https://fixture.invalid/)\n")
+  file(WRITE "${owner}/docs/page.md" "# Page\n[asset](asset.txt) [readme](../README.md#anchor) [local](#page)\n")
+  file(WRITE "${owner}/docs/asset.txt" "asset")
+  set(check "${CMAKE_COMMAND}" "-DROOT=${owner}" -P "${ROOT}/cmake/CheckDocLinks.cmake")
+  run(pass ${check})
+  file(APPEND "${owner}/docs/page.md" "# Page\n[duplicate](#page-1)\n```text\n# Hidden\n```\n")
+  run(pass ${check})
+  file(APPEND "${owner}/docs/page.md" "[not-a-heading](#hidden)\n")
+  run(fail ${check})
+  file(WRITE "${owner}/docs/page.md" "# Page\n[asset](asset.txt)\n")
+  file(APPEND "${owner}/docs/page.md" "[missing](#missing)\n")
+  run(fail ${check})
+  file(WRITE "${owner}/docs/page.md" "# Renamed page\n[asset](asset.txt)\n")
+  run(fail ${check})
+  file(WRITE "${owner}/docs/page.md" "# Page\n[asset](asset.txt)\n")
+  file(REMOVE "${owner}/docs/asset.txt")
+  run(fail ${check})
+  file(WRITE "${work}/outside.txt" "outside")
+  file(WRITE "${owner}/docs/page.md" "# Page\n[escape](../../outside.txt)\n")
+  run(fail ${check})
+  file(CREATE_LINK "${work}/outside.txt" "${owner}/docs/borrowed.txt" SYMBOLIC)
+  file(WRITE "${owner}/docs/page.md" "# Page\n[escape](borrowed.txt)\n")
+  run(fail ${check})
+  # Exercise the same extractor used by native, installed-SDK and Lua tests.
+  file(MAKE_DIRECTORY "${owner}/example")
+  file(WRITE "${owner}/example/CMakeLists.txt"
+    "cmake_minimum_required(VERSION 3.21)\nproject(Example NONE)\ninclude(\"${ROOT}/cmake/ReadmeExample.cmake\")\nc89_readme_example(\"${owner}/example/README.md\" c \"${owner}/example.c\")\n")
+  set(configure "${CMAKE_COMMAND}" -S "${owner}/example" -B "${owner}/example-build")
+  set(source "int main(void) { return 0; }\n")
+  file(WRITE "${owner}/example/README.md" "```c\n${source}```\n")
+  run(pass ${configure})
+  file(READ "${owner}/example.c" extracted)
+  if(NOT extracted STREQUAL source)
+    message(FATAL_ERROR "README example source changed during extraction")
+  endif()
+  foreach(invalid "no example" "```c\n${source}```\n```c\n${source}```\n" "```c\n${source}")
+    file(WRITE "${owner}/example/README.md" "${invalid}")
+    run(fail ${configure})
+  endforeach()
+elseif(CASE STREQUAL "matrix")
+  file(COPY "${ROOT}/scripts/matrix.sh" "${ROOT}/scripts/workspace.sh" DESTINATION "${owner}/scripts")
+  file(MAKE_DIRECTORY "${owner}/bin")
+  file(WRITE "${owner}/bin/ctest" "#!/usr/bin/env bash\nprintf 'ctest %s\\n' \"$*\" >> '${owner}/trace'\n")
+  file(CHMOD "${owner}/bin/ctest" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  foreach(script source source-smoke build package verify-package)
+    file(WRITE "${owner}/scripts/${script}.sh" "#!/usr/bin/env bash\nprintf '%s %s\\n' '${script}' \"$*\" >> '${owner}/trace'\n")
+    file(CHMOD "${owner}/scripts/${script}.sh" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  endforeach()
+  run(pass "${CMAKE_COMMAND}" -E env "PATH=${owner}/bin:$ENV{PATH}" bash "${owner}/scripts/matrix.sh" 1.2.3)
+  file(READ "${owner}/trace" trace)
+  if(NOT trace MATCHES "^source 1.2.3\nsource-smoke 1.2.3\n" OR
+     trace MATCHES "core x86_64-linux-gnu")
+    message(FATAL_ERROR "Native source lane was duplicated or omitted: ${trace}")
+  endif()
+  string(REGEX MATCHALL "build core [^\n]+" builds "${trace}")
+  list(LENGTH builds count)
+  if(NOT count EQUAL 6)
+    message(FATAL_ERROR "Expected the six remaining target producers: ${trace}")
+  endif()
+elseif(CASE STREQUAL "source")
+  file(COPY "${ROOT}/scripts/source-smoke.sh" "${ROOT}/scripts/workspace.sh" DESTINATION "${owner}/scripts")
+  file(WRITE "${owner}/scripts/version.sh" "#!/usr/bin/env bash\nprintf '%s\\n' \"$1\"\n")
+  file(CHMOD "${owner}/scripts/version.sh" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  set(source "${work}/source/libcbor-1.2.3")
+  file(MAKE_DIRECTORY "${source}/scripts" "${owner}/dist")
+  file(WRITE "${source}/scripts/build.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+[[ $PWD == */build/source-smoke/libcbor-1.2.3 ]]
+[[ $CPKT_DEPENDENCY_CACHE == "$PWD/.cache/shared" ]]
+[[ ! -e build/parent-only ]]
+printf '%s\n' "$*" >> trace
+]=])
+  file(WRITE "${source}/scripts/package.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p dist build/package/x86_64-linux-gnu-release
+printf 'verified public bytes\n' > dist/libcbor-1.2.3-x86_64-linux-gnu.tar.gz
+sha256sum dist/libcbor-1.2.3-x86_64-linux-gnu.tar.gz > build/package/x86_64-linux-gnu-release/SHA256
+]=])
+  file(WRITE "${source}/scripts/verify-package.sh" [=[#!/usr/bin/env bash
+set -euo pipefail
+sha256sum -c build/package/x86_64-linux-gnu-release/SHA256
+]=])
+  file(CHMOD "${source}/scripts/build.sh" "${source}/scripts/package.sh" "${source}/scripts/verify-package.sh"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${owner}/dist/libcbor-1.2.3.tar.gz" libcbor-1.2.3
+    WORKING_DIRECTORY "${work}/source" COMMAND_ERROR_IS_FATAL ANY)
+  file(MAKE_DIRECTORY "${owner}/build")
+  file(WRITE "${owner}/build/parent-only" "parent")
+  run(pass "${CMAKE_COMMAND}" -E env "CPKT_DEPENDENCY_CACHE=${owner}/./.cache/shared"
+    bash "${owner}/scripts/source-smoke.sh" 1.2.3)
+  file(READ "${owner}/build/source-smoke/libcbor-1.2.3/trace" trace)
+  if(NOT trace STREQUAL "core x86_64-linux-gnu Release\ntest x86_64-linux-gnu Release\nlua x86_64-linux-gnu Release\nlua-test x86_64-linux-gnu Release\n")
+    message(FATAL_ERROR "Source lane did not execute its isolated checks: ${trace}")
+  endif()
+  file(SHA256 "${owner}/dist/libcbor-1.2.3-x86_64-linux-gnu.tar.gz" actual)
+  file(READ "${owner}/build/package/x86_64-linux-gnu-release/SHA256" checksum)
+  if(NOT checksum STREQUAL "${actual}  dist/libcbor-1.2.3-x86_64-linux-gnu.tar.gz\n")
+    message(FATAL_ERROR "Exported public bytes lost their checksum: ${checksum}")
+  endif()
+  file(REMOVE "${owner}/dist/libcbor-1.2.3-x86_64-linux-gnu.tar.gz"
+    "${owner}/build/package/x86_64-linux-gnu-release/SHA256")
+  file(WRITE "${source}/scripts/verify-package.sh" "#!/usr/bin/env bash\nexit 1\n")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${owner}/dist/libcbor-1.2.3.tar.gz" libcbor-1.2.3
+    WORKING_DIRECTORY "${work}/source" COMMAND_ERROR_IS_FATAL ANY)
+  run(fail "${CMAKE_COMMAND}" -E env "CPKT_DEPENDENCY_CACHE=${owner}/.cache/shared"
+    bash "${owner}/scripts/source-smoke.sh" 1.2.3)
+  if(EXISTS "${owner}/dist/libcbor-1.2.3-x86_64-linux-gnu.tar.gz" OR
+     EXISTS "${owner}/build/package/x86_64-linux-gnu-release/SHA256")
+    message(FATAL_ERROR "Failed source verification exported an artifact")
+  endif()
+elseif(CASE STREQUAL "darwin")
+  file(MAKE_DIRECTORY "${owner}/bin" "${owner}/Apple SDK.sdk" "${owner}/Apple Tools")
+  foreach(tool clang clang++ ld ar ranlib strip nm otool install_name_tool)
+    file(WRITE "${owner}/Apple Tools/${tool}" "fixture")
+  endforeach()
+  file(WRITE "${owner}/bin/xcrun" [=[#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${FIXTURE_XCODE_FAIL:-0} == 1 ]]; then exit 1; fi
+if [[ $3 == --show-sdk-path ]]; then printf '%s/Apple SDK.sdk\n' "$FIXTURE_XCODE"
+else printf '%s/Apple Tools/%s\n' "$FIXTURE_XCODE" "$4"; fi
+]=])
+  file(CHMOD "${owner}/bin/xcrun" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  file(WRITE "${owner}/check.cmake" [=[
+set(CMAKE_HOST_SYSTEM_NAME Darwin)
+set(CMAKE_HOST_SYSTEM_PROCESSOR arm64)
+if(WRONG_ARCH)
+  set(CMAKE_HOST_SYSTEM_PROCESSOR x86_64)
+endif()
+set(C89CBOR_TARGET arm64-apple-darwin)
+include("${ROOT}/cmake/toolchain.cmake")
+if(NOT CMAKE_C_COMPILER STREQUAL "$ENV{FIXTURE_XCODE}/Apple Tools/clang" OR
+   NOT CMAKE_OSX_SYSROOT STREQUAL "$ENV{FIXTURE_XCODE}/Apple SDK.sdk" OR
+   NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR
+   NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "15.0" OR
+   DEFINED CMAKE_EXE_LINKER_FLAGS_INIT OR DEFINED CMAKE_SYSTEM_NAME)
+  message(FATAL_ERROR "Native Xcode selection lost its SDK, architecture or native flags")
+endif()
+]=])
+  set(environment "${CMAKE_COMMAND}" -E env "PATH=${owner}/bin:$ENV{PATH}" "FIXTURE_XCODE=${owner}")
+  set(check "${CMAKE_COMMAND}" "-DROOT=${ROOT}" -P "${owner}/check.cmake")
+  run(pass ${environment} ${check})
+  run(fail ${environment} "FIXTURE_XCODE_FAIL=1" ${check})
+  run(fail ${environment} "${CMAKE_COMMAND}" "-DROOT=${ROOT}" -DWRONG_ARCH=ON -P "${owner}/check.cmake")
+  file(REMOVE "${owner}/Apple Tools/nm")
+  run(fail ${environment} ${check})
+  file(WRITE "${owner}/Apple Tools/nm" "fixture")
+  file(REMOVE_RECURSE "${owner}/Apple SDK.sdk")
+  run(fail ${environment} ${check})
+  run(pass "${CMAKE_MAKE_PROGRAM_HOST}" -n -f "${ROOT}/Makefile" check-darwin TARGET=x86_64-linux-gnu CONFIG=Debug)
+  if(NOT last_output MATCHES "core \"arm64-apple-darwin\" \"Debug\"" OR
+     NOT last_output MATCHES "core \"arm64-apple-darwin\" \"Release\"" OR
+     NOT last_output MATCHES "verify-package.sh \"arm64-apple-darwin\" \"Release\"")
+    message(FATAL_ERROR "check-darwin lost its target/configuration/consumer coverage: ${last_output}")
+  endif()
+else()
+  message(FATAL_ERROR "Unknown lifecycle fixture: ${CASE}")
+endif()

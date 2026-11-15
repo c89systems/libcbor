@@ -1,0 +1,17 @@
+# Lua 5.5 uses numeric *_N version macros, unsupported by CMake's older FindLua.
+# Keep ordinary LUA_INCLUDE_DIR/LUA_LIBRARY overrides for installed runtimes.
+find_path(LUA_INCLUDE_DIR lua.h PATH_SUFFIXES lua5.5 lua55)
+find_library(LUA_LIBRARY NAMES lua5.5 lua55 lua)
+if(EXISTS "${LUA_INCLUDE_DIR}/lua.h")
+  file(STRINGS "${LUA_INCLUDE_DIR}/lua.h" version_lines REGEX "^#define[ \t]+LUA_VERSION_(MAJOR|MINOR|RELEASE)_N[ \t]+[0-9]+")
+  foreach(component MAJOR MINOR RELEASE)
+    string(REGEX MATCH "LUA_VERSION_${component}_N[ \t]+([0-9]+)" match "${version_lines}")
+    set(lua_${component} "${CMAKE_MATCH_1}")
+  endforeach()
+  set(Lua_VERSION "${lua_MAJOR}.${lua_MINOR}.${lua_RELEASE}")
+endif()
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(Lua REQUIRED_VARS LUA_INCLUDE_DIR LUA_LIBRARY VERSION_VAR Lua_VERSION)
+set(LUA_LIBRARIES "${LUA_LIBRARY}")
+set(LUA_INCLUDE_DIRS "${LUA_INCLUDE_DIR}")
+mark_as_advanced(LUA_INCLUDE_DIR LUA_LIBRARY)

@@ -1,0 +1,442 @@
+---@meta cbor
+-- Editor declarations for the native Lua 5.5.1 cbor module.
+-- Add this directory to LuaLS workspace.library. Runtime loading uses cbor.so.
+
+---@alias cbor.Status integer
+---@alias cbor.Bytes string|cbor.Span
+
+--- A copy of the native diagnostic, including after a terminal failure.
+---@class cbor.Error
+---@field status integer # Operation status; zero on success.
+---@field cause integer # Dependency status when available.
+---@field system_errno integer # Endpoint errno when available.
+---@field offset integer # Accepted byte offset.
+---@field shortened integer # Nonzero when the diagnostic path was shortened.
+---@field truncated integer # Nonzero when a mapped overflow policy retained a prefix.
+---@field layer string # Component reporting the failure.
+---@field message string # Human-readable explanation.
+---@field path string # Mapped field path.
+
+--- Native userdata and its owner pins. Close borrowed children before owners.
+---@class cbor.Handle
+---@field close fun(self: cbor.Handle): cbor.Status # Idempotent close; INVALID while borrowed, BUSY while active.
+---@field cleanup fun(self: cbor.Handle): cbor.Status # Alias for Lua close semantics.
+---@field destroy fun(self: cbor.Handle): cbor.Status # Close and free constructor-owned C storage.
+---@field diagnostic fun(self: cbor.Handle): cbor.Status, cbor.Error # Copy diagnostics; data-only handles return INVALID.
+
+--- Caller-selected native nesting storage, used by one codec at a time.
+---@class cbor.Frames: cbor.Handle
+--- Borrowed native allocator callbacks and their context, supplied by C.
+---@class cbor.Allocator: cbor.Handle
+--- Native read callback/context supplied by an FD, datagram or embedding module.
+---@class cbor.Source: cbor.Handle
+--- Native partial-write callback/context supplied by C.
+---@class cbor.Sink: cbor.Handle
+--- Borrowed native runtime configuration, including its pointed-to owners.
+---@class cbor.ConfigHandle: cbor.Handle
+--- Borrowed conversion options, including native field sinks.
+---@class cbor.OptionsHandle: cbor.Handle
+--- Borrowed native COSE options and their byte owners.
+---@class cbor.CoseOptionsHandle: cbor.Handle
+--- Borrowed native CWT options, including admission callbacks.
+---@class cbor.CwtOptionsHandle: cbor.Handle
+--- Snapshot of a native record descriptor; record, schema and runtime remain borrowed.
+---@class cbor.RecordView: cbor.Handle
+--- Native lonejson JWT claims supplied by an embedding module.
+---@class cbor.JwtClaims: cbor.Handle
+--- Native lonejson claim policy supplied by an embedding module.
+---@class cbor.JwtPolicy: cbor.Handle
+
+--- Borrowed bytes; string() explicitly copies them into Lua.
+---@class cbor.Span: cbor.Handle
+---@field length fun(self: cbor.Span): integer # Number of borrowed bytes.
+---@field string fun(self: cbor.Span): string # Copy this span into a Lua string.
+
+--- Wire event. Integer arguments preserve raw signed Lua 64-bit bit patterns.
+---@class cbor.Token: cbor.Handle
+---@field kind fun(self: cbor.Token): integer # Token kind, such as UINT or DATA.
+---@field argument fun(self: cbor.Token): integer # Value, magnitude, float bits, length or matching END kind.
+---@field indefinite fun(self: cbor.Token): boolean # Whether the begin token has unknown length.
+---@field span fun(self: cbor.Token): cbor.Span # Borrow DATA bytes and pin this token; empty for other kinds.
+---@field float64_set fun(self: cbor.Token, value: number): cbor.Status # Replace this token with a binary64 value.
+---@field float64_get fun(self: cbor.Token): cbor.Status, number? # Read a binary64 token as a Lua number.
+
+--- Incremental native decoder; returned tokens retain their input owner.
+---@class cbor.Decoder: cbor.Handle
+---@field next fun(self: cbor.Decoder, input?: cbor.Bytes): cbor.Status, integer, cbor.Token? # Consume input and return one event; END may consume zero bytes.
+---@field next_tag fun(self: cbor.Decoder, input?: cbor.Bytes): cbor.Status, integer, integer? # Consume one tag header, then use next for its child and END.
+---@field finish fun(self: cbor.Decoder): cbor.Status # Validate completion at EOF after draining pending events.
+---@field reset fun(self: cbor.Decoder): cbor.Status # Reuse a successfully completed decoder.
+
+--- Native encoder. Drain accepted DATA before reusing its owner.
+---@class cbor.Encoder: cbor.Handle
+---@field put fun(self: cbor.Encoder, token: cbor.Token): cbor.Status # Accept an event; OUTPUT leaves it unaccepted until prior output drains.
+---@field tag fun(self: cbor.Encoder, number: integer): cbor.Status # Begin a semantic tag.
+---@field end_tag fun(self: cbor.Encoder): cbor.Status # Close its completed child.
+---@field peek fun(self: cbor.Encoder): cbor.Status, cbor.Span? # Borrow bounded pending output; close the span before put/reset/close.
+---@field advance fun(self: cbor.Encoder, count: integer): cbor.Status # Accept bytes from the pending output span.
+---@field read fun(self: cbor.Encoder, capacity?: integer): cbor.Status, string # Copy and consume at most 2048 output bytes.
+---@field finish fun(self: cbor.Encoder): cbor.Status # Validate completion after draining output.
+---@field reset fun(self: cbor.Encoder): cbor.Status # Reuse a successfully completed encoder.
+
+--- Framing event; token is present for RECORD_TOKEN.
+---@class cbor.RecordEvent
+---@field type integer # RECORD_BEGIN, RECORD_TOKEN or RECORD_END.
+---@field length integer # Encoded length when the framing supplies it.
+---@field token? cbor.Token # Borrowed record event.
+
+--- Incremental SINGLE, SEQUENCE or LENGTH32 framing.
+---@class cbor.Reader: cbor.Handle
+---@field next fun(self: cbor.Reader, input?: cbor.Bytes): cbor.Status, integer, cbor.RecordEvent? # Consume input and return one framing event.
+---@field finish fun(self: cbor.Reader): cbor.Status # Validate framing at EOF.
+---@field reset fun(self: cbor.Reader): cbor.Status # Reuse the original framing and limit after completion.
+
+--- Borrowed POSIX descriptor. Closing the wrapper preserves the OS descriptor.
+---@class cbor.Fd: cbor.Handle
+---@field source fun(self: cbor.Fd): cbor.Source # Borrow a native read endpoint and pin this FD wrapper.
+---@field sink fun(self: cbor.Fd): cbor.Sink # Borrow a native write endpoint and pin this FD wrapper.
+
+--- Cumulative byte and completed-record totals.
+---@class cbor.Progress
+---@field input integer # Source bytes accepted.
+---@field output integer # Sink bytes delivered.
+---@field records integer # Completed records.
+
+--- Bounded validation and forwarding between native endpoints.
+---@class cbor.Transfer: cbor.Handle
+---@field step fun(self: cbor.Transfer): cbor.Status # Advance one bounded native step.
+---@field run fun(self: cbor.Transfer): cbor.Status # Drive in C until DONE, INPUT, OUTPUT or failure.
+---@field counts fun(self: cbor.Transfer): integer, integer # Total bytes read and written.
+---@field progress fun(self: cbor.Transfer): cbor.Status, cbor.Progress # Copy cumulative native progress.
+
+--- Resumable JSON or mapped-record conversion; endpoints and views remain pinned.
+---@class cbor.Conversion: cbor.Handle
+---@field step fun(self: cbor.Conversion): cbor.Status, cbor.Error? # Advance one bounded step.
+---@field run fun(self: cbor.Conversion): cbor.Status, cbor.Error? # Drive in C until a wait, completion or failure.
+---@field progress fun(self: cbor.Conversion): cbor.Status, cbor.Progress # Copy cumulative native progress.
+
+--- Lazy lonejson policy accepted by configuration tables.
+---@class cbor.JsonConfig
+---@field max_depth? integer # Maximum JSON nesting.
+---@field max_dynamic_string_bytes? integer # Maximum allocated string size.
+---@field max_alloc_bytes? integer # JSON allocator budget.
+---@field json_value_max_depth? integer # Embedded JSON depth bound.
+---@field json_value_max_string_bytes? integer # Embedded string bound.
+---@field json_value_max_key_bytes? integer # Embedded key bound.
+---@field json_value_max_number_bytes? integer # Embedded number bound.
+---@field write_max_output_bytes? integer # JSON output bound.
+
+--- Runtime configuration table; zero budgets select native defaults.
+---@class cbor.Config
+---@field allocator? cbor.Allocator # Native allocator handle retained by the runtime.
+---@field json_config? cbor.JsonConfig # Lazy JSON runtime policy.
+---@field step_input? integer # Input bytes per step; default 2048.
+---@field step_output? integer # Output bytes per step; default 2048.
+---@field step_events? integer # Events per step; default 256.
+
+--- Conversion table; typed OptionsHandle additionally carries native field sinks.
+---@class cbor.Options
+---@field depth? integer # Wire nesting limit; default 32.
+---@field chunk? integer # Bounded I/O chunk; default 2048 bytes.
+---@field key_bytes? integer # One decoded key; default 2048 bytes.
+---@field active_keys? integer # Active duplicate-key entries; default 256.
+---@field active_key_bytes? integer # Active key storage; default 16384 bytes.
+---@field number_bytes? integer # JSON number lexeme; default 256 bytes.
+---@field field_bytes? integer # Materialized field limit; default 65536 bytes.
+---@field array_elements? integer # Materialized array-element limit; default 16384.
+---@field record_bytes? integer # Logical new record storage; default 1048576 bytes.
+---@field step_input? integer # Input budget; zero inherits the runtime.
+---@field step_output? integer # Output budget; zero inherits the runtime.
+---@field step_events? integer # Event budget; zero inherits the runtime.
+---@field allow_unknown_fields? boolean # Validate and skip unknown mapped fields; default false.
+
+--- COSE table; string/span owners and recipient arrays are snapshotted on open.
+---@class cbor.CoseOptions
+---@field record_bytes? integer # Maximum plaintext per record; default 2048.
+---@field header_bytes? integer # Metadata and separate AAD bounds; default 2048 each.
+---@field recipients? integer # Recipient count bound; default eight, maximum 32.
+---@field step_input? integer # Input budget; zero inherits the runtime.
+---@field step_output? integer # Output budget; zero inherits the runtime.
+---@field step_events? integer # Event budget; zero inherits the runtime.
+---@field encrypt? boolean # Use Encrypt recipients for stream sealing; default false selects Encrypt0.
+---@field aad? cbor.Bytes # External authenticated context.
+---@field nonce? cbor.Bytes # Explicit standalone nonce, exactly 12 bytes; unique for every use of its key.
+---@field stream_id? cbor.Bytes # Sender or expected receiver stream ID, exactly 16 bytes.
+
+--- Copied nonsecret key metadata.
+---@class cbor.KeyInfo
+---@field kind integer # Imported key family.
+---@field key_id string # Binary identifier.
+
+--- Immutable copied key; active operations pin it.
+---@class cbor.CoseKey: cbor.Handle
+---@field metadata fun(self: cbor.CoseKey): cbor.Status, cbor.KeyInfo? # Copy kind and key ID.
+---@field public_key fun(self: cbor.CoseKey): cbor.Status, string? # Export asymmetric public bytes; symmetric keys return UNSUPPORTED.
+
+--- Authenticated metadata available after a stream's first verified record.
+---@class cbor.StreamInfo
+---@field stream_id string # Authenticated 16-byte stream identifier.
+---@field encrypt boolean # Whether the family is Encrypt.
+---@field complete boolean # Whether the final record completed.
+---@field tag integer # Authenticated COSE tag.
+---@field algorithm integer # Authenticated algorithm ID.
+
+--- Native COSE object or authenticated record-stream operation.
+---@class cbor.CoseOperation: cbor.Handle
+---@field step fun(self: cbor.CoseOperation): cbor.Status, cbor.Error? # Advance bounded work.
+---@field run fun(self: cbor.CoseOperation): cbor.Status, cbor.Error? # Drive in C until wait, completion or failure.
+---@field next fun(self: cbor.CoseOperation, sink?: cbor.Sink, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # Start the next decrypt message after DONE, retaining read-ahead and keys.
+---@field progress fun(self: cbor.CoseOperation): cbor.Status, cbor.Progress # Cumulative totals across next calls.
+---@field stream_info fun(self: cbor.CoseOperation): cbor.Status, cbor.StreamInfo? # INPUT before authentication; UNSUPPORTED for standalone or sealing.
+
+--- Bounded CWT workspace policy.
+---@class cbor.CwtOptions
+---@field cose? cbor.CoseOptions|cbor.CoseOptionsHandle # COSE limits and AAD.
+---@field claims? integer # Claim count bound.
+---@field audiences? integer # Audience count bound.
+---@field require_cti? boolean # Require a token identifier; default false.
+---@field require_encryption? boolean # Require encrypted tokens; default false.
+
+--- Native claim policy copied from a Lua table for one verification.
+---@class cbor.ClaimPolicy
+---@field now integer # Explicit verification clock.
+---@field allowed_clock_skew? integer # Accepted clock skew.
+---@field accepted_algs? string[] # Ed25519, ES256 or HS256.
+---@field accepted_issuers? string[] # Trusted issuers.
+---@field accepted_audiences? string[] # Accepted audience values.
+---@field accepted_crit? string[] # Understood critical headers.
+---@field required_scopes? string[] # Required scope values.
+---@field required_claims? string[] # Required native claim names.
+---@field require_all_audiences_accepted? boolean # Require every audience to match.
+---@field require_azp_when_multiple_audiences? boolean # Require authorized party for multiple audiences.
+---@field expected_nonce? string # Expected nonce claim.
+---@field expected_azp? string # Expected authorized party.
+
+--- Copied standard CWT claims exposed by view_get.
+---@class cbor.ClaimsView
+---@field iss? string # Issuer.
+---@field sub? string # Subject.
+---@field aud? string # Single audience representation.
+---@field nonce? string # Nonce claim.
+---@field azp? string # Authorized party.
+---@field scope? string # Scope representation.
+---@field exp? integer # Expiration time.
+---@field nbf? integer # Not-before time.
+---@field iat? integer # Issued-at time.
+---@field aud_array string[] # Audience values.
+---@field scp string[] # Scope values.
+
+--- Explicit Lua snapshot of a bounded CWT receiver.
+---@class cbor.CwtView
+---@field encoded string # Encoded CBOR claim map.
+---@field cti? string # Binary token identifier.
+---@field claim_count integer # Number of claims.
+---@field authenticated boolean # Whether crypto, policy and admission succeeded.
+---@field algorithm integer # Verified algorithm identifier.
+---@field claims cbor.ClaimsView # Copied standard claims.
+
+--- Reusable bounded CWT receiver with pinned key bindings.
+---@class cbor.Cwt: cbor.Handle
+---@field set_claims fun(self: cbor.Cwt, encoded_map: cbor.Bytes): cbor.Status, cbor.Error? # Copy local claims; the view is initially unauthenticated.
+---@field set_lonejson fun(self: cbor.Cwt, claims: cbor.JwtClaims, cti?: cbor.Bytes): cbor.Status, cbor.Error? # Encode native claims directly.
+---@field set_seal_keys fun(self: cbor.Cwt, signing_key?: cbor.CoseKey, encryption_keys?: cbor.CoseKey[]): cbor.Status, cbor.Error? # Snapshot seal bindings; nil unbinds.
+---@field set_verify_keys fun(self: cbor.Cwt, verification_key?: cbor.CoseKey, decryption_key?: cbor.CoseKey): cbor.Status, cbor.Error? # Replace verification bindings; nil unbinds.
+---@field seal fun(self: cbor.Cwt, capacity?: integer): cbor.Status, cbor.Span?, cbor.Error? # Seal into an owned native span.
+---@field verify fun(self: cbor.Cwt, wire: cbor.Bytes, policy: cbor.ClaimPolicy|cbor.JwtPolicy): cbor.Status, cbor.Error? # Verify and publish admitted claims; failure clears the prior view.
+---@field view_get fun(self: cbor.Cwt): cbor.Status, cbor.CwtView? # Copy the complete view, or INPUT when absent.
+---@field claim fun(self: cbor.Cwt, key: integer|string|cbor.Token): cbor.Status, string? # Copy one encoded CBOR claim value; INPUT when absent.
+
+--- A validated packet view, borrowed until receive/reset/continuous-source read.
+---@class cbor.Packet
+---@field bytes cbor.Span # Complete bounded CBOR packet.
+---@field peer? cbor.Span # Raw sender sockaddr bytes, when available.
+
+--- Cumulative packet and byte totals.
+---@class cbor.DatagramProgress
+---@field input integer # Received bytes.
+---@field output integer # Sent bytes.
+---@field received integer # Packets admitted.
+---@field sent integer # Packets sent.
+---@field rejected integer # Packets rejected.
+
+--- Bounded datagram receiver over a borrowed socket descriptor.
+---@class cbor.Datagram: cbor.Handle
+---@field receive fun(self: cbor.Datagram): cbor.Status, cbor.Packet?, cbor.Error? # Receive and validate one packet; INPUT means would-block.
+---@field send fun(self: cbor.Datagram, bytes: cbor.Bytes, peer?: cbor.Bytes): cbor.Status, cbor.Error? # Atomically send one item; OUTPUT retries after readiness.
+---@field set_peer fun(self: cbor.Datagram, peer?: cbor.Bytes): cbor.Status # Snapshot the default raw sockaddr, or clear it with nil.
+---@field source fun(self: cbor.Datagram): cbor.Status, cbor.Source? # Borrow a source scoped to the received packet.
+---@field stream_source fun(self: cbor.Datagram): cbor.Status, cbor.Source? # Borrow a source that waits for successive packets.
+---@field sink fun(self: cbor.Datagram): cbor.Status, cbor.Sink? # Borrow a bounded item assembler with atomic send acceptance.
+---@field reset fun(self: cbor.Datagram): cbor.Status # Cancel partial work and retain cumulative counters.
+---@field progress fun(self: cbor.Datagram): cbor.Status, cbor.DatagramProgress # Copy cumulative totals.
+
+--- Native runtime, retained by its children. Use its factories for configured allocation.
+---@class cbor.Runtime: cbor.Handle
+---@field encoder fun(self: cbor.Runtime, frames?: cbor.Frames, chunk?: integer): cbor.Encoder?, cbor.Status? # Initialize a userdata-owned encoder shell.
+---@field encoder_init fun(self: cbor.Runtime, frames?: cbor.Frames, chunk?: integer): cbor.Encoder?, cbor.Status? # Alias for encoder.
+---@field encoder_create fun(self: cbor.Runtime, allocator?: cbor.Allocator): cbor.Encoder?, cbor.Status? # Allocate the encoder shell in C.
+---@field decoder fun(self: cbor.Runtime, frames?: cbor.Frames, chunk?: integer): cbor.Decoder?, cbor.Status? # Initialize a userdata-owned decoder shell.
+---@field decoder_init fun(self: cbor.Runtime, frames?: cbor.Frames, chunk?: integer): cbor.Decoder?, cbor.Status? # Alias for decoder.
+---@field decoder_create fun(self: cbor.Runtime, allocator?: cbor.Allocator): cbor.Decoder?, cbor.Status? # Allocate the decoder shell in C.
+---@field reader fun(self: cbor.Runtime, framing?: integer, limit?: integer): cbor.Reader?, cbor.Status? # Initialize framing; defaults SINGLE and 131072 bytes.
+---@field reader_init fun(self: cbor.Runtime, framing?: integer, limit?: integer): cbor.Reader?, cbor.Status? # Alias for reader.
+---@field reader_create fun(self: cbor.Runtime, framing?: integer, limit?: integer): cbor.Reader?, cbor.Status? # Allocate a framed reader in C.
+---@field fd fun(self: cbor.Runtime, descriptor: integer): cbor.Fd?, cbor.Status? # Borrow a descriptor in a userdata-owned shell.
+---@field fd_init fun(self: cbor.Runtime, descriptor: integer): cbor.Fd?, cbor.Status? # Alias for fd.
+---@field fd_create fun(self: cbor.Runtime, descriptor: integer): cbor.Fd?, cbor.Status? # Allocate a borrowed-descriptor shell in C.
+---@field transfer fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, framing?: integer, limit?: integer): cbor.Transfer?, cbor.Status? # Initialize a native bounded transfer.
+---@field transfer_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, framing?: integer, limit?: integer): cbor.Transfer?, cbor.Status? # Alias for transfer.
+---@field transfer_create fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, framing?: integer, limit?: integer): cbor.Transfer?, cbor.Status? # Allocate a transfer shell in C.
+---@field default_config fun(self: cbor.Runtime): cbor.Config # Construct default configuration values.
+---@field default_options fun(self: cbor.Runtime): cbor.Options # Construct default conversion bounds.
+---@field default_allocator fun(self: cbor.Runtime): cbor.Allocator # Wrap the native system allocator.
+---@field default_cose_options fun(self: cbor.Runtime): cbor.CoseOptions # Construct default COSE bounds.
+---@field default_cwt_options fun(self: cbor.Runtime): cbor.CwtOptions # Construct default CWT bounds.
+---@field version fun(self: cbor.Runtime): string # Library release version.
+---@field status_string fun(self: cbor.Runtime, status: integer): string # Human-readable status name.
+---@field float64_set fun(self: cbor.Runtime, token: cbor.Token, value: number): cbor.Status # Set a token's binary64 value.
+---@field float64_get fun(self: cbor.Runtime, token: cbor.Token): cbor.Status, number? # Read a binary64 token.
+---@field length32 fun(self: cbor.Runtime, length: integer, limit?: integer): cbor.Status, string? # Encode a four-byte big-endian length prefix.
+---@field cose_key_init fun(self: cbor.Runtime, kind: integer, bytes: cbor.Bytes, id?: cbor.Bytes): cbor.CoseKey?, cbor.Status?, cbor.Error? # Copy key bytes into a userdata-owned shell.
+---@field cose_key_create fun(self: cbor.Runtime, kind: integer, bytes: cbor.Bytes, id?: cbor.Bytes): cbor.CoseKey?, cbor.Status?, cbor.Error? # Copy key bytes into a C-allocated shell.
+---@field cwt_init fun(self: cbor.Runtime, options?: cbor.CwtOptions|cbor.CwtOptionsHandle): cbor.Cwt?, cbor.Status, cbor.Error? # Initialize a reusable token in userdata.
+---@field cwt_create fun(self: cbor.Runtime, options?: cbor.CwtOptions|cbor.CwtOptionsHandle): cbor.Cwt?, cbor.Status, cbor.Error? # Allocate a reusable token in C.
+---@field datagram_init fun(self: cbor.Runtime, descriptor: integer, capacity?: integer): cbor.Datagram?, cbor.Status, cbor.Error? # Borrow a socket; default packet capacity is 2048 bytes.
+---@field datagram_create fun(self: cbor.Runtime, descriptor: integer, capacity?: integer): cbor.Datagram?, cbor.Status, cbor.Error? # Allocate the borrowed-socket shell in C.
+---@field json_to_cbor fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Status, cbor.Error? # Convert JSON into CBOR using blocking endpoints.
+---@field json_to_cbor_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Convert JSON into CBOR incrementally with a userdata shell.
+---@field json_to_cbor_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Convert JSON into CBOR incrementally with a C-allocated shell.
+---@field cbor_to_json fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Status, cbor.Error? # Convert CBOR into JSON using blocking endpoints.
+---@field cbor_to_json_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Convert CBOR into JSON incrementally with a userdata shell.
+---@field cbor_to_json_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Convert CBOR into JSON incrementally with a C-allocated shell.
+---@field encode_map fun(self: cbor.Runtime, view: cbor.RecordView, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Status, cbor.Error? # Encode a native mapped record using blocking endpoints.
+---@field encode_map_init fun(self: cbor.Runtime, view: cbor.RecordView, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Encode a native mapped record incrementally with a userdata shell.
+---@field encode_map_open fun(self: cbor.Runtime, view: cbor.RecordView, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Encode a native mapped record incrementally with a C-allocated shell.
+---@field encode_map_view fun(self: cbor.Runtime, view: cbor.RecordView, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Status, cbor.Error? # Alias for encode_map using blocking endpoints.
+---@field encode_map_view_init fun(self: cbor.Runtime, view: cbor.RecordView, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Alias for encode_map incrementally with a userdata shell.
+---@field encode_map_view_open fun(self: cbor.Runtime, view: cbor.RecordView, sink: cbor.Sink, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Alias for encode_map incrementally with a C-allocated shell.
+---@field decode_map fun(self: cbor.Runtime, source: cbor.Source, view: cbor.RecordView, options?: cbor.Options|cbor.OptionsHandle): cbor.Status, cbor.Error? # Decode into a native mapped record using blocking endpoints.
+---@field decode_map_init fun(self: cbor.Runtime, source: cbor.Source, view: cbor.RecordView, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Decode into a native mapped record incrementally with a userdata shell.
+---@field decode_map_open fun(self: cbor.Runtime, source: cbor.Source, view: cbor.RecordView, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Decode into a native mapped record incrementally with a C-allocated shell.
+---@field decode_map_view fun(self: cbor.Runtime, source: cbor.Source, view: cbor.RecordView, options?: cbor.Options|cbor.OptionsHandle): cbor.Status, cbor.Error? # Alias for decode_map using blocking endpoints.
+---@field decode_map_view_init fun(self: cbor.Runtime, source: cbor.Source, view: cbor.RecordView, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Alias for decode_map incrementally with a userdata shell.
+---@field decode_map_view_open fun(self: cbor.Runtime, source: cbor.Source, view: cbor.RecordView, options?: cbor.Options|cbor.OptionsHandle): cbor.Conversion?, cbor.Status?, cbor.Error? # Alias for decode_map incrementally with a C-allocated shell.
+---@field cose_encrypt0 fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE encrypt0 using blocking endpoints.
+---@field cose_encrypt0_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE encrypt0 with a userdata shell.
+---@field cose_encrypt0_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE encrypt0 with a C-allocated shell.
+---@field cose_encrypt fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, keys: cbor.CoseKey[], options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE encrypt using blocking endpoints.
+---@field cose_encrypt_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, keys: cbor.CoseKey[], options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE encrypt with a userdata shell.
+---@field cose_encrypt_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, keys: cbor.CoseKey[], options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE encrypt with a C-allocated shell.
+---@field cose_decrypt fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE decrypt using blocking endpoints.
+---@field cose_decrypt_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE decrypt with a userdata shell.
+---@field cose_decrypt_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE decrypt with a C-allocated shell.
+---@field cose_encrypt_stream fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, keys: cbor.CoseKey[], options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE encrypt stream using blocking endpoints.
+---@field cose_encrypt_stream_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, keys: cbor.CoseKey[], options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE encrypt stream with a userdata shell.
+---@field cose_encrypt_stream_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, keys: cbor.CoseKey[], options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE encrypt stream with a C-allocated shell.
+---@field cose_decrypt_stream fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE decrypt stream using blocking endpoints.
+---@field cose_decrypt_stream_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE decrypt stream with a userdata shell.
+---@field cose_decrypt_stream_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE decrypt stream with a C-allocated shell.
+---@field cose_sign1 fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE sign1 using blocking endpoints.
+---@field cose_sign1_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE sign1 with a userdata shell.
+---@field cose_sign1_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE sign1 with a C-allocated shell.
+---@field cose_verify1 fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE verify1 using blocking endpoints.
+---@field cose_verify1_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify1 with a userdata shell.
+---@field cose_verify1_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify1 with a C-allocated shell.
+---@field cose_mac0 fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE mac0 using blocking endpoints.
+---@field cose_mac0_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE mac0 with a userdata shell.
+---@field cose_mac0_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE mac0 with a C-allocated shell.
+---@field cose_verify_mac0 fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE verify mac0 using blocking endpoints.
+---@field cose_verify_mac0_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify mac0 with a userdata shell.
+---@field cose_verify_mac0_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify mac0 with a C-allocated shell.
+---@field cose_sign1_stream fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE sign1 stream using blocking endpoints.
+---@field cose_sign1_stream_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE sign1 stream with a userdata shell.
+---@field cose_sign1_stream_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE sign1 stream with a C-allocated shell.
+---@field cose_verify1_stream fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE verify1 stream using blocking endpoints.
+---@field cose_verify1_stream_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify1 stream with a userdata shell.
+---@field cose_verify1_stream_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify1 stream with a C-allocated shell.
+---@field cose_mac0_stream fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE mac0 stream using blocking endpoints.
+---@field cose_mac0_stream_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE mac0 stream with a userdata shell.
+---@field cose_mac0_stream_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE mac0 stream with a C-allocated shell.
+---@field cose_verify_mac0_stream fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.Status, cbor.Error? # COSE verify mac0 stream using blocking endpoints.
+---@field cose_verify_mac0_stream_init fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify mac0 stream with a userdata shell.
+---@field cose_verify_mac0_stream_open fun(self: cbor.Runtime, source: cbor.Source, sink: cbor.Sink, key: cbor.CoseKey, options?: cbor.CoseOptions|cbor.CoseOptionsHandle): cbor.CoseOperation?, cbor.Status?, cbor.Error? # Incremental COSE verify mac0 stream with a C-allocated shell.
+
+--- Public native module. Factories use the default allocator; runtime methods use its configuration.
+---@class cbor.Module
+---@field encoder fun(frames?: cbor.Frames, chunk?: integer): cbor.Encoder?, cbor.Status? # Initialize a userdata-owned encoder shell.
+---@field encoder_create fun(allocator?: cbor.Allocator): cbor.Encoder?, cbor.Status? # Allocate the encoder shell in C.
+---@field decoder fun(frames?: cbor.Frames, chunk?: integer): cbor.Decoder?, cbor.Status? # Initialize a userdata-owned decoder shell.
+---@field decoder_create fun(allocator?: cbor.Allocator): cbor.Decoder?, cbor.Status? # Allocate the decoder shell in C.
+---@field reader fun(framing?: integer, limit?: integer): cbor.Reader?, cbor.Status? # Initialize framing; defaults SINGLE and 131072 bytes.
+---@field reader_create fun(framing?: integer, limit?: integer): cbor.Reader?, cbor.Status? # Allocate a framed reader in C.
+---@field fd fun(descriptor: integer): cbor.Fd?, cbor.Status? # Borrow a descriptor in a userdata-owned shell.
+---@field fd_create fun(descriptor: integer): cbor.Fd?, cbor.Status? # Allocate a borrowed-descriptor shell in C.
+---@field transfer fun(source: cbor.Source, sink: cbor.Sink, framing?: integer, limit?: integer): cbor.Transfer?, cbor.Status? # Initialize a native bounded transfer.
+---@field transfer_create fun(source: cbor.Source, sink: cbor.Sink, framing?: integer, limit?: integer): cbor.Transfer?, cbor.Status? # Allocate a transfer shell in C.
+---@field default_config fun(): cbor.Config # Construct default configuration values.
+---@field default_options fun(): cbor.Options # Construct default conversion bounds.
+---@field default_allocator fun(): cbor.Allocator # Wrap the native system allocator.
+---@field default_cose_options fun(): cbor.CoseOptions # Construct default COSE bounds.
+---@field default_cwt_options fun(): cbor.CwtOptions # Construct default CWT bounds.
+---@field version fun(): string # Library release version.
+---@field status_string fun(status: integer): string # Human-readable status name.
+---@field length32 fun(length: integer, limit?: integer): cbor.Status, string? # Encode a four-byte big-endian length prefix.
+---@field cose_key_init fun(kind: integer, bytes: cbor.Bytes, id?: cbor.Bytes): cbor.CoseKey?, cbor.Status?, cbor.Error? # Copy key bytes into a userdata-owned shell.
+---@field cose_key_create fun(kind: integer, bytes: cbor.Bytes, id?: cbor.Bytes): cbor.CoseKey?, cbor.Status?, cbor.Error? # Copy key bytes into a C-allocated shell.
+---@field datagram_init fun(descriptor: integer, capacity?: integer): cbor.Datagram?, cbor.Status, cbor.Error? # Borrow a socket; default packet capacity is 2048 bytes.
+---@field datagram_create fun(descriptor: integer, capacity?: integer): cbor.Datagram?, cbor.Status, cbor.Error? # Allocate the borrowed-socket shell in C.
+---@field create fun(config?: cbor.Config|cbor.ConfigHandle): cbor.Runtime?, cbor.Status?, cbor.Error? # Allocate a runtime through its configured allocator.
+---@field init fun(config?: cbor.Config|cbor.ConfigHandle): cbor.Runtime?, cbor.Status?, cbor.Error? # Initialize a runtime shell in userdata.
+---@field frames fun(capacity?: integer): cbor.Frames # Allocate caller-selected nesting frames; default 32.
+---@field token fun(kind: integer, argument?: integer, data?: cbor.Bytes, indefinite?: boolean): cbor.Token # Construct an event; DATA retains its byte owner.
+---@field span fun(bytes?: cbor.Bytes): cbor.Span # Borrow a string or span without copying bytes.
+---@field UINT integer # Unsigned integer.
+---@field NEGATIVE integer # Negative integer encoded as -1 minus the argument.
+---@field BYTES integer # Begin byte string.
+---@field TEXT integer # Begin UTF-8 text string.
+---@field ARRAY integer # Begin array.
+---@field MAP integer # Begin map.
+---@field TAG integer # Begin semantic tag.
+---@field BOOL integer # Boolean value.
+---@field NULL integer # Null value.
+---@field UNDEFINED integer # Undefined value.
+---@field SIMPLE integer # Unassigned simple value.
+---@field FLOAT16 integer # Binary16 bits.
+---@field FLOAT32 integer # Binary32 bits.
+---@field FLOAT64 integer # Binary64 bits.
+---@field DATA integer # Borrowed string payload fragment.
+---@field END integer # End string, container or tag.
+---@field OK integer # Accepted successfully.
+---@field TOKEN integer # An event is available.
+---@field INPUT integer # More input or read readiness is required.
+---@field OUTPUT integer # Drain output or wait for write readiness.
+---@field DONE integer # Operation completed.
+---@field INVALID integer # Invalid argument, state or ownership.
+---@field MALFORMED integer # Malformed wire input.
+---@field LIMIT integer # Configured bound exceeded.
+---@field NOMEM integer # Allocation failed.
+---@field IO integer # Endpoint failure or would-block in a synchronous call.
+---@field BUSY integer # Receiver is active or its mutable output is borrowed.
+---@field UNSUPPORTED integer # Feature or object form is unsupported.
+---@field SCHEMA integer # Mapped record/schema mismatch.
+---@field AUTH integer # Authentication, policy or admission failed.
+---@field CRYPTO integer # Crypto provider failure.
+---@field COSE_A256GCM integer # 256-bit content-encryption key.
+---@field COSE_A256KW integer # 256-bit wrapping key.
+---@field COSE_X25519_PUBLIC integer # 32-byte X25519 recipient public key.
+---@field COSE_X25519_PRIVATE integer # 32-byte X25519 private key.
+---@field COSE_ED25519_PUBLIC integer # 32-byte Ed25519 verification key.
+---@field COSE_ED25519_PRIVATE integer # 32-byte Ed25519 signing seed.
+---@field COSE_P256_PUBLIC integer # 65-byte uncompressed P-256 point.
+---@field COSE_P256_PRIVATE integer # 32-byte P-256 scalar.
+---@field COSE_HMAC256 integer # 32-byte HMAC-SHA-256 key.
+---@field SINGLE integer # Exactly one CBOR item.
+---@field SEQUENCE integer # Consecutive CBOR items.
+---@field LENGTH32 integer # Four-byte big-endian item lengths.
+---@field RECORD_BEGIN integer # Framed record begins.
+---@field RECORD_TOKEN integer # A framed record token is available.
+---@field RECORD_END integer # Framed record completed.
+
+local cbor = {}
+---@cast cbor cbor.Module
+return cbor
