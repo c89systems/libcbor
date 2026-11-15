@@ -24,19 +24,26 @@ static void done(c89cbor_state *s) {
       --f->remaining;
   }
 }
-static int begin(c89cbor_state *s, const c89cbor_token *t) {
-  c89cbor_frame *p = top(s), *f;
-  if (s->complete || t->type < C89CBOR_UINT || t->type > C89CBOR_FLOAT64 ||
-      t->length != 0 || t->data != NULL ||
-      (t->indefinite && (t->type < C89CBOR_BYTES || t->type > C89CBOR_MAP)))
+static int value_room(c89cbor_state *s, c89cbor_type type, int indefinite) {
+  c89cbor_frame *p = top(s);
+  if (s->complete)
     return fail(s, C89CBOR_MALFORMED);
   if (p != NULL) {
     if (p->type == C89CBOR_BYTES || p->type == C89CBOR_TEXT) {
-      if (!p->indefinite || t->type != p->type || t->indefinite)
+      if (!p->indefinite || type != p->type || indefinite)
         return fail(s, C89CBOR_MALFORMED);
     } else if (!p->indefinite && p->remaining == 0)
       return fail(s, C89CBOR_MALFORMED);
   }
+  return C89CBOR_OK;
+}
+/* Parsed headers and mapped producers construct valid token fields. Share
+ * their container checks with public put, whose caller-owned fields need
+ * separate representation validation. */
+static int accept_value(c89cbor_state *s, const c89cbor_token *t) {
+  c89cbor_frame *f;
+  if (value_room(s, t->type, t->indefinite) != 0)
+    return s->failed;
   if (t->type >= C89CBOR_BYTES && t->type <= C89CBOR_TAG) {
     if (s->depth == s->capacity)
       return fail(s, C89CBOR_LIMIT);
@@ -46,19 +53,25 @@ static int begin(c89cbor_state *s, const c89cbor_token *t) {
     f->type = t->type;
     f->indefinite = t->indefinite;
   } else {
-    if ((t->type == C89CBOR_BOOL && t->argument > 1) ||
-        ((t->type == C89CBOR_NULL || t->type == C89CBOR_UNDEFINED) &&
-         t->argument != 0) ||
-        (t->type == C89CBOR_SIMPLE &&
-         (t->argument > 255 || (t->argument >= 20 && t->argument < 32))) ||
-        (t->type == C89CBOR_FLOAT16 && t->argument > 65535U) ||
-        (t->type == C89CBOR_FLOAT32 && t->argument > UINT32_MAX))
-      return fail(s, C89CBOR_MALFORMED);
     done(s);
   }
   return C89CBOR_OK;
 }
-static int utf8(c89cbor_frame *f, const unsigned char *data, size_t count) {
+static int begin(c89cbor_state *s, const c89cbor_token *t) {
+  if (t->type < C89CBOR_UINT || t->type > C89CBOR_FLOAT64 || t->length != 0 ||
+      t->data != NULL ||
+      (t->indefinite && (t->type < C89CBOR_BYTES || t->type > C89CBOR_MAP)) ||
+      (t->type == C89CBOR_BOOL && t->argument > 1) ||
+      ((t->type == C89CBOR_NULL || t->type == C89CBOR_UNDEFINED) &&
+       t->argument != 0) ||
+      (t->type == C89CBOR_SIMPLE &&
+       (t->argument > 255 || (t->argument >= 20 && t->argument < 32))) ||
+      (t->type == C89CBOR_FLOAT16 && t->argument > 65535U) ||
+      (t->type == C89CBOR_FLOAT32 && t->argument > UINT32_MAX))
+    return fail(s, C89CBOR_MALFORMED);
+  return accept_value(s, t);
+}
+int c89_utf8(c89cbor_frame *f, const unsigned char *data, size_t count) {
   size_t i = 0;
   unsigned int pending = f->utf8, byte;
   uint32_t scalar = f->scalar, minimum = f->minimum;
@@ -117,7 +130,7 @@ static int data_take(c89cbor_state *s, const void *data, size_t n) {
     return s->failed;
   f = top(s);
   if (f->type == C89CBOR_TEXT &&
-      (!utf8(f, data, n) || ((uint64_t)n == f->remaining && f->utf8)))
+      (!c89_utf8(f, data, n) || ((uint64_t)n == f->remaining && f->utf8)))
     return fail(s, C89CBOR_MALFORMED);
   f->remaining -= (uint64_t)n;
   return C89CBOR_OK;
@@ -145,7 +158,10 @@ int c89cbor_decoder_init(c89cbor *runtime, c89cbor_decoder *d, c89cbor_frame *f,
                          size_t capacity, size_t chunk) {
   if (d == NULL)
     return C89CBOR_INVALID;
-  memset(d, 0, sizeof(*d));
+  /* Grammar frames initialize on begin, including caller-supplied frames.
+   * Clearing unused embedded frames on every short operation is redundant. */
+  memset(&d->state, 0, offsetof(c89cbor_state, local_frames));
+  d->have = d->need = 0;
   d->next = c89cbor_decoder_next;
   d->next_tag = c89cbor_decoder_next_tag;
   d->finish = c89cbor_decoder_finish;
@@ -168,7 +184,9 @@ int c89cbor_encoder_init(c89cbor *runtime, c89cbor_encoder *e, c89cbor_frame *f,
                          size_t capacity, size_t chunk) {
   if (e == NULL)
     return C89CBOR_INVALID;
-  memset(e, 0, sizeof(*e));
+  memset(&e->state, 0, offsetof(c89cbor_state, local_frames));
+  e->offset = e->size = e->remaining = e->validated = 0;
+  e->data = NULL;
   e->put = c89cbor_encoder_put;
   e->tag = c89cbor_encoder_tag;
   e->end_tag = c89cbor_encoder_end_tag;
@@ -191,15 +209,27 @@ int c89cbor_encoder_init(c89cbor *runtime, c89cbor_encoder *e, c89cbor_frame *f,
     return status;
   }
 }
-static int parse_header(c89cbor_decoder *d, c89cbor_token *t) {
-  unsigned int major = d->header[0] >> 5U, extra = d->header[0] & 31U;
-  size_t i;
+static uint64_t argument_bytes(const unsigned char *bytes, unsigned int extra) {
+  if (extra == 24u)
+    return bytes[0];
+  if (extra == 25u)
+    return ((uint64_t)bytes[0] << 8u) | bytes[1];
+  if (extra == 26u)
+    return ((uint64_t)bytes[0] << 24u) | ((uint64_t)bytes[1] << 16u) |
+           ((uint64_t)bytes[2] << 8u) | bytes[3];
+  if (extra == 27u)
+    return ((uint64_t)bytes[0] << 56u) | ((uint64_t)bytes[1] << 48u) |
+           ((uint64_t)bytes[2] << 40u) | ((uint64_t)bytes[3] << 32u) |
+           ((uint64_t)bytes[4] << 24u) | ((uint64_t)bytes[5] << 16u) |
+           ((uint64_t)bytes[6] << 8u) | bytes[7];
+  return 0;
+}
+static int parse_header(c89cbor_decoder *d, const unsigned char *header,
+                        c89cbor_token *t) {
+  unsigned int major = header[0] >> 5U, extra = header[0] & 31U;
   c89cbor_frame *f;
-  for (i = 1; i < d->have; ++i)
-    t->argument = (t->argument << 8U) | d->header[i];
-  if (extra < 24)
-    t->argument = extra;
-  if (d->header[0] == 255U) {
+  t->argument = extra < 24u ? extra : argument_bytes(header + 1, extra);
+  if (header[0] == 255U) {
     f = top(&d->state);
     if (f == NULL || !f->indefinite)
       return fail(&d->state, C89CBOR_MALFORMED);
@@ -234,13 +264,13 @@ static int parse_header(c89cbor_decoder *d, c89cbor_token *t) {
     } else
       t->type = C89CBOR_SIMPLE;
   }
-  return begin(&d->state, t);
+  return accept_value(&d->state, t);
 }
 static int decoder_next_work(c89cbor_decoder *d, const void *input, size_t n,
                              size_t *consumed, c89cbor_token *t) {
   const unsigned char *p = input;
   c89cbor_frame *f;
-  size_t take;
+  size_t take, need;
   unsigned int extra;
   int rc;
   if (consumed != NULL)
@@ -279,13 +309,20 @@ static int decoder_next_work(c89cbor_decoder *d, const void *input, size_t n,
   if (!d->have) {
     if (!n)
       return C89CBOR_INPUT;
+    extra = p[0] & 31u;
+    need = extra < 24u || extra >= 28u
+               ? 1u
+               : (size_t)1u + ((size_t)1u << (extra - 24u));
+    if (n >= need) {
+      *consumed = need;
+      rc = parse_header(d, p, t);
+      return rc < 0 ? rc : C89CBOR_TOKEN;
+    }
     d->header[0] = *p++;
     --n;
     ++*consumed;
     d->have = 1;
-    extra = d->header[0] & 31U;
-    d->need =
-        extra < 24 || extra >= 28 ? 1 : (size_t)1 + ((size_t)1 << (extra - 24));
+    d->need = need;
   }
   take = d->need - d->have;
   if (take > n)
@@ -296,7 +333,7 @@ static int decoder_next_work(c89cbor_decoder *d, const void *input, size_t n,
   *consumed += take;
   if (d->have != d->need)
     return C89CBOR_INPUT;
-  rc = parse_header(d, t);
+  rc = parse_header(d, d->header, t);
   d->have = d->need = 0;
   return rc < 0 ? rc : C89CBOR_TOKEN;
 }
@@ -307,11 +344,42 @@ int c89cbor_decoder_next(c89cbor_decoder *d, const void *input, size_t length,
   if (d != NULL && d->lifetime.magic == C89_LIFETIME_MAGIC) {
     if (consumed != NULL)
       d->lifetime.progress.input += (uint64_t)*consumed;
-    c89_error(&d->lifetime, status, "decoder");
+    if (status < 0)
+      c89_error(&d->lifetime, status, "decoder");
   }
   return status;
 }
 
+/* The caller has a complete one-byte TEXT header and its bounded payload.
+ * An exact match to a validated immutable schema key already proves UTF-8.
+ * Unknown keys still receive full UTF-8 validation. INPUT consumes nothing. */
+int c89_decoder_text(c89cbor_decoder *d, const unsigned char *text,
+                     size_t length, size_t *consumed, int matched) {
+  c89cbor_frame *parent = top(&d->state);
+  c89cbor_frame frame;
+  int status;
+  *consumed = 0;
+  if (d->have != 0 || d->state.failed ||
+      (parent != NULL && !parent->indefinite && parent->remaining == 0))
+    return C89CBOR_INPUT;
+  status = value_room(&d->state, C89CBOR_TEXT, 0);
+  if (status == 0 && d->state.depth == d->state.capacity)
+    status = fail(&d->state, C89CBOR_LIMIT);
+  *consumed = 1;
+  if (status == 0) {
+    *consumed += length;
+    if (!matched) {
+      memset(&frame, 0, sizeof(frame));
+      if (!c89_utf8(&frame, text, length) || frame.utf8 != 0)
+        status = fail(&d->state, C89CBOR_MALFORMED);
+    }
+  }
+  if (status == 0)
+    done(&d->state);
+  d->lifetime.progress.input += (uint64_t)*consumed;
+  return status == 0 ? C89CBOR_TOKEN
+                     : c89_error(&d->lifetime, status, "decoder");
+}
 static int decoder_finish_work(c89cbor_decoder *d) {
   if (d == NULL || d->state.frames == NULL)
     return C89CBOR_INVALID;
@@ -348,11 +416,57 @@ int c89cbor_decoder_reset(c89cbor_decoder *d) {
   d->state.complete = 0;
   return C89CBOR_OK;
 }
-static int encoder_put_work(c89cbor_encoder *e, const c89cbor_token *t) {
-  c89cbor_frame *f;
+static size_t encode_header(const c89cbor_token *t, unsigned char header[9]) {
   uint64_t value;
   size_t bytes = 0, i;
   unsigned int major;
+  value = t->argument;
+  major = (unsigned int)t->type;
+  if (t->type == C89CBOR_BOOL) {
+    major = 7;
+    value += 20;
+  } else if (t->type == C89CBOR_NULL) {
+    major = 7;
+    value = 22;
+  } else if (t->type == C89CBOR_UNDEFINED) {
+    major = 7;
+    value = 23;
+  } else if (t->type == C89CBOR_SIMPLE)
+    major = 7;
+  else if (t->type >= C89CBOR_FLOAT16) {
+    bytes = (size_t)2 << (t->type - C89CBOR_FLOAT16);
+    header[0] = (unsigned char)(249 + t->type - C89CBOR_FLOAT16);
+  }
+  if (!bytes) {
+    if (t->indefinite)
+      header[0] = (unsigned char)((major << 5U) | 31U);
+    else if (value < 24)
+      header[0] = (unsigned char)((major << 5U) | (unsigned int)value);
+    else {
+      bytes = value <= 255          ? 1
+              : value <= 65535      ? 2
+              : value <= UINT32_MAX ? 4
+                                    : 8;
+      header[0] = (unsigned char)((major << 5U) | (bytes == 1   ? 24U
+                                                   : bytes == 2 ? 25U
+                                                   : bytes == 4 ? 26U
+                                                                : 27U));
+    }
+  }
+#if defined(__GNUC__) && defined(__BYTE_ORDER__) &&                            \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  if (bytes == 8u) {
+    uint64_t wire = __builtin_bswap64(value);
+    memcpy(header + 1, &wire, sizeof(wire));
+    return 9;
+  }
+#endif
+  for (i = 0; i < bytes; ++i)
+    header[bytes - i] = (unsigned char)(value >> (8U * i));
+  return bytes + 1;
+}
+static int encoder_put_work(c89cbor_encoder *e, const c89cbor_token *t) {
+  c89cbor_frame *f;
   int rc, indefinite;
   if (e == NULL || t == NULL || e->state.frames == NULL)
     return C89CBOR_INVALID;
@@ -388,42 +502,7 @@ static int encoder_put_work(c89cbor_encoder *e, const c89cbor_token *t) {
   rc = begin(&e->state, t);
   if (rc < 0)
     return rc;
-  value = t->argument;
-  major = (unsigned int)t->type;
-  if (t->type == C89CBOR_BOOL) {
-    major = 7;
-    value += 20;
-  } else if (t->type == C89CBOR_NULL) {
-    major = 7;
-    value = 22;
-  } else if (t->type == C89CBOR_UNDEFINED) {
-    major = 7;
-    value = 23;
-  } else if (t->type == C89CBOR_SIMPLE)
-    major = 7;
-  else if (t->type >= C89CBOR_FLOAT16) {
-    bytes = (size_t)2 << (t->type - C89CBOR_FLOAT16);
-    e->header[0] = (unsigned char)(249 + t->type - C89CBOR_FLOAT16);
-  }
-  if (!bytes) {
-    if (t->indefinite)
-      e->header[0] = (unsigned char)((major << 5U) | 31U);
-    else if (value < 24)
-      e->header[0] = (unsigned char)((major << 5U) | (unsigned int)value);
-    else {
-      bytes = value <= 255          ? 1
-              : value <= 65535      ? 2
-              : value <= UINT32_MAX ? 4
-                                    : 8;
-      e->header[0] = (unsigned char)((major << 5U) | (bytes == 1   ? 24U
-                                                      : bytes == 2 ? 25U
-                                                      : bytes == 4 ? 26U
-                                                                   : 27U));
-    }
-  }
-  for (i = 0; i < bytes; ++i)
-    e->header[bytes - i] = (unsigned char)(value >> (8U * i));
-  e->size = bytes + 1;
+  e->size = encode_header(t, e->header);
   return C89CBOR_OK;
 }
 int c89cbor_encoder_peek(c89cbor_encoder *e, const void **bytes,
@@ -501,6 +580,149 @@ int c89cbor_encoder_read(c89cbor_encoder *e, void *out, size_t capacity,
     memcpy(out, bytes, length);
   *written = length;
   return c89cbor_encoder_advance(e, length);
+}
+/* Mapped traversal already owns a bounded output chunk. Accept and drain
+ * small tokens in one call; large DATA remains borrowed through peek/advance.
+ */
+int c89_encoder_buffer(c89cbor_encoder *e, const c89cbor_token *token,
+                       unsigned char *output, size_t capacity,
+                       size_t *written) {
+  size_t length;
+  int status;
+  *written = 0;
+  if (capacity >= 9u && token->type != C89CBOR_DATA &&
+      token->type != C89CBOR_END) {
+    if (e->state.failed)
+      return e->state.failed;
+    if (e->offset < e->size || e->remaining)
+      return C89CBOR_OUTPUT;
+    status = accept_value(&e->state, token);
+    if (status != 0)
+      return c89_error(&e->lifetime, status, "encoder");
+    e->size = e->offset = 0;
+    *written = encode_header(token, output);
+    e->lifetime.progress.output += (uint64_t)*written;
+    return C89CBOR_OK;
+  }
+  status = encoder_put_work(e, token);
+  if (status != 0)
+    return c89_error(&e->lifetime, status, "encoder");
+  if (e->size != 0) {
+    if (e->size > capacity)
+      return C89CBOR_OK;
+    memcpy(output, e->header, e->size);
+    *written = e->offset = e->size;
+  } else if (e->remaining != 0) {
+    length = e->remaining < e->state.chunk ? e->remaining : e->state.chunk;
+    if (length > capacity ||
+        (length >= e->state.chunk / 2u && capacity == e->state.chunk))
+      return C89CBOR_OK;
+    status = data_take(&e->state, e->data, length);
+    if (status != 0)
+      return c89_error(&e->lifetime, status, "encoder");
+    memcpy(output, e->data, length);
+    e->data += length;
+    e->remaining -= length;
+    *written = length;
+  }
+  e->lifetime.progress.output += (uint64_t)*written;
+  return C89CBOR_OK;
+}
+/* Fuse a complete small text span, preserving the same grammar and UTF-8
+ * validation as TEXT/DATA/END. The caller reserves the maximum header size. */
+static int buffer_text(c89cbor_encoder *e, const void *text, size_t length,
+                       unsigned char *output, size_t capacity, size_t *written,
+                       int validate) {
+  c89cbor_token token;
+  c89cbor_frame frame;
+  int status;
+  *written = 0;
+  if (capacity < 9u || length > capacity - 9u)
+    return C89CBOR_OUTPUT;
+  if (e->state.failed)
+    return e->state.failed;
+  if (e->offset < e->size || e->remaining)
+    return C89CBOR_OUTPUT;
+  status = value_room(&e->state, C89CBOR_TEXT, 0);
+  if (status == 0 && e->state.depth == e->state.capacity)
+    status = fail(&e->state, C89CBOR_LIMIT);
+  if (status == 0 && validate) {
+    memset(&frame, 0, sizeof(frame));
+    if ((length != 0 && text == NULL) || !c89_utf8(&frame, text, length) ||
+        frame.utf8 != 0)
+      status = fail(&e->state, C89CBOR_MALFORMED);
+  }
+  if (status != 0)
+    return c89_error(&e->lifetime, status, "encoder");
+  e->size = e->offset = 0;
+  if (length < 24u) {
+    output[0] = (unsigned char)(0x60u | (unsigned int)length);
+    *written = 1;
+  } else {
+    memset(&token, 0, sizeof(token));
+    token.type = C89CBOR_TEXT;
+    token.argument = (uint64_t)length;
+    *written = encode_header(&token, output);
+  }
+  if (length != 0)
+    memcpy(output + *written, text, length);
+  *written += length;
+  done(&e->state);
+  e->lifetime.progress.output += (uint64_t)*written;
+  return C89CBOR_OK;
+}
+int c89_encoder_buffer_text(c89cbor_encoder *e, const void *text, size_t length,
+                            unsigned char *output, size_t capacity,
+                            size_t *written) {
+  return buffer_text(e, text, length, output, capacity, written, 1);
+}
+int c89_encoder_buffer_key(c89cbor_encoder *e, const lonejson_field *field,
+                           unsigned char *output, size_t capacity,
+                           size_t *written) {
+  /* Schema keys have already passed validation and remain immutable for the
+   * operation. Text values continue through per-value UTF-8 validation. */
+  return buffer_text(e, field->json_key, field->json_key_len, output, capacity,
+                     written, 0);
+}
+/* A validated schema key and one native scalar fit in the current bounded
+ * chunk. Check the map slot once and accept the complete pair atomically.
+ * Caller-owned tokens still enter through public put's full validation. */
+int c89_encoder_buffer_pair(c89cbor_encoder *e, const lonejson_field *field,
+                            const c89cbor_token *value, unsigned char *output,
+                            size_t capacity, size_t *written) {
+  c89cbor_frame *parent = top(&e->state);
+  c89cbor_token key;
+  size_t used;
+  *written = 0;
+  if (capacity < 18u || field->json_key_len > capacity - 18u ||
+      e->offset < e->size || e->remaining != 0)
+    return C89CBOR_OUTPUT;
+  if (e->state.failed)
+    return e->state.failed;
+  if (parent == NULL || parent->type != C89CBOR_MAP || parent->odd ||
+      (!parent->indefinite && parent->remaining == 0))
+    return fail(&e->state, C89CBOR_MALFORMED);
+  if (e->state.depth == e->state.capacity)
+    return fail(&e->state, C89CBOR_LIMIT);
+  if (field->json_key_len < 24u) {
+    output[0] = (unsigned char)(0x60u | (unsigned int)field->json_key_len);
+    used = 1;
+  } else {
+    memset(&key, 0, sizeof(key));
+    key.type = C89CBOR_TEXT;
+    key.argument = (uint64_t)field->json_key_len;
+    used = encode_header(&key, output);
+  }
+  if (field->json_key_len != 0)
+    memcpy(output + used, field->json_key, field->json_key_len);
+  used += field->json_key_len;
+  used += encode_header(value, output + used);
+  if (!parent->indefinite)
+    --parent->remaining;
+  e->size = e->offset = 0;
+  e->lifetime.progress.output += (uint64_t)used;
+  *written = used;
+  return C89CBOR_OK;
 }
 static int encoder_finish_work(c89cbor_encoder *e) {
   if (e == NULL || e->state.frames == NULL)
@@ -666,7 +888,8 @@ const char *c89cbor_status_string(c89cbor *runtime, int status) {
 
 int c89cbor_decoder_finish(c89cbor_decoder *value) {
   int status = decoder_finish_work(value);
-  if (value != NULL && value->lifetime.magic == C89_LIFETIME_MAGIC) {
+  if (status < 0 && value != NULL &&
+      value->lifetime.magic == C89_LIFETIME_MAGIC) {
     c89_error(&value->lifetime, status, "decoder");
   }
   return status;
@@ -674,7 +897,8 @@ int c89cbor_decoder_finish(c89cbor_decoder *value) {
 
 int c89cbor_encoder_put(c89cbor_encoder *value, const c89cbor_token *token) {
   int status = encoder_put_work(value, token);
-  if (value != NULL && value->lifetime.magic == C89_LIFETIME_MAGIC) {
+  if (status < 0 && value != NULL &&
+      value->lifetime.magic == C89_LIFETIME_MAGIC) {
     c89_error(&value->lifetime, status, "encoder");
   }
   return status;
@@ -696,7 +920,8 @@ int c89cbor_encoder_end_tag(c89cbor_encoder *encoder) {
 
 int c89cbor_encoder_finish(c89cbor_encoder *value) {
   int status = encoder_finish_work(value);
-  if (value != NULL && value->lifetime.magic == C89_LIFETIME_MAGIC) {
+  if (status < 0 && value != NULL &&
+      value->lifetime.magic == C89_LIFETIME_MAGIC) {
     c89_error(&value->lifetime, status, "encoder");
   }
   return status;

@@ -5,6 +5,7 @@
 typedef struct bench_counts {
   size_t allocations, reallocations, frees, bytes, peak;
   uint64_t copies, reads, writes;
+  int system_allocator, untimed_verification, transient_schema;
 } bench_counts;
 typedef struct bench_samples {
   double values[256];
@@ -15,6 +16,7 @@ void *bench_allocate(void *context, size_t length);
 void *bench_reallocate(void *context, void *memory, size_t length);
 void bench_free(void *context, void *memory);
 void bench_counts_reset(bench_counts *counts);
+int bench_enabled(const char *name);
 double bench_wall(void);
 double bench_cpu(void);
 void bench_report(const char *implementation, const char *name,

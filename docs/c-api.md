@@ -112,6 +112,14 @@ unless `allow_unknown_fields` is set; skipped values still undergo CBOR and
 UTF-8 validation. Single-record completion requires EOF and rejects trailing
 bytes. Record changes and callbacks are provisional until completion.
 
+Immutable singleton schemas identified by lonejson's identity and generation
+cookie can reuse leaf-layout validation in a bounded per-thread cache. The
+cache stores identity numbers and layout facts, never schema-owner or record
+pointers. Record bounds, alignment, option limits and values are still checked
+per operation. Plain descriptor copies and record-dependent schemas undergo
+full validation each time; replacing an owned singleton requires its factory's
+new generation cookie.
+
 Native scalar, string, object and array fields never cross a JSON representation.
 Text sources become CBOR text and Base64 sources become raw CBOR byte strings.
 Unknown-length sources produce indefinite chunks with valid UTF-8 boundaries.

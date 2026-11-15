@@ -37,12 +37,14 @@ typedef struct benchmark {
   bench_counts counts;
   bench_record input, output;
   const lonejson_map *map;
+  lonejson_map transient_map;
   c89cbor_options options;
   memory wire, text;
   unsigned char native_wire[BENCH_CAPACITY], expected[BENCH_CAPACITY],
       json_fixture[BENCH_CAPACITY];
   size_t native_length, expected_length, json_length;
   int verify_output;
+  int verify;
   bench_samples samples;
 } benchmark;
 enum mode {
@@ -51,11 +53,13 @@ enum mode {
   JSON_CONTROL_ENCODE,
   JSON_CONTROL_DECODE,
   JSON_ENCODE,
-  JSON_DECODE
+  JSON_DECODE,
+  RESET_CONTROL
 };
 static const char *const mode_names[] = {
     "mapped-encode",       "mapped-decode", "json-control-encode",
-    "json-control-decode", "json-to-cbor",  "cbor-to-json"};
+    "json-control-decode", "json-to-cbor",  "cbor-to-json",
+    "reset-control"};
 static int read_bytes(void *context, void *bytes, size_t capacity,
                       size_t *count) {
   memory *m = context;
@@ -106,7 +110,9 @@ static void run_once(benchmark *b, enum mode mode) {
   sink.write = write_bytes;
   source.context = &b->wire;
   sink.context = &b->wire;
-  if (mode == MAPPED_ENCODE) {
+  if (mode == RESET_CONTROL) {
+    reset_record(b);
+  } else if (mode == MAPPED_ENCODE) {
     assert(b->runtime.encode_map(
                &b->runtime, b->map, bench_record_const_data(&b->input),
                b->map->struct_size, &sink, &b->options, &error) == 0);
@@ -115,7 +121,7 @@ static void run_once(benchmark *b, enum mode mode) {
     assert(b->runtime.decode_map(
                &b->runtime, &source, b->map, bench_record_data(&b->output),
                b->map->struct_size, &b->options, &error) == 0);
-    assert(bench_record_equal(&b->input, &b->output));
+    assert(!b->verify || bench_record_equal(&b->input, &b->output));
   } else if (mode == JSON_CONTROL_ENCODE || mode == JSON_ENCODE) {
     if (mode == JSON_CONTROL_ENCODE) {
       assert(lonejson_serialize_sink(
@@ -139,10 +145,10 @@ static void run_once(benchmark *b, enum mode mode) {
       assert(lonejson_parse_buffer(
                  b->json, b->map, bench_record_data(&b->output), b->text.output,
                  b->text.used, &json_error) == LONEJSON_STATUS_OK);
-      assert(bench_record_equal(&b->input, &b->output));
+      assert(!b->verify || bench_record_equal(&b->input, &b->output));
     }
   }
-  if (b->verify_output && mode != MAPPED_DECODE &&
+  if (b->verify && b->verify_output && mode != MAPPED_DECODE &&
       mode != JSON_CONTROL_DECODE) {
     memory *result = mode == JSON_DECODE ? &b->text : &b->wire;
     assert(result->used == b->expected_length &&
@@ -158,23 +164,31 @@ static void prepare(benchmark *b, bench_kind kind, enum mode mode,
   c89cbor_sink sink;
   c89cbor_source source;
   memset(b, 0, sizeof(*b));
+  b->verify = 1;
   b->allocator.malloc_fn = bench_allocate;
   b->allocator.realloc_fn = bench_reallocate;
   b->allocator.free_fn = bench_free;
   b->allocator.ctx = &b->counts;
-  json_config.allocator = &b->allocator;
+  if (!bench_enabled("BENCH_SYSTEM_ALLOCATOR"))
+    json_config.allocator = &b->allocator;
   b->json = lonejson_new(&json_config, &json_error);
   assert(b->json != NULL);
   config.json = b->json;
-  config.allocator.context = &b->counts;
-  config.allocator.alloc = bench_allocate;
-  config.allocator.free = bench_free;
+  if (!bench_enabled("BENCH_SYSTEM_ALLOCATOR")) {
+    config.allocator.context = &b->counts;
+    config.allocator.alloc = bench_allocate;
+    config.allocator.free = bench_free;
+  }
   assert(c89cbor_init(&b->runtime, &config, &error) == 0);
   b->options = c89cbor_default_options();
   b->options.chunk = chunk;
   b->map = kind == BENCH_SCALAR   ? &scalar_map
            : kind == BENCH_NESTED ? &nested_map
                                   : &text_map;
+  if (bench_enabled("BENCH_TRANSIENT_SCHEMA")) {
+    b->transient_map = *b->map;
+    b->map = &b->transient_map;
+  }
   bench_record_fill(&b->input, kind);
   b->output.kind = kind;
   assert(lonejson_init(b->json, b->map, bench_record_data(&b->output),
@@ -195,7 +209,8 @@ static void prepare(benchmark *b, bench_kind kind, enum mode mode,
     memcpy(b->json_fixture, b->text.output, b->json_length);
   }
   run_once(b, mode);
-  if (mode != MAPPED_DECODE && mode != JSON_CONTROL_DECODE) {
+  if (mode != MAPPED_DECODE && mode != JSON_CONTROL_DECODE &&
+      mode != RESET_CONTROL) {
     memory *result = mode == JSON_DECODE ? &b->text : &b->wire;
     b->expected_length = result->used;
     memcpy(b->expected, result->output, result->used);
@@ -224,7 +239,7 @@ int main(int argc, char **argv) {
   size_t repetitions = argc > 2 ? (size_t)strtoul(argv[2], NULL, 10) : 10000u;
   size_t chunk = argc > 3 ? (size_t)strtoul(argv[3], NULL, 10) : 0;
   size_t i, sample, batch, records;
-  int round;
+  int round, matched = 0;
   double setup, begin, cpu, seconds, cpu_seconds, at;
   bench_counts snapshot;
   lonejson_error error;
@@ -277,21 +292,28 @@ int main(int argc, char **argv) {
     return 1;
   }
   for (mode = MAPPED_ENCODE;
-       mode <= JSON_DECODE && strcmp(argv[1], mode_names[(int)mode]) != 0;
+       mode <= RESET_CONTROL && strcmp(argv[1], mode_names[(int)mode]) != 0;
        mode = (enum mode)((int)mode + 1)) {
   }
-  if (mode > JSON_DECODE) {
+  if (mode > RESET_CONTROL) {
     free(b);
     return 1;
   }
   for (kind = BENCH_SCALAR; kind <= BENCH_LAST;
        kind = (bench_kind)((int)kind + 1)) {
+    if (argc > 4 && strcmp(argv[4], bench_fixture_name(kind)) != 0)
+      continue;
+    matched = 1;
     setup = bench_wall();
     prepare(b, kind, mode, chunk);
     setup = bench_wall() - setup;
     records = kind >= BENCH_LARGE_ASCII ? repetitions / 16u + 1u : repetitions;
     for (round = -1; round < 5; ++round) {
+      b->verify = !bench_enabled("BENCH_NO_VERIFY");
       bench_counts_reset(&b->counts);
+      b->counts.system_allocator = bench_enabled("BENCH_SYSTEM_ALLOCATOR");
+      b->counts.untimed_verification = !b->verify;
+      b->counts.transient_schema = bench_enabled("BENCH_TRANSIENT_SCHEMA");
       begin = bench_wall();
       cpu = bench_cpu();
       for (i = 0; i < records; ++i)
@@ -299,17 +321,22 @@ int main(int argc, char **argv) {
       cpu_seconds = bench_cpu() - cpu;
       seconds = bench_wall() - begin;
       snapshot = b->counts;
+      b->verify = 1;
+      run_once(b, mode);
       if (round < 0)
         continue;
       b->samples.count = kind >= BENCH_LARGE_ASCII ? 128u : 256u;
       b->samples.batch = kind >= BENCH_LARGE_ASCII ? 1u : 16u;
       for (sample = 0; sample < b->samples.count; ++sample) {
+        b->verify = !bench_enabled("BENCH_NO_VERIFY");
         at = bench_wall();
         for (batch = 0; batch < b->samples.batch; ++batch)
           run_once(b, mode);
         b->samples.values[sample] =
             (bench_wall() - at) * 1e9 / (double)b->samples.batch;
       }
+      b->verify = 1;
+      run_once(b, mode);
       bench_report("c89.systems", mode_names[(int)mode],
                    bench_fixture_name(kind), round, records,
                    mode == MAPPED_ENCODE || mode == JSON_CONTROL_ENCODE ||
@@ -325,5 +352,7 @@ int main(int argc, char **argv) {
     assert(b->counts.bytes == 0);
   }
   free(b);
-  return 0;
+  if (!matched)
+    fprintf(stderr, "Unknown benchmark fixture: %s\n", argv[4]);
+  return matched ? 0 : 1;
 }

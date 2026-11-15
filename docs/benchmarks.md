@@ -37,16 +37,38 @@ an explicit JSON serialization/parsing control. Fixtures cover scalar-heavy
 records, nested records, 72-byte ASCII/multibyte text and approximately 64 KiB
 text. Integer fixtures include both signed and unsigned boundaries. All fields
 are required. Native and PJK executables independently emit and consume the same
-preferred CBOR fixtures, with an exact byte comparison in `interop-reference`.
+CBOR fixtures, using minimal integer encodings and explicit binary64 floats,
+with an exact byte comparison in `interop-reference`.
 That interop check covers this declared profile; it is not a certification of
 every representation accepted by either library.
 
 The PJK record profile builds a DOM from the same C record for encoding, or loads
 a DOM and checks keys, duplicates, required fields and native ranges for decoding.
 DOM construction and destruction are timed. The native profile opens, runs and
-cleans one conversion per record, including metadata validation and workspace
-allocation. Runtime/schema/fixture preparation is reported separately. Native
+cleans one conversion per record, including workspace allocation and record
+bounds/value checks. Immutable singleton leaf schemas reuse metadata validation
+through a bounded thread-local cache. Ordinary descriptor copies and schemas
+with submaps or record-dependent handlers validate on each construction.
+Runtime/schema/fixture preparation is reported separately. Native
 decoding resets its initialized destination as required by the public API.
+
+For focused runs use `profile_benchmark mapped-encode 1000000 0 scalars`
+and `reference_mapped_benchmark encode 1000000 scalars`, substituting `decode`
+for both modes as needed. The native numeric argument before the fixture is
+its input/output chunk bound; zero selects 2 KiB. The reference DOM API takes
+the complete fixture buffer. Unknown fixture names fail without measurements.
+
+Three diagnostic controls default to zero. `BENCH_SYSTEM_ALLOCATOR=1` uses
+each library's system allocator without allocation counters.
+`BENCH_NO_VERIFY=1` moves output comparisons outside timed intervals; each
+round and latency pass is still checked. Input/type/range validation remains
+timed. Endpoint copy/read/write counters remain active in both controls.
+`BENCH_TRANSIENT_SCHEMA=1` selects an ordinary native descriptor copy, disabling
+identity-based validation reuse. Descriptor creation remains in setup; this
+control also changes lonejson's reset/analysis path and does not isolate just
+libcbor's cache. `reset-control` measures destination reset on its own.
+The JSONL identifies the selected controls. Keep instrumented and control
+results separate, and reverse execution order when checking shared-host bias.
 
 The JSON control deliberately materializes one fixture's JSON document in a
 fixed benchmark buffer. It measures the cost of that additional representation
@@ -92,7 +114,46 @@ Do not turn noisy shared-host throughput into a correctness threshold. Performan
 objective: exceed established implementations on the declared workload with equal
 semantics, without relaxing validation, streaming or memory bounds.
 
-## Measured development baseline
+## Mapped optimization measurement
+
+Measured on 2026-11-15 with the same pinned compiler and PJK version below,
+Release `-O3`, no LTO, default 2 KiB chunks and CPU affinity 7. The host remains
+shared. Values are medians of five round means in microseconds per record,
+with 100000 small or 6251 large records per round. Both paths include operation
+construction, validation and teardown; immutable schemas are prepared once.
+
+| Fixture | Native encode | PJK DOM encode | Native decode | PJK DOM decode |
+| --- | ---: | ---: | ---: | ---: |
+| Scalars | 0.587 | 0.632 | 0.795 | 0.882 |
+| Nested | 1.126 | 1.747 | 1.656 | 2.580 |
+| Short ASCII | 0.433 | 0.353 | 0.608 | 0.425 |
+| Short UTF-8 | 0.506 | 0.352 | 0.709 | 0.430 |
+| Large ASCII | 8.621 | 148.910 | 10.862 | 147.472 |
+| Large UTF-8 | 84.672 | 141.459 | 92.316 | 140.671 |
+
+Allocator instrumentation matters when assessing scalar parity. With both
+`BENCH_SYSTEM_ALLOCATOR=1` and `BENCH_NO_VERIFY=1`, two reversed-order runs of
+1500000 scalar records per round gave ten-round medians of 0.611/0.885 native
+encode/decode versus 0.593/0.911 PJK. This is approximate parity (within 3.1%),
+not evidence that native always wins. Individual native encode rounds ranged
+from 0.565 to 0.694; PJK ranged from 0.570 to 0.653. The analogous large-ASCII
+control gave 7.058/9.275 versus 146.166/144.973, retaining the lead without
+timed output comparisons. Short text remains slower than PJK in this workload.
+
+A separate confirmation after the final harness audit gave scalar control
+medians of 0.538/0.841 native versus 0.551/0.803 PJK, again using two reversed
+execution orders. Both scalar comparisons remain within 5%; the direction
+changes between runs on this shared host. Large-ASCII control medians were
+7.267/9.900 versus 145.089/145.889, approximately 20 times faster on encode
+and 15 times on decode. Confirmation rounds and binary/build context are in
+`build/bench/confirmed-*.jsonl` and `confirmed-context.txt`.
+
+The native small-record path now makes one allocation and peaks at 18752
+tracked user bytes; fragmented large-text decode makes two and peaks at 84288.
+Raw rounds, controls, binary hashes and build context are retained under
+`build/bench/final-*.jsonl` and `final-comparison-context.txt` for this run.
+
+## Historical development baseline
 
 Measured at `fa06c8d9f560cd11d521cc998e7131dcdf5cadce`, on Linux x86_64,
 AMD EPYC-Rome-v5, Bootlin GCC 15.3.0, `-O3`, with default 2 KiB chunks.

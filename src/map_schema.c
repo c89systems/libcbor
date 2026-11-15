@@ -115,16 +115,16 @@ static size_t element_size(const lonejson_field *field) {
  * have already been checked for inline cycles before calling this walker. */
 static int layout_alignment(const lonejson_map *map, size_t base, size_t stride,
                             size_t remaining) {
-  size_t i, alignment;
+  size_t i, mask;
   const lonejson_field *field;
   if (remaining == 0)
     return 0;
   for (i = 0; i < map->field_count; ++i) {
     field = &map->fields[i];
-    alignment = field_alignment(field);
-    if ((base % alignment + field->struct_offset % alignment) % alignment !=
-            0 ||
-        stride % alignment != 0)
+    /* All supported ABIs use power-of-two native member alignments. */
+    mask = field_alignment(field) - 1u;
+    if ((((base & mask) + (field->struct_offset & mask)) & mask) != 0 ||
+        (stride & mask) != 0)
       return 0;
     if (field->kind == LONEJSON_FIELD_KIND_OBJECT &&
         !layout_alignment(field->submap, base + field->struct_offset, stride,
@@ -134,38 +134,22 @@ static int layout_alignment(const lonejson_map *map, size_t base, size_t stride,
   return 1;
 }
 static int validate_key(const lonejson_field *field) {
-  c89cbor_encoder encoder;
-  c89cbor_token token;
   c89cbor_frame frame;
-  const void *bytes;
-  size_t length;
-  int status;
-  status = c89cbor_encoder_init(NULL, &encoder, &frame, 1, C89CBOR_CHUNK);
-  if (status != 0)
-    return status;
-  memset(&token, 0, sizeof(token));
-  token.type = C89CBOR_TEXT;
-  token.argument = (uint64_t)field->json_key_len;
-  status = encoder.put(&encoder, &token);
-  if (status != 0)
-    return status;
-  while (encoder.peek(&encoder, &bytes, &length) == C89CBOR_OUTPUT)
-    (void)encoder.advance(&encoder, length);
-  memset(&token, 0, sizeof(token));
-  token.type = C89CBOR_DATA;
-  token.data = field->json_key;
-  token.length = field->json_key_len;
-  status = encoder.put(&encoder, &token);
-  if (status != 0)
-    return status;
-  while ((status = encoder.peek(&encoder, &bytes, &length)) == C89CBOR_OUTPUT)
-    (void)encoder.advance(&encoder, length);
-  if (status != 0)
-    return status;
-  memset(&token, 0, sizeof(token));
-  token.type = C89CBOR_END;
-  token.argument = C89CBOR_TEXT;
-  return encoder.put(&encoder, &token);
+  const unsigned char *key = (const unsigned char *)field->json_key;
+  size_t i;
+  for (i = 0; i < field->json_key_len; ++i) {
+    if (key[i] == 0)
+      return C89CBOR_MALFORMED;
+    if (key[i] >= 128u) {
+      if (strlen(field->json_key) != field->json_key_len)
+        return C89CBOR_MALFORMED;
+      memset(&frame, 0, sizeof(frame));
+      return c89_utf8(&frame, key, field->json_key_len) && frame.utf8 == 0
+                 ? C89CBOR_OK
+                 : C89CBOR_MALFORMED;
+    }
+  }
+  return key[i] == 0 ? C89CBOR_OK : C89CBOR_MALFORMED;
 }
 static int validate_map(c89_map_state *state, const lonejson_map *map,
                         const void *record, size_t extent, size_t depth) {
@@ -191,9 +175,10 @@ static int validate_map(c89_map_state *state, const lonejson_map *map,
   for (i = 0; i < map->field_count; ++i) {
     field = &map->fields[i];
     state->error_field = field;
+    if (depth == 0 && (field->flags & LONEJSON_FIELD_REQUIRED) == 0)
+      state->root_required = 0;
     if (field->json_key == NULL ||
         field->json_key_len > state->options.key_bytes ||
-        strlen(field->json_key) != field->json_key_len ||
         validate_key(field) != 0)
       return c89_map_fail(state, C89CBOR_INVALID, "invalid UTF-8 schema key");
     for (j = 0; j < i; ++j) {
@@ -206,7 +191,7 @@ static int validate_map(c89_map_state *state, const lonejson_map *map,
     alignment = field_alignment(field);
     if (size == 0 || field->struct_offset > map->struct_size ||
         size > map->struct_size - field->struct_offset ||
-        field->struct_offset % alignment != 0 ||
+        (field->struct_offset & (alignment - 1u)) != 0 ||
         (field->flags & ~allowed) != 0 ||
         field->storage < LONEJSON_STORAGE_DYNAMIC ||
         field->storage > LONEJSON_STORAGE_FIXED ||
@@ -215,13 +200,14 @@ static int validate_map(c89_map_state *state, const lonejson_map *map,
       return c89_map_fail(state, C89CBOR_INVALID,
                           "invalid mapped field layout");
     if (record != NULL &&
-        ((uintptr_t)record + field->struct_offset) % alignment != 0)
+        (((uintptr_t)record + field->struct_offset) & (alignment - 1u)) != 0)
       return c89_map_fail(state, C89CBOR_INVALID,
                           "misaligned mapped record storage");
-    if (lonejson_field_has_presence(field) &&
+    if ((field->flags & LONEJSON_FIELD_HAS_PRESENCE) != 0 &&
         (field->presence_offset > map->struct_size ||
          sizeof(int) > map->struct_size - field->presence_offset ||
-         field->presence_offset % offsetof(bool_alignment, value) != 0))
+         (field->presence_offset & (offsetof(bool_alignment, value) - 1u)) !=
+             0))
       return c89_map_fail(state, C89CBOR_INVALID,
                           "invalid presence flag offset");
     stride = element_size(field);
@@ -280,11 +266,82 @@ static int validate_map(c89_map_state *state, const lonejson_map *map,
   }
   return C89CBOR_OK;
 }
+/* Lonejson singleton identity and generation cookies mark immutable schemas.
+ * Retain only identity numbers and layout facts, never schema/record pointers.
+ * An owned schema's next generation invalidates a recycled address. Cache leaf
+ * layouts only: submaps and record-supplied handlers still traverse on every
+ * construction. Plain descriptor copies never match self identity. */
+typedef struct schema_cache_entry {
+  uintptr_t identity, fields;
+  lonejson_uint64 cookie;
+  size_t struct_size, field_count, depth, key_bytes, alignment;
+  int known, root_required;
+} schema_cache_entry;
+static schema_cache_entry *schema_slot(const lonejson_map *map) {
+#if defined(__GNUC__) || defined(__clang__)
+  static __thread schema_cache_entry cache[16];
+  schema_cache_entry *entry;
+  uintptr_t bits;
+  if (map == NULL || map->_map_identity != map)
+    return NULL;
+  bits = (uintptr_t)map;
+  entry = &cache[((bits >> 4u) ^ (bits >> 9u)) & 15u];
+  if (entry->identity != bits || entry->cookie != map->_map_cookie ||
+      entry->fields != (uintptr_t)map->fields ||
+      entry->struct_size != map->struct_size ||
+      entry->field_count != map->field_count) {
+    entry->identity = bits;
+    entry->cookie = map->_map_cookie;
+    entry->fields = (uintptr_t)map->fields;
+    entry->struct_size = map->struct_size;
+    entry->field_count = map->field_count;
+    entry->known = 0;
+  }
+  return entry;
+#else
+  (void)map;
+  return NULL;
+#endif
+}
 int c89_map_schema(c89_map_state *state, const lonejson_map *map, size_t extent,
                    size_t depth) {
   const void *record =
       state->encode ? state->record.input : state->record.output;
-  return validate_map(state, map, record, extent, depth);
+  schema_cache_entry *entry = depth == 0 ? schema_slot(map) : NULL;
+  size_t i, alignment;
+  int status;
+  if (entry != NULL && entry->known == 1 &&
+      entry->depth == state->options.depth &&
+      entry->key_bytes == state->options.key_bytes &&
+      extent >= map->struct_size &&
+      ((uintptr_t)record & (entry->alignment - 1u)) == 0) {
+    state->max_fields = map->field_count;
+    state->root_required = entry->root_required;
+    return C89CBOR_OK;
+  }
+  state->root_required = 1;
+  status = validate_map(state, map, record, extent, depth);
+  if (status != 0 || entry == NULL || entry->known == -1)
+    return status;
+  alignment = 1;
+  for (i = 0; i < map->field_count; ++i) {
+    const lonejson_field *field = &map->fields[i];
+    size_t member_alignment = field_alignment(field);
+    if (field->kind == LONEJSON_FIELD_KIND_OBJECT ||
+        field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY ||
+        field->kind == LONEJSON_FIELD_KIND_MAPPED_ARRAY_STREAM) {
+      entry->known = -1;
+      return C89CBOR_OK;
+    }
+    if (alignment < member_alignment)
+      alignment = member_alignment;
+  }
+  entry->alignment = alignment;
+  entry->root_required = state->root_required;
+  entry->depth = state->options.depth;
+  entry->key_bytes = state->options.key_bytes;
+  entry->known = 1;
+  return C89CBOR_OK;
 }
 int c89_map_omit(c89_map_state *state, const lonejson_field *field,
                  const void *record, size_t depth, int *omit) {
@@ -296,7 +353,7 @@ int c89_map_omit(c89_map_state *state, const lonejson_field *field,
   *omit = 0;
   if ((field->flags & LONEJSON_FIELD_REQUIRED) != 0)
     return C89CBOR_OK;
-  if (lonejson_field_has_presence(field)) {
+  if ((field->flags & LONEJSON_FIELD_HAS_PRESENCE) != 0) {
     memcpy(&present, (const unsigned char *)record + field->presence_offset,
            sizeof(present));
     if (!present) {
@@ -368,6 +425,10 @@ int c89_map_count(c89_map_state *state, const lonejson_map *map,
                   const void *record, size_t depth, size_t *count) {
   size_t i;
   int omit, status;
+  if (map == state->map && state->root_required) {
+    *count = map->field_count;
+    return C89CBOR_OK;
+  }
   *count = 0;
   for (i = 0; i < map->field_count; ++i) {
     status = c89_map_omit(state, &map->fields[i], record, depth, &omit);

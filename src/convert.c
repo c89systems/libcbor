@@ -822,7 +822,7 @@ int c89_conversion_prepare(c89cbor *runtime, c89cbor_conversion *conversion,
       error->status = C89CBOR_INVALID;
     return C89CBOR_INVALID;
   }
-  memset(conversion, 0, sizeof(*conversion));
+  conversion->state = NULL;
   conversion->step = c89cbor_conversion_step;
   conversion->progress = c89cbor_conversion_progress;
   conversion->diagnostic = c89cbor_conversion_diagnostic;
@@ -911,16 +911,24 @@ static int open_conversion(c89cbor *runtime, const c89cbor_source *source,
   return status;
 }
 int c89_conversion_run(c89cbor_conversion *conversion, c89cbor_error *error) {
+  c89_operation *operation = conversion->state;
   int status;
+  /* Synchronous factories have already validated this fresh shell. Hold the
+   * same reentry guard across their private drive loop; public step retains
+   * its full validation for caller-owned resumable operations. */
+  conversion->lifetime.busy = 1;
   do {
-    status = conversion->step(conversion, error);
+    status = conversion->lifetime.error.status;
+    if (status == 0)
+      status = operation->step(conversion->state);
   } while (status == C89CBOR_OK);
+  conversion->lifetime.busy = 0;
   if (status == C89CBOR_INPUT || status == C89CBOR_OUTPUT) {
     status =
         c89_error(&conversion->lifetime, C89CBOR_IO, "synchronous-endpoint");
-    if (error != NULL)
-      *error = conversion->lifetime.error;
   }
+  if (error != NULL)
+    *error = conversion->lifetime.error;
   (void)conversion->cleanup(conversion);
   return status == C89CBOR_DONE ? C89CBOR_OK : status;
 }

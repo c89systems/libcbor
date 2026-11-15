@@ -119,31 +119,66 @@ static int scalar_value(c89_map_state *state, const c89cbor_token *token,
   }
   return C89CBOR_OK;
 }
-static int match_field(c89_map_state *state, c89_map_frame *object) {
-  const lonejson_field *field;
+static int key_matches(const lonejson_field *field, const char *key,
+                       size_t length) {
+  uint32_t left, right;
+  if (field->json_key_len != length)
+    return 0;
+  if (length == 0)
+    return 1;
+  if (length >= sizeof(left) && length <= 2u * sizeof(left)) {
+    memcpy(&left, field->json_key, sizeof(left));
+    memcpy(&right, key, sizeof(right));
+    if (left != right)
+      return 0;
+    memcpy(&left, field->json_key + length - sizeof(left), sizeof(left));
+    memcpy(&right, key + length - sizeof(right), sizeof(right));
+    return left == right;
+  }
+  if (field->json_key[0] != key[0])
+    return 0;
+  if (length == 1u)
+    return 1;
+  if (field->json_key[length - 1u] != key[length - 1u])
+    return 0;
+  return length == 2u || memcmp(field->json_key + 1, key + 1, length - 2u) == 0;
+}
+static size_t find_field(const c89_map_frame *object, const char *key,
+                         size_t length) {
+  const lonejson_map *map = object->map;
+  size_t count,
+      i = object->next_field < map->field_count ? object->next_field : 0;
+  for (count = 0; count < map->field_count; ++count) {
+    if (key_matches(&map->fields[i], key, length))
+      return i;
+    if (++i == map->field_count)
+      i = 0;
+  }
+  return (size_t)-1;
+}
+static int use_field(c89_map_state *state, c89_map_frame *object,
+                     size_t index) {
+  const lonejson_field *field = &object->map->fields[index];
+  state->error_field = field;
+  state->error_key = 0;
+  if (frame_seen(object, index))
+    return c89_map_fail(state, C89CBOR_SCHEMA, "duplicate mapped key");
+  mark_seen(object, index);
+  object->field = field;
+  object->needs_key = 0;
+  object->next_field = index + 1u;
+  return C89CBOR_OK;
+}
+static int unknown_field(c89_map_state *state, c89_map_frame *object) {
   c89_map_key *unknown;
   size_t i;
   state->error_key = 1;
-  for (i = 0; i < object->map->field_count; ++i) {
-    field = &object->map->fields[i];
-    if (field->json_key_len == state->key_length &&
-        memcmp(field->json_key, state->key, state->key_length) == 0) {
-      state->error_field = field;
-      state->error_key = 0;
-      if (frame_seen(object, i))
-        return c89_map_fail(state, C89CBOR_SCHEMA, "duplicate mapped key");
-      mark_seen(object, i);
-      object->field = field;
-      object->needs_key = 0;
-      return C89CBOR_OK;
-    }
-  }
   if (!state->options.allow_unknown_fields)
     return c89_map_fail(state, C89CBOR_SCHEMA, "unknown mapped field");
   for (i = object->unknown_start; i < state->unknown_count; ++i) {
     unknown = &state->unknown_keys[i];
     if (unknown->length == state->key_length &&
-        memcmp(state->unknown_storage + unknown->offset, state->key,
+        memcmp(state->unknown_storage + unknown->offset, state->key_data,
                state->key_length) == 0)
       return c89_map_fail(state, C89CBOR_SCHEMA,
                           "duplicate unknown mapped key");
@@ -156,12 +191,22 @@ static int match_field(c89_map_state *state, c89_map_frame *object) {
   unknown = &state->unknown_keys[state->unknown_count++];
   unknown->offset = state->unknown_length;
   unknown->length = state->key_length;
-  memcpy(state->unknown_storage + state->unknown_length, state->key,
+  memcpy(state->unknown_storage + state->unknown_length, state->key_data,
          state->key_length);
   state->unknown_length += state->key_length;
+  /* A malformed value header can fail before dispatch clears error_key.
+   * Preserve its key across input reuse, including the borrowed-key path. */
+  if (state->key_data != state->key)
+    memcpy(state->key, state->key_data, state->key_length);
+  state->key_data = state->key;
   object->field = NULL;
   object->needs_key = 0;
   return C89CBOR_OK;
+}
+static int match_field(c89_map_state *state, c89_map_frame *object) {
+  size_t index = find_field(object, state->key_data, state->key_length);
+  return index == (size_t)-1 ? unknown_field(state, object)
+                             : use_field(state, object, index);
 }
 static int collect_key(c89_map_state *state, const c89cbor_token *token) {
   if (token->length > state->options.key_bytes - state->key_length)
@@ -532,11 +577,21 @@ static int finish_text(c89_map_state *state, c89_map_frame *frame) {
                                   ? field->fixed_capacity
                                   : length + 1u,
                               0);
-      if (status == 0)
-        status = c89_map_dependency(
-            state, lonejson_record_assign_string(
-                       state->json, frame->map, frame->record.output, field,
-                       text, length, &state->json_error));
+      if (status == 0) {
+        if (field->storage == LONEJSON_STORAGE_FIXED) {
+          /* collect_text already checked NULs, capacity and the overflow
+           * policy. Fixed storage owns no dependency allocation or policy. */
+          char *destination =
+              (char *)frame->record.output + field->struct_offset;
+          memcpy(destination, text, length);
+          destination[length] = '\0';
+        } else {
+          status = c89_map_dependency(
+              state, lonejson_record_assign_string(
+                         state->json, frame->map, frame->record.output, field,
+                         text, length, &state->json_error));
+        }
+      }
     }
     if (status == 0 && frame->truncated) {
       state->owner->lifetime.error.truncated = 1;
@@ -555,7 +610,8 @@ static int finish_text(c89_map_state *state, c89_map_frame *frame) {
 }
 
 static int mark_presence(c89_map_frame *frame) {
-  lonejson_field_set_presence(frame->record.output, frame->field, 1);
+  if ((frame->field->flags & LONEJSON_FIELD_HAS_PRESENCE) != 0)
+    lonejson_field_set_presence(frame->record.output, frame->field, 1);
   return C89CBOR_OK;
 }
 static int finish_object(c89_map_state *state, c89_map_frame *frame) {
@@ -766,7 +822,8 @@ static int start_json(c89_map_state *state, c89_map_frame *parent) {
     return status;
   sink.context = state;
   sink.write = json_sink;
-  status = c89_json_decode_init(&state->bridge_runtime, &state->bridge, &sink,
+  status = c89_json_decode_init(&state->json_bridge->runtime,
+                                &state->json_bridge->conversion, &sink,
                                 &state->options, &error);
   if (status != 0)
     return c89_map_bridge_status(state, status, &error);
@@ -783,7 +840,8 @@ static int drive_json(c89_map_state *state) {
   c89cbor_error error;
   int status;
   if (!state->bridge_started) {
-    status = state->bridge.step(&state->bridge, &error);
+    status = state->json_bridge->conversion.step(
+        &state->json_bridge->conversion, &error);
     if (status < 0)
       return c89_map_bridge_status(state, status, &error);
     if (status == C89CBOR_DONE)
@@ -814,7 +872,7 @@ static int drive_json(c89_map_state *state) {
       return status;
   }
   lonejson_field_set_presence(frame->record.output, frame->field, 1);
-  (void)state->bridge.cleanup(&state->bridge);
+  (void)state->json_bridge->conversion.cleanup(&state->json_bridge->conversion);
   state->bridge_ready = state->bridge_started = 0;
   --state->depth;
   return complete_value(state);
@@ -998,7 +1056,8 @@ static int dispatch_token(c89_map_state *state) {
                                        : start_text(state, token, target);
   }
   if (frame->kind == C89_MAP_JSON) {
-    status = c89_json_decode_put(&state->bridge, token, &error);
+    status =
+        c89_json_decode_put(&state->json_bridge->conversion, token, &error);
     if (status == 0)
       state->pending_valid = 0;
     return c89_map_bridge_status(state, status, &error);
@@ -1075,7 +1134,9 @@ static int dispatch_token(c89_map_state *state) {
 }
 int c89_map_decode_step(void *context) {
   c89_map_state *state = context;
-  size_t events = 0, consumed, count, capacity;
+  const unsigned char *key;
+  c89_map_frame *object;
+  size_t events = 0, consumed, count, capacity, available, length, index;
   int status;
   if (state->done)
     return C89CBOR_DONE;
@@ -1096,6 +1157,7 @@ int c89_map_decode_step(void *context) {
       }
     }
     if (state->pending_valid) {
+    dispatch:
       status = dispatch_token(state);
       ++events;
       if (status != 0 || state->consumer_paused)
@@ -1104,8 +1166,45 @@ int c89_map_decode_step(void *context) {
         return C89CBOR_OK;
       continue;
     }
-    status = state->decoder.next(
-        &state->decoder, state->input + state->input_offset,
+    if (state->depth != 0 &&
+        state->frames[state->depth - 1u].kind == C89_MAP_OBJECT &&
+        state->frames[state->depth - 1u].needs_key &&
+        state->options.step_events - events >= 3u) {
+      state->error_frame = state->depth - 1u;
+      state->error_field = NULL;
+      state->error_key = 0;
+      available = state->input_length - state->input_offset;
+      key = state->input + state->input_offset;
+      if (available != 0 && (key[0] & 0xe0u) == 0x60u && (key[0] & 31u) < 24u &&
+          (size_t)(key[0] & 31u) < available) {
+        length = key[0] & 31u;
+        object = &state->frames[state->depth - 1u];
+        index = find_field(object, (const char *)key + 1, length);
+        status = c89_decoder_text(&state->codec.decoder, key + 1, length,
+                                  &consumed, index != (size_t)-1);
+        state->input_offset += consumed;
+        if (status < 0)
+          return c89_map_fail(state, status, "invalid CBOR mapped key");
+        if (status == C89CBOR_TOKEN) {
+          state->key_data = (const char *)key + 1;
+          state->key_length = length;
+          if (length > state->options.key_bytes) {
+            status = c89_map_fail(state, C89CBOR_LIMIT,
+                                  "mapped key exceeds its byte limit");
+          } else {
+            status = index == (size_t)-1 ? unknown_field(state, object)
+                                         : use_field(state, object, index);
+          }
+          state->key_data = state->key;
+          events += 3u;
+          if (status != 0)
+            return status;
+          continue;
+        }
+      }
+    }
+    status = state->codec.decoder.next(
+        &state->codec.decoder, state->input + state->input_offset,
         state->input_length - state->input_offset, &consumed, &state->pending);
     state->input_offset += consumed;
     if (status < 0)
@@ -1113,13 +1212,13 @@ int c89_map_decode_step(void *context) {
     if (status == C89CBOR_TOKEN) {
       state->pending_valid = 1;
       state->pending_offset = 0;
-      continue;
+      goto dispatch;
     }
     if (status == C89CBOR_DONE && state->input_offset != state->input_length)
       return c89_map_fail(state, C89CBOR_MALFORMED,
                           "trailing bytes after mapped record");
     if (state->eof) {
-      status = state->decoder.finish(&state->decoder);
+      status = state->codec.decoder.finish(&state->codec.decoder);
       if (status != 0)
         return c89_map_fail(state, status, "incomplete CBOR mapped input");
       if (!state->complete)

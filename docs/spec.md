@@ -421,10 +421,16 @@ boundary information where helpful. Add a reusable lookup plan only if
 measured workloads justify it. A plan would borrow immutable schema
 metadata and must never retain a particular record's storage.
 
+Immutable singleton leaf schemas may reuse successful validation using
+lonejson's identity and generation cookie. Keep this cache bounded per thread
+and retain only identity numbers and layout facts. Recheck current record
+extent/alignment and limits. Plain copies and record-dependent schemas still
+validate on construction; schema replacement must invalidate the old generation.
+
 | Field family | Encode | Decode |
 | --- | --- | --- |
 | Signed and unsigned integers, booleans, finite doubles | Emit native scalar tokens directly. | Check type and range before writing the native member. Set presence with the public helper. F64 accepts finite CBOR floats of any width and exactly representable CBOR integers. Preserve signed floating zero. |
-| Fixed and allocated strings | Borrow existing UTF-8 storage and emit text. A fixed slot must contain a terminator within its extent. | Use the public string assignment contract. Reject embedded NUL in C-string fields. Honor the configured fixed-capacity overflow policy and surface any reported truncation. |
+| Fixed and allocated strings | Borrow existing UTF-8 storage and emit text. A fixed slot must contain a terminator within its extent. | Apply the public fixed-string capacity/truncation contract directly; use public string assignment for allocated strings. Reject embedded NUL in C-string fields. Surface any reported truncation. |
 | Inline objects, scalar arrays and object arrays | Traverse nested descriptors and native array storage. Use known array counts directly. | Initialize children and append with the published record APIs. Honor fixed-array policy and enforce materialized record budgets. Never manufacture lonejson-owned storage with libcbor's allocator. |
 | Streamed text and Base64 fields | Emit text or CBOR bytes respectively. Use the public raw source/spool operations. A lengthless source is drained once into bounded valid chunks. | A declared spool field is an explicit final storage choice. Append raw bytes to its initialized lonejson handle and honor its configured memory, size and spill policies. For applications that consume payload fragments directly, provide a field sink receiving borrowed text/byte spans. |
 | Outbound source fields | Read `lonejson_source` as above. | Reject when used as an inbound field unless the caller binds a destination sink. A source handle alone cannot own incoming bytes. |

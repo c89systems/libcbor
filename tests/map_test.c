@@ -7,6 +7,12 @@
 #include <string.h>
 #include <unistd.h>
 
+typedef struct allocation_count {
+  size_t calls, live, fail;
+} allocation_count;
+static void *tracked_allocate(void *context, size_t size);
+static void tracked_free(void *context, void *memory);
+
 typedef struct child {
   lonejson_int64 id;
   char *name;
@@ -103,6 +109,7 @@ static int drive(c89cbor_conversion *operation, c89cbor_error *error) {
   return status;
 }
 static void roundtrip(void) {
+  static const size_t budgets[] = {0, 1, 2, 3, 4, 7, 31};
   static const char json[] =
       "{\"signed\":-9223372036854775808,\"unsigned\":18446744073709551615,"
       "\"number\":1.5,\"enabled\":true,\"name\":\"hello\",\"description\":"
@@ -123,67 +130,78 @@ static void roundtrip(void) {
   c89cbor_source source;
   c89cbor_conversion operation;
   c89cbor_options options = c89cbor_default_options();
-  size_t split;
+  allocation_count allocations;
+  size_t split, budget, chunk;
   assert(json_runtime != NULL);
+  memset(&allocations, 0, sizeof(allocations));
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
   config.json = json_runtime;
   assert(c89cbor_init(&runtime, &config, &error) == 0);
   assert(lonejson_init(json_runtime, &record_map, &input, &jerror) ==
          LONEJSON_STATUS_OK);
   assert(lonejson_parse_cstr(json_runtime, &record_map, &input, json,
                              &jerror) == LONEJSON_STATUS_OK);
-  for (split = 1; split <= 33; ++split) {
-    memset(&encoded, 0, sizeof(encoded));
-    encoded.fragment = split;
-    encoded.pause = 1;
-    sink.context = &encoded;
-    sink.write = write_bytes;
-    options.chunk = split;
-    assert(runtime.encode_map_init(&runtime, &operation, &record_map, &input,
-                                   sizeof(input), &sink, &options,
-                                   &error) == 0);
-    assert(encoded.writes == 0);
-    assert(runtime.cleanup(&runtime) == C89CBOR_BUSY);
-    assert(drive(&operation, &error) == C89CBOR_DONE);
-    assert(operation.cleanup(&operation) == 0);
-    memset(&decoded, 0, sizeof(decoded));
-    decoded.bytes = encoded.output;
-    decoded.length = encoded.used;
-    decoded.fragment = split;
-    decoded.pause = 1;
-    source.context = &decoded;
-    source.read = read_bytes;
-    assert(lonejson_init(json_runtime, &record_map, &output, &jerror) ==
-           LONEJSON_STATUS_OK);
-    assert(runtime.decode_map_init(&runtime, &operation, &source, &record_map,
-                                   &output, sizeof(output), &options,
-                                   &error) == 0);
-    assert(decoded.reads == 0);
-    assert(drive(&operation, &error) == C89CBOR_DONE);
-    assert(operation.cleanup(&operation) == 0);
-    assert(output.signed_number == input.signed_number);
-    assert(output.unsigned_number == input.unsigned_number &&
-           output.number == 1.5 && output.enabled);
-    assert(strcmp(output.name, "hello") == 0 &&
-           strcmp(output.description, "world") == 0);
-    assert(output.nested.id == 42 && strcmp(output.nested.name, "child") == 0);
-    assert(output.integers.count == 3 && output.integers.items[0] == -1 &&
-           output.integers.items[2] == 42);
-    assert(output.unsigneds.count == 2 &&
-           output.unsigneds.items[1] == UINT64_MAX);
-    assert(output.numbers.count == 2 && output.numbers.items[1] == 1.5);
-    assert(output.booleans.count == 2 && output.booleans.items[0] &&
-           !output.booleans.items[1]);
-    assert(output.strings.count == 3 &&
-           strcmp(output.strings.items[2], "caf\303\251") == 0);
-    assert(output.objects.count == 2 &&
-           ((child *)output.objects.items)[1].id == 8);
-    assert(strcmp(((child *)output.objects.items)[0].name, "first") == 0);
-    assert(json_runtime->cleanup(json_runtime, &record_map, &output, &jerror) ==
-           LONEJSON_STATUS_OK);
+  for (budget = 0; budget < sizeof(budgets) / sizeof(budgets[0]); ++budget) {
+    options.step_events = budgets[budget];
+    for (split = 1; split <= 36; ++split) {
+      chunk = split <= 33 ? split : (size_t)C89CBOR_CHUNK + split - 35u;
+      memset(&encoded, 0, sizeof(encoded));
+      encoded.fragment = chunk;
+      encoded.pause = 1;
+      sink.context = &encoded;
+      sink.write = write_bytes;
+      options.chunk = chunk;
+      assert(runtime.encode_map_init(&runtime, &operation, &record_map, &input,
+                                     sizeof(input), &sink, &options,
+                                     &error) == 0);
+      assert(encoded.writes == 0);
+      assert(runtime.cleanup(&runtime) == C89CBOR_BUSY);
+      assert(drive(&operation, &error) == C89CBOR_DONE);
+      assert(operation.cleanup(&operation) == 0);
+      memset(&decoded, 0, sizeof(decoded));
+      decoded.bytes = encoded.output;
+      decoded.length = encoded.used;
+      decoded.fragment = chunk;
+      decoded.pause = 1;
+      source.context = &decoded;
+      source.read = read_bytes;
+      assert(lonejson_init(json_runtime, &record_map, &output, &jerror) ==
+             LONEJSON_STATUS_OK);
+      assert(runtime.decode_map_init(&runtime, &operation, &source, &record_map,
+                                     &output, sizeof(output), &options,
+                                     &error) == 0);
+      assert(decoded.reads == 0);
+      assert(drive(&operation, &error) == C89CBOR_DONE);
+      assert(operation.cleanup(&operation) == 0);
+      assert(output.signed_number == input.signed_number);
+      assert(output.unsigned_number == input.unsigned_number &&
+             output.number == 1.5 && output.enabled);
+      assert(strcmp(output.name, "hello") == 0 &&
+             strcmp(output.description, "world") == 0);
+      assert(output.nested.id == 42 &&
+             strcmp(output.nested.name, "child") == 0);
+      assert(output.integers.count == 3 && output.integers.items[0] == -1 &&
+             output.integers.items[2] == 42);
+      assert(output.unsigneds.count == 2 &&
+             output.unsigneds.items[1] == UINT64_MAX);
+      assert(output.numbers.count == 2 && output.numbers.items[1] == 1.5);
+      assert(output.booleans.count == 2 && output.booleans.items[0] &&
+             !output.booleans.items[1]);
+      assert(output.strings.count == 3 &&
+             strcmp(output.strings.items[2], "caf\303\251") == 0);
+      assert(output.objects.count == 2 &&
+             ((child *)output.objects.items)[1].id == 8);
+      assert(strcmp(((child *)output.objects.items)[0].name, "first") == 0);
+      assert(json_runtime->cleanup(json_runtime, &record_map, &output,
+                                   &jerror) == LONEJSON_STATUS_OK);
+    }
   }
   assert(json_runtime->cleanup(json_runtime, &record_map, &input, &jerror) ==
          LONEJSON_STATUS_OK);
   assert(runtime.cleanup(&runtime) == 0);
+  assert(allocations.live == 0);
   lonejson_free(json_runtime);
 }
 typedef struct value_record {
@@ -246,6 +264,7 @@ static int decode_record(c89cbor *runtime, endpoint *wire,
   return status;
 }
 static void malformed(void) {
+  static const size_t budgets[] = {0, 1, 2, 3, 4, 7};
   static const unsigned char nul_text[] = {0xa1, 0x64, 't', 'e', 'x',
                                            't',  0x63, 'a', 0,   'b'};
   static const unsigned char duplicate[] = {
@@ -261,13 +280,23 @@ static void malformed(void) {
                                            'x',  't',  0x60, 0};
   static const unsigned char missing[] = {0xa0};
   static const unsigned char nontext[] = {0xa1, 0, 0};
+  static const unsigned char bad_key[] = {0xa1, 0x61, 0xff, 0};
+  static const unsigned char short_key[] = {0xa1, 0x61, 0xc2, 0};
+  static const unsigned char unknown_bad_value[] = {
+      0xa2, 0x64, 't', 'e', 'x', 't', 0x60, 0x61, 'x', 0x1c};
+  static const unsigned char unknown_missing_value[] = {
+      0xa2, 0x64, 't', 'e', 'x', 't', 0x60, 0x61, 'x'};
   const unsigned char *fixtures[] = {
       nul_text,   duplicate, unknown_duplicate, skipped_utf8,
-      indefinite, trailing,  missing,           nontext};
-  const size_t lengths[] = {sizeof(nul_text),          sizeof(duplicate),
-                            sizeof(unknown_duplicate), sizeof(skipped_utf8),
-                            sizeof(indefinite),        sizeof(trailing),
-                            sizeof(missing),           sizeof(nontext)};
+      indefinite, trailing,  missing,           nontext,
+      bad_key,    short_key, unknown_bad_value, unknown_missing_value};
+  const size_t lengths[] = {
+      sizeof(nul_text),          sizeof(duplicate),
+      sizeof(unknown_duplicate), sizeof(skipped_utf8),
+      sizeof(indefinite),        sizeof(trailing),
+      sizeof(missing),           sizeof(nontext),
+      sizeof(bad_key),           sizeof(short_key),
+      sizeof(unknown_bad_value), sizeof(unknown_missing_value)};
   c89cbor runtime;
   c89cbor_config config = c89cbor_default_config();
   c89cbor_error error;
@@ -276,31 +305,48 @@ static void malformed(void) {
   lonejson *json = lonejson_new(NULL, &jerror);
   text_record value;
   endpoint wire;
-  size_t i, split;
+  allocation_count allocations;
+  size_t i, split, budget;
+  char path[sizeof(error.path)];
   int status;
   config.json = json;
+  memset(&allocations, 0, sizeof(allocations));
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
   assert(c89cbor_init(&runtime, &config, &error) == 0);
   options.allow_unknown_fields = 1;
   for (i = 0; i < sizeof(fixtures) / sizeof(fixtures[0]); ++i) {
-    for (split = 1; split <= 16; ++split) {
-      assert(lonejson_init(json, &text_map, &value, &jerror) ==
-             LONEJSON_STATUS_OK);
-      memset(&wire, 0, sizeof(wire));
-      memcpy(wire.output, fixtures[i], lengths[i]);
-      wire.used = lengths[i];
-      wire.fragment = split;
-      status =
-          decode_record(&runtime, &wire, &text_map, &value, &options, &error);
-      if (i == 4) {
-        assert(status == C89CBOR_DONE);
-        assert(strcmp(value.text, "a\303\251") == 0);
-      } else
-        assert(status < 0);
-      assert(json->cleanup(json, &text_map, &value, &jerror) ==
-             LONEJSON_STATUS_OK);
+    for (budget = 0; budget < sizeof(budgets) / sizeof(budgets[0]); ++budget) {
+      options.step_events = budgets[budget];
+      for (split = 1; split <= 16; ++split) {
+        assert(lonejson_init(json, &text_map, &value, &jerror) ==
+               LONEJSON_STATUS_OK);
+        memset(&wire, 0, sizeof(wire));
+        memcpy(wire.output, fixtures[i], lengths[i]);
+        wire.used = lengths[i];
+        wire.fragment = split;
+        status =
+            decode_record(&runtime, &wire, &text_map, &value, &options, &error);
+        if (i == 4) {
+          assert(status == C89CBOR_DONE);
+          assert(strcmp(value.text, "a\303\251") == 0);
+        } else {
+          assert(status < 0);
+          if (fixtures[i] == unknown_bad_value ||
+              fixtures[i] == unknown_missing_value)
+            assert(strcmp(error.path, "/x") == 0);
+          if (budget == 0 && split == 1)
+            memcpy(path, error.path, sizeof(path));
+          assert(strcmp(path, error.path) == 0);
+        }
+        assert(json->cleanup(json, &text_map, &value, &jerror) ==
+               LONEJSON_STATUS_OK);
+      }
     }
   }
   assert(runtime.cleanup(&runtime) == 0);
+  assert(allocations.live == 0);
   lonejson_free(json);
 }
 static lonejson_status json_consumer(void *context, const void *bytes,
@@ -553,17 +599,16 @@ static void bound_null(void) {
   assert(runtime.cleanup(&runtime) == 0);
   lonejson_free(json);
 }
-typedef struct allocation_count {
-  size_t calls, live, fail;
-} allocation_count;
 static void *tracked_allocate(void *context, size_t size) {
   allocation_count *count = context;
   void *memory;
   if (++count->calls == count->fail)
     return NULL;
   memory = malloc(size);
-  if (memory != NULL)
+  if (memory != NULL) {
+    memset(memory, 0xa5, size);
     ++count->live;
+  }
   return memory;
 }
 static void tracked_free(void *context, void *memory) {
@@ -688,18 +733,22 @@ static void bound_payload(void) {
   lonejson_free(json);
 }
 static void allocation_failures(void) {
+  static const unsigned char wire[] = {0xa1, 0x64, 't', 'e', 'x', 't',
+                                       0x65, 'h',  'e', 'l', 'l', 'o'};
   c89cbor runtime;
   c89cbor_config config = c89cbor_default_config();
   c89cbor_error error;
   lonejson_error jerror;
   lonejson *json = lonejson_new(NULL, &jerror);
-  text_record value;
-  endpoint output;
+  text_record value, decoded;
+  endpoint output, input;
   c89cbor_sink sink;
+  c89cbor_source source;
+  c89cbor_options options = c89cbor_default_options();
   c89cbor_conversion *operation;
   allocation_count count;
   size_t point;
-  int status;
+  int status, decode;
   config.json = json;
   config.allocator.alloc = tracked_allocate;
   config.allocator.free = tracked_free;
@@ -712,25 +761,465 @@ static void allocation_failures(void) {
   output.fragment = 2;
   sink.context = &output;
   sink.write = write_bytes;
-  for (point = 1; point < 32; ++point) {
-    memset(&count, 0, sizeof(count));
-    count.fail = point;
-    assert(c89cbor_init(&runtime, &config, &error) == 0);
-    status = runtime.encode_map_open(&runtime, &text_map, &value, sizeof(value),
-                                     &sink, NULL, &operation, &error);
-    if (status == 0) {
-      assert(drive(operation, &error) == C89CBOR_DONE);
-      assert(operation->destroy(operation) == 0);
-    } else {
-      assert(status == C89CBOR_NOMEM && operation == NULL);
+  source.context = &input;
+  source.read = read_bytes;
+  options.allow_unknown_fields = 1;
+  for (decode = 0; decode < 2; ++decode) {
+    for (point = 1; point < 32; ++point) {
+      memset(&count, 0, sizeof(count));
+      count.fail = point;
+      memset(&input, 0, sizeof(input));
+      input.bytes = wire;
+      input.length = sizeof(wire);
+      input.fragment = 2;
+      assert(lonejson_init(json, &text_map, &decoded, &jerror) ==
+             LONEJSON_STATUS_OK);
+      assert(c89cbor_init(&runtime, &config, &error) == 0);
+      status = decode ? runtime.decode_map_open(&runtime, &source, &text_map,
+                                                &decoded, sizeof(decoded),
+                                                &options, &operation, &error)
+                      : runtime.encode_map_open(&runtime, &text_map, &value,
+                                                sizeof(value), &sink, &options,
+                                                &operation, &error);
+      if (status == 0) {
+        status = drive(operation, &error);
+        assert(status == C89CBOR_DONE || status == C89CBOR_NOMEM);
+        if (status == C89CBOR_DONE && decode)
+          assert(strcmp(decoded.text, "hello") == 0);
+        assert(operation->destroy(operation) == 0);
+      } else {
+        assert(status == C89CBOR_NOMEM && operation == NULL);
+      }
+      assert(json->cleanup(json, &text_map, &decoded, &jerror) ==
+             LONEJSON_STATUS_OK);
+      assert(runtime.cleanup(&runtime) == 0 && count.live == 0);
+      if (status == C89CBOR_DONE)
+        break;
     }
-    assert(runtime.cleanup(&runtime) == 0 && count.live == 0);
-    if (status == 0)
-      break;
+    assert(point > 1 && point < 32);
   }
-  assert(point > 10 && point < 32);
   assert(json->cleanup(json, &text_map, &value, &jerror) == LONEJSON_STATUS_OK);
   lonejson_free(json);
+}
+static void json_allocation_failures(void) {
+  static const char body[] = "{\"k\":[1,true]}";
+  static const unsigned char expected[] = {
+      0xa2, 0x65, 'v',  'a',  'l', 'u', 'e', 0xbf, 0x61, 'k',  0x9f, 1,
+      0xf5, 0xff, 0xff, 0x65, 'a', 'f', 't', 'e',  'r',  0x18, 42};
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  value_record input, output;
+  endpoint wire, encoded;
+  c89cbor_sink sink;
+  c89cbor_source source;
+  allocation_count allocations;
+  size_t point;
+  int decode, status;
+  memset(&allocations, 0, sizeof(allocations));
+  config.json = json;
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
+  assert(json != NULL && c89cbor_init(&runtime, &config, &error) == 0);
+  memset(&wire, 0, sizeof(wire));
+  memcpy(wire.output, expected, sizeof(expected));
+  wire.used = sizeof(expected);
+  assert(lonejson_init(json, &value_map, &input, &jerror) ==
+         LONEJSON_STATUS_OK);
+  assert(lonejson_json_value_set_buffer(&input.value, body, strlen(body),
+                                        &jerror) == LONEJSON_STATUS_OK);
+  input.after = 42;
+  source.context = &wire;
+  source.read = read_bytes;
+  sink.context = &encoded;
+  sink.write = write_bytes;
+  for (decode = 0; decode < 2; ++decode) {
+    for (point = 1; point < 64; ++point) {
+      allocations.calls = 0;
+      allocations.fail = point;
+      wire.bytes = wire.output;
+      wire.length = wire.used;
+      wire.offset = wire.reads = 0;
+      wire.fragment = 3;
+      wire.pause = 1;
+      memset(&encoded, 0, sizeof(encoded));
+      encoded.fragment = 3;
+      encoded.pause = 1;
+      assert(lonejson_init(json, &value_map, &output, &jerror) ==
+             LONEJSON_STATUS_OK);
+      assert(lonejson_json_value_enable_parse_capture(&output.value, &jerror) ==
+             LONEJSON_STATUS_OK);
+      status = decode
+                   ? runtime.decode_map_init(&runtime, &operation, &source,
+                                             &value_map, &output,
+                                             sizeof(output), NULL, &error)
+                   : runtime.encode_map_init(&runtime, &operation, &value_map,
+                                             &input, sizeof(input), &sink, NULL,
+                                             &error);
+      if (status == 0)
+        status = drive(&operation, &error);
+      assert(status == C89CBOR_NOMEM || status == C89CBOR_DONE);
+      assert(operation.cleanup(&operation) == 0 && allocations.live == 0);
+      if (status == C89CBOR_DONE) {
+        if (decode) {
+          assert(output.after == input.after &&
+                 output.value.len == strlen(body));
+          assert(memcmp(output.value.json, body, strlen(body)) == 0);
+        } else {
+          assert(encoded.used == wire.used &&
+                 memcmp(encoded.output, wire.output, wire.used) == 0);
+        }
+      }
+      assert(json->cleanup(json, &value_map, &output, &jerror) ==
+             LONEJSON_STATUS_OK);
+      if (status == C89CBOR_DONE)
+        break;
+    }
+    assert(point > 1 && point < 64);
+  }
+  assert(json->cleanup(json, &value_map, &input, &jerror) ==
+         LONEJSON_STATUS_OK);
+  assert(runtime.cleanup(&runtime) == 0 && allocations.live == 0);
+  lonejson_free(json);
+}
+static void schema_keys_and_workspace(void) {
+  static const char *const keys[] = {"",
+                                     "id",
+                                     "\303\251\342\202\254\360\237\230\200",
+                                     "\177",
+                                     "\302\200",
+                                     "\364\217\277\277",
+                                     "\200",
+                                     "\300\200",
+                                     "\302",
+                                     "\340\200\200",
+                                     "\355\240\200",
+                                     "\364\220\200\200",
+                                     "\365\200\200\200"};
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  lonejson_field field = child_fields[0];
+  lonejson_map map = child_map;
+  child input, output;
+  endpoint wire;
+  c89cbor_sink sink;
+  c89cbor_source source;
+  allocation_count allocations;
+  char *long_key = malloc(4097);
+  size_t i;
+  int status;
+  assert(json != NULL && long_key != NULL);
+  memset(&allocations, 0, sizeof(allocations));
+  config.json = json;
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
+  assert(c89cbor_init(&runtime, &config, &error) == 0);
+  map.fields = &field;
+  map.field_count = 1;
+  memset(&input, 0, sizeof(input));
+  input.id = INT64_MIN;
+  sink.context = source.context = &wire;
+  sink.write = write_bytes;
+  source.read = read_bytes;
+  options.key_bytes = 4096;
+  memset(long_key, 'k', 4096);
+  memcpy(long_key + 2047, "\303\251", 2);
+  long_key[4096] = '\0';
+  for (i = 0; i <= sizeof(keys) / sizeof(keys[0]); ++i) {
+    field.json_key = i == sizeof(keys) / sizeof(keys[0]) ? long_key : keys[i];
+    field.json_key_len = strlen(field.json_key);
+    memset(&wire, 0, sizeof(wire));
+    wire.fragment = 17;
+    status = runtime.encode_map_init(&runtime, &operation, &map, &input,
+                                     sizeof(input), &sink, &options, &error);
+    if (i >= 6 && i < sizeof(keys) / sizeof(keys[0])) {
+      assert(status == C89CBOR_INVALID && wire.writes == 0);
+      assert(operation.cleanup(&operation) == 0);
+      assert(runtime.decode_map_init(&runtime, &operation, &source, &map,
+                                     &output, sizeof(output), &options,
+                                     &error) == C89CBOR_INVALID);
+      assert(wire.offset == 0 && operation.cleanup(&operation) == 0);
+    } else {
+      assert(status == 0 && drive(&operation, &error) == C89CBOR_DONE);
+      assert(operation.cleanup(&operation) == 0);
+      memset(&output, 0, sizeof(output));
+      assert(decode_record(&runtime, &wire, &map, &output, &options, &error) ==
+             C89CBOR_DONE);
+      assert(output.id == input.id);
+    }
+    assert(allocations.live == 0);
+  }
+  field.json_key = "id";
+  field.json_key_len = 2;
+  options.depth = (size_t)-1 / sizeof(c89cbor_frame);
+  assert(runtime.encode_map_init(&runtime, &operation, &map, &input,
+                                 sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_LIMIT);
+  assert(operation.cleanup(&operation) == 0 && allocations.live == 0);
+  options.depth = 0;
+  options.chunk = (size_t)-2;
+  assert(runtime.decode_map_init(&runtime, &operation, &source, &map, &output,
+                                 sizeof(output), &options,
+                                 &error) == C89CBOR_LIMIT);
+  assert(operation.cleanup(&operation) == 0 && allocations.live == 0);
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+  free(long_key);
+}
+static void schema_reuse(lonejson *json) {
+  static const unsigned char reordered[] = {
+      0xa2, 0x64, 'n', 'a', 'm', 'e', 0x61, 'x', 0x62, 'i', 'd', 0x18, 42};
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  lonejson_error jerror;
+  child input, output, item;
+  stream_record streamed;
+  lonejson_field mutable_fields[2];
+  lonejson_map mutable_map = child_map;
+  unsigned char *misaligned = malloc(sizeof(input) + 8u);
+  c89cbor_sink sink;
+  c89cbor_source source;
+  endpoint wire;
+  size_t i;
+  assert(json != NULL && misaligned != NULL);
+  config.json = json;
+  assert(c89cbor_init(&runtime, &config, &error) == 0);
+  assert(lonejson_init(json, &child_map, &input, &jerror) ==
+         LONEJSON_STATUS_OK);
+  source.context = sink.context = &wire;
+  source.read = read_bytes;
+  sink.write = write_bytes;
+  for (i = 0; i < 2; ++i) {
+    input.id = i == 0 ? INT64_MIN : INT64_MAX;
+    assert(lonejson_record_assign_string(
+               json, &child_map, &input, &child_fields[1],
+               i == 0 ? "first" : "other", 5, &jerror) == LONEJSON_STATUS_OK);
+    memset(&wire, 0, sizeof(wire));
+    wire.fragment = sizeof(wire.output);
+    assert(runtime.encode_map(&runtime, &child_map, &input, sizeof(input),
+                              &sink, &options, &error) == 0);
+    assert(lonejson_init(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(decode_record(&runtime, &wire, &child_map, &output, &options,
+                         &error) == C89CBOR_DONE);
+    assert(input.id == output.id && strcmp(input.name, output.name) == 0);
+    assert(json->cleanup(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+  }
+  options.step_events = 3;
+  for (i = 1; i <= sizeof(reordered); ++i) {
+    memset(&wire, 0, sizeof(wire));
+    memcpy(wire.output, reordered, sizeof(reordered));
+    wire.used = sizeof(reordered);
+    wire.fragment = i;
+    assert(lonejson_init(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+    assert(decode_record(&runtime, &wire, &child_map, &output, &options,
+                         &error) == C89CBOR_DONE);
+    assert(output.id == 42 && strcmp(output.name, "x") == 0);
+    assert(json->cleanup(json, &child_map, &output, &jerror) ==
+           LONEJSON_STATUS_OK);
+  }
+  options.step_events = 0;
+  assert(runtime.encode_map_init(&runtime, &operation, &child_map, &input,
+                                 sizeof(input) - 1u, &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  assert(runtime.encode_map_init(&runtime, &operation, &child_map,
+                                 misaligned + 1, sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  options.key_bytes = 1;
+  assert(runtime.encode_map_init(&runtime, &operation, &child_map, &input,
+                                 sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  options.key_bytes = 4;
+  options.depth = 1;
+  assert(runtime.encode_map_init(&runtime, &operation, &child_map, &input,
+                                 sizeof(input), &sink, &options, &error) == 0);
+  assert(drive(&operation, &error) == C89CBOR_LIMIT);
+  assert(operation.cleanup(&operation) == 0);
+  options.depth = 2;
+  memset(&wire, 0, sizeof(wire));
+  wire.fragment = sizeof(wire.output);
+  assert(runtime.encode_map(&runtime, &child_map, &input, sizeof(input), &sink,
+                            &options, &error) == 0);
+  memcpy(mutable_fields, child_fields, sizeof(mutable_fields));
+  mutable_map.fields = mutable_fields;
+  memset(&wire, 0, sizeof(wire));
+  wire.fragment = sizeof(wire.output);
+  assert(runtime.encode_map(&runtime, &mutable_map, &input, sizeof(input),
+                            &sink, &options, &error) == 0);
+  /* Owning lonejson schema factories assign singleton identities with a new
+   * cookie for each generation, including when storage addresses are reused. */
+  mutable_map._map_identity = &mutable_map;
+  ++mutable_map._map_cookie;
+  memset(&wire, 0, sizeof(wire));
+  wire.fragment = sizeof(wire.output);
+  assert(runtime.encode_map(&runtime, &mutable_map, &input, sizeof(input),
+                            &sink, &options, &error) == 0);
+  ++mutable_map._map_cookie;
+  mutable_fields[0].struct_offset = sizeof(input);
+  assert(runtime.encode_map_init(&runtime, &operation, &mutable_map, &input,
+                                 sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  mutable_fields[0] = child_fields[0];
+  assert(lonejson_init(json, &stream_map, &streamed, &jerror) ==
+         LONEJSON_STATUS_OK);
+  assert(lonejson_init(json, &child_map, &item, &jerror) == LONEJSON_STATUS_OK);
+  streamed.objects.handler.item_map = &child_map;
+  streamed.objects.handler.item_dst = &item;
+  options.depth = 0;
+  options.key_bytes = 0;
+  assert(runtime.decode_map_init(&runtime, &operation, &source, &stream_map,
+                                 &streamed, sizeof(streamed), &options,
+                                 &error) == 0);
+  assert(operation.cleanup(&operation) == 0);
+  streamed.objects.handler.item_map = &mutable_map;
+  mutable_fields[0].struct_offset = sizeof(input);
+  assert(runtime.decode_map_init(&runtime, &operation, &source, &stream_map,
+                                 &streamed, sizeof(streamed), &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  streamed.objects.handler.item_map = &child_map;
+  assert(json->cleanup(json, &stream_map, &streamed, &jerror) ==
+         LONEJSON_STATUS_OK);
+  assert(json->cleanup(json, &child_map, &item, &jerror) == LONEJSON_STATUS_OK);
+  assert(json->cleanup(json, &child_map, &input, &jerror) ==
+         LONEJSON_STATUS_OK);
+  assert(runtime.cleanup(&runtime) == 0);
+  free(misaligned);
+}
+static void *schema_reuse_worker(void *context) {
+  schema_reuse(context);
+  return NULL;
+}
+static void schema_reuse_threads(void) {
+  pthread_t workers[2];
+  lonejson *runtimes[2];
+  lonejson_error error;
+  size_t i;
+  /* Prepare dependencies before concurrent mapped work. Helgrind cannot
+   * model lonejson's compiler spinlock protecting runtime registration. */
+  for (i = 0; i < 2; ++i) {
+    runtimes[i] = lonejson_new(NULL, &error);
+    assert(runtimes[i] != NULL);
+  }
+  for (i = 0; i < 2; ++i)
+    assert(pthread_create(&workers[i], NULL, schema_reuse_worker,
+                          runtimes[i]) == 0);
+  for (i = 0; i < 2; ++i)
+    assert(pthread_join(workers[i], NULL) == 0);
+  for (i = 0; i < 2; ++i)
+    lonejson_free(runtimes[i]);
+}
+static void wide_schema(void) {
+  lonejson_int64 input[66], output[66];
+  char names[66][4];
+  lonejson_field *wide = malloc(66u * sizeof(*wide));
+  unsigned char *misaligned = malloc(sizeof(input) + 16u);
+  lonejson_map map = child_map;
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  c89cbor_source source;
+  c89cbor_sink sink;
+  endpoint wire;
+  allocation_count allocations;
+  size_t i, field_count;
+  assert(wide != NULL && misaligned != NULL && json != NULL);
+  memset(&allocations, 0, sizeof(allocations));
+  config.json = json;
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
+  assert(c89cbor_init(&runtime, &config, &error) == 0);
+  for (i = 0; i < 66; ++i) {
+    wide[i] = child_fields[0];
+    (void)snprintf(names[i], sizeof(names[i]), "k%02u", (unsigned int)i);
+    wide[i].json_key = names[i];
+    wide[i].json_key_len = 3;
+    wide[i].struct_offset = i * sizeof(input[0]);
+    input[i] = (lonejson_int64)i;
+  }
+  map.struct_size = sizeof(input);
+  map.fields = wide;
+  source.context = sink.context = &wire;
+  source.read = read_bytes;
+  sink.write = write_bytes;
+  options.step_events = 3;
+  for (field_count = 64; field_count <= 66; ++field_count) {
+    map.field_count = field_count;
+    memset(&wire, 0, sizeof(wire));
+    wire.fragment = sizeof(wire.output);
+    assert(runtime.encode_map(&runtime, &map, input, sizeof(input), &sink,
+                              &options, &error) == 0);
+    assert(lonejson_init(json, &map, output, &jerror) == LONEJSON_STATUS_OK);
+    wire.fragment = 17;
+    assert(decode_record(&runtime, &wire, &map, output, &options, &error) ==
+           C89CBOR_DONE);
+    assert(memcmp(input, output, field_count * sizeof(input[0])) == 0);
+    assert(json->cleanup(json, &map, output, &jerror) == LONEJSON_STATUS_OK);
+    if (field_count > 64) {
+      allocations.fail = allocations.calls + 2u;
+      assert(runtime.decode_map_init(&runtime, &operation, &source, &map,
+                                     output, sizeof(output), &options,
+                                     &error) == C89CBOR_NOMEM);
+      assert(operation.cleanup(&operation) == 0 && allocations.live == 0);
+      allocations.fail = 0;
+    }
+    --map.field_count;
+    memset(&wire, 0, sizeof(wire));
+    wire.fragment = sizeof(wire.output);
+    assert(runtime.encode_map(&runtime, &map, input, sizeof(input), &sink,
+                              &options, &error) == 0);
+    ++map.field_count;
+    assert(lonejson_init(json, &map, output, &jerror) == LONEJSON_STATUS_OK);
+    assert(decode_record(&runtime, &wire, &map, output, &options, &error) ==
+           C89CBOR_SCHEMA);
+    assert(error.path[0] == '/' &&
+           strcmp(error.path + 1, names[field_count - 1u]) == 0);
+    assert(json->cleanup(json, &map, output, &jerror) == LONEJSON_STATUS_OK);
+    assert(allocations.live == 0);
+  }
+  wide[0].struct_offset = 1;
+  assert(runtime.encode_map_init(&runtime, &operation, &map, input,
+                                 sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  wide[0].struct_offset = 0;
+  assert(runtime.encode_map_init(&runtime, &operation, &map, misaligned + 1,
+                                 sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0);
+  wide[1].json_key = names[0];
+  assert(runtime.encode_map_init(&runtime, &operation, &map, input,
+                                 sizeof(input), &sink, &options,
+                                 &error) == C89CBOR_INVALID);
+  assert(operation.cleanup(&operation) == 0 && allocations.live == 0);
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+  free(misaligned);
+  free(wide);
 }
 typedef struct wire_validator {
   c89cbor_decoder decoder;
@@ -825,6 +1314,156 @@ static const lonejson_field fixed_fields[] = {
     LONEJSON_FIELD_I64_PRESENT_NULLABLE(fixed_record, number, present,
                                         "number")};
 LONEJSON_MAP_DEFINE(fixed_map, fixed_record, fixed_fields);
+static void fixed_text_encoding(void) {
+  static const char inputs[][4] = {
+      "",         "a",    "\303\251",     "\342\202\254",      "\200",
+      "\300\200", "\302", "\355\240\200", {'n', 'o', 'p', 'e'}};
+  static const size_t chunks[] = {1, 2, 3, 8, 9, 16, 2047, 2048, 2049};
+  static const size_t budgets[] = {0, 1, 2, 3, 4, 7};
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  lonejson_field field = fixed_fields[0];
+  lonejson_map map = fixed_map;
+  fixed_record input, output;
+  endpoint wire;
+  c89cbor_sink sink;
+  allocation_count allocations;
+  size_t i, c, b;
+  int status;
+  memset(&allocations, 0, sizeof(allocations));
+  config.json = json;
+  config.allocator.context = &allocations;
+  config.allocator.alloc = tracked_allocate;
+  config.allocator.free = tracked_free;
+  assert(json != NULL && c89cbor_init(&runtime, &config, &error) == 0);
+  map.fields = &field;
+  map.field_count = 1;
+  sink.context = &wire;
+  sink.write = write_bytes;
+  for (i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i)
+    for (b = 0; b < sizeof(budgets) / sizeof(budgets[0]); ++b)
+      for (c = 0; c < sizeof(chunks) / sizeof(chunks[0]); ++c) {
+        memset(&wire, 0, sizeof(wire));
+        wire.fragment = chunks[c];
+        wire.pause = 1;
+        options.chunk = chunks[c];
+        options.step_events = budgets[b];
+        assert(lonejson_init(json, &map, &input, &jerror) ==
+               LONEJSON_STATUS_OK);
+        memcpy(input.text, inputs[i], sizeof(input.text));
+        assert(runtime.encode_map_init(&runtime, &operation, &map, &input,
+                                       sizeof(input), &sink, &options,
+                                       &error) == 0);
+        status = drive(&operation, &error);
+        assert(status == (i < 4    ? C89CBOR_DONE
+                          : i == 8 ? C89CBOR_SCHEMA
+                                   : C89CBOR_MALFORMED));
+        if (status < 0)
+          assert(strcmp(error.path, "/text") == 0);
+        assert(operation.cleanup(&operation) == 0);
+        if (status == C89CBOR_DONE) {
+          assert(lonejson_init(json, &map, &output, &jerror) ==
+                 LONEJSON_STATUS_OK);
+          assert(decode_record(&runtime, &wire, &map, &output, &options,
+                               &error) == C89CBOR_DONE);
+          assert(strcmp(input.text, output.text) == 0);
+          assert(json->cleanup(json, &map, &output, &jerror) ==
+                 LONEJSON_STATUS_OK);
+        }
+        assert(json->cleanup(json, &map, &input, &jerror) ==
+               LONEJSON_STATUS_OK);
+        assert(allocations.live == 0);
+      }
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+}
+static void scalar_value_validation(void) {
+  static const uint64_t bits[] = {
+      UINT64_C(0x8000000000000000), UINT64_C(0x3ff8000000000000),
+      UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
+      UINT64_C(0x7ff8000000000000), UINT64_C(0x7ff0000000000001)};
+  static const unsigned char prefix[] = {0xa1, 0x66, 'n', 'u', 'm',
+                                         'b',  'e',  'r', 0xfb};
+  static const size_t chunks[] = {1, 2, 8, 9, 16, 32, 2047, 2048, 2049};
+  static const size_t budgets[] = {0, 1, 2, 3, 4, 7};
+  c89cbor runtime;
+  c89cbor_config config = c89cbor_default_config();
+  c89cbor_options options = c89cbor_default_options();
+  c89cbor_conversion operation;
+  c89cbor_error error;
+  c89cbor_token token;
+  lonejson_error jerror;
+  lonejson *json = lonejson_new(NULL, &jerror);
+  lonejson_field field = fields[2];
+  lonejson_map map = record_map;
+  record input, output;
+  endpoint wire;
+  c89cbor_sink sink;
+  size_t i, c, b, at;
+  uint64_t actual;
+  int status;
+  config.json = json;
+  assert(json != NULL && c89cbor_init(&runtime, &config, &error) == 0);
+  map.fields = &field;
+  map.field_count = 1;
+  sink.context = &wire;
+  sink.write = write_bytes;
+  for (i = 0; i < sizeof(bits) / sizeof(bits[0]); ++i)
+    for (b = 0; b < sizeof(budgets) / sizeof(budgets[0]); ++b)
+      for (c = 0; c < sizeof(chunks) / sizeof(chunks[0]); ++c) {
+        memset(&wire, 0, sizeof(wire));
+        wire.fragment = chunks[c];
+        wire.pause = 1;
+        options.chunk = chunks[c];
+        options.step_events = budgets[b];
+        memset(&token, 0, sizeof(token));
+        token.type = C89CBOR_FLOAT64;
+        token.argument = bits[i];
+        assert(lonejson_init(json, &map, &input, &jerror) ==
+               LONEJSON_STATUS_OK);
+        assert(c89cbor_float64_get(NULL, &token, &input.number) == 0);
+        assert(runtime.encode_map_init(&runtime, &operation, &map, &input,
+                                       sizeof(input), &sink, &options,
+                                       &error) == 0);
+        status = drive(&operation, &error);
+        assert(status == (i < 2 ? C89CBOR_DONE : C89CBOR_SCHEMA));
+        assert(operation.cleanup(&operation) == 0);
+        if (status == C89CBOR_DONE) {
+          assert(wire.used == sizeof(prefix) + 8u &&
+                 memcmp(wire.output, prefix, sizeof(prefix)) == 0);
+          for (at = 0; at < 8; ++at)
+            assert(wire.output[sizeof(prefix) + at] ==
+                   (unsigned char)(bits[i] >> (56u - 8u * at)));
+        }
+        memcpy(wire.output, prefix, sizeof(prefix));
+        for (at = 0; at < 8; ++at)
+          wire.output[sizeof(prefix) + at] =
+              (unsigned char)(bits[i] >> (56u - 8u * at));
+        wire.used = sizeof(prefix) + 8u;
+        assert(lonejson_init(json, &map, &output, &jerror) ==
+               LONEJSON_STATUS_OK);
+        status =
+            decode_record(&runtime, &wire, &map, &output, &options, &error);
+        assert(status == (i < 2 ? C89CBOR_DONE : C89CBOR_SCHEMA));
+        if (status == C89CBOR_DONE) {
+          memcpy(&actual, &output.number, sizeof(actual));
+          assert(actual == bits[i]);
+        } else {
+          assert(strcmp(error.path, "/number") == 0);
+        }
+        assert(json->cleanup(json, &map, &input, &jerror) ==
+               LONEJSON_STATUS_OK);
+        assert(json->cleanup(json, &map, &output, &jerror) ==
+               LONEJSON_STATUS_OK);
+      }
+  assert(runtime.cleanup(&runtime) == 0);
+  lonejson_free(json);
+}
 static void fixed_text_truncation(void) {
   static const char *const inputs[] = {"",
                                        "abc",
@@ -1074,8 +1713,14 @@ static void *run_tests(void *unused) {
   bound_payload();
   bound_null();
   allocation_failures();
+  json_allocation_failures();
+  schema_keys_and_workspace();
+  schema_reuse_threads();
+  wide_schema();
   source_payload();
   fixed_text_truncation();
+  fixed_text_encoding();
+  scalar_value_validation();
   policies_and_views();
   spool_fields_test();
   return NULL;

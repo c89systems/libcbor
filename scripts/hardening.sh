@@ -55,7 +55,7 @@ valgrind)
     --output-on-failure --stop-on-failure --no-tests=error
   ctest --test-dir build/x86_64-linux-gnu-debug -T MemCheck "${memory_args[@]}" \
     --overwrite "MemoryCheckCommandOptions=--tool=helgrind --error-exitcode=99 --suppressions=$root/tests/openssl-helgrind.supp" \
-    -R '^(concurrency|cose|cwt-reuse)-(static|shared)$' \
+    -R '^(concurrency|map|cose|cwt-reuse)-(static|shared)$' \
     --output-on-failure --stop-on-failure --no-tests=error
   scripts/build.sh lua x86_64-linux-gnu Debug
   ctest --test-dir build/lua-x86_64-linux-gnu-debug -R '^lua-test-inventory$' \

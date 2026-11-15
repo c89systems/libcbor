@@ -182,6 +182,7 @@ typedef struct benchmark {
   unsigned char wire[BENCH_CAPACITY], encoded[BENCH_CAPACITY];
   size_t length;
   bench_samples samples;
+  int verify;
 } benchmark;
 static void run_once(benchmark *b, int encode) {
   cbor_item_t *root;
@@ -191,12 +192,14 @@ static void run_once(benchmark *b, int encode) {
     root = build_record(&b->input);
     assert(root != NULL);
     length = cbor_serialize(root, b->encoded, sizeof(b->encoded));
-    assert(length == b->length && memcmp(b->encoded, b->wire, length) == 0);
+    assert(length != 0);
+    assert(!b->verify ||
+           (length == b->length && memcmp(b->encoded, b->wire, length) == 0));
   } else {
     root = cbor_load(b->wire, b->length, &result);
     assert(root != NULL && result.read == b->length);
     read_record(root, &b->output);
-    assert(bench_record_equal(&b->input, &b->output));
+    assert(!b->verify || bench_record_equal(&b->input, &b->output));
   }
   cbor_decref(&root);
   assert(allocations.bytes == 0);
@@ -208,7 +211,7 @@ int main(int argc, char **argv) {
   bench_kind kind;
   size_t repetitions = argc > 2 ? (size_t)strtoul(argv[2], NULL, 10) : 10000u;
   size_t i, sample, batch, records;
-  int round, encode;
+  int round, encode, matched = 0;
   double setup, begin, cpu, seconds, cpu_seconds, at;
   if (b == NULL)
     return 1;
@@ -216,11 +219,13 @@ int main(int argc, char **argv) {
     free(b);
     return 1;
   }
-  cbor_set_allocs(allocate, reallocate, release);
+  if (!bench_enabled("BENCH_SYSTEM_ALLOCATOR"))
+    cbor_set_allocs(allocate, reallocate, release);
   if (argc == 2 && strcmp(argv[1], "check") == 0) {
     for (kind = BENCH_SCALAR; kind <= BENCH_LAST;
          kind = (bench_kind)((int)kind + 1)) {
       memset(b, 0, sizeof(*b));
+      b->verify = 1;
       bench_record_fill(&b->input, kind);
       b->output.kind = kind;
       root = build_record(&b->input);
@@ -242,6 +247,7 @@ int main(int argc, char **argv) {
     }
     assert(kind <= BENCH_LAST);
     memset(b, 0, sizeof(*b));
+    b->verify = 1;
     bench_record_fill(&b->input, kind);
     b->output.kind = kind;
     if (strcmp(argv[1], "emit") == 0) {
@@ -266,8 +272,12 @@ int main(int argc, char **argv) {
   }
   for (kind = BENCH_SCALAR; kind <= BENCH_LAST;
        kind = (bench_kind)((int)kind + 1)) {
+    if (argc > 3 && strcmp(argv[3], bench_fixture_name(kind)) != 0)
+      continue;
+    matched = 1;
     setup = bench_wall();
     memset(b, 0, sizeof(*b));
+    b->verify = 1;
     bench_record_fill(&b->input, kind);
     b->output.kind = kind;
     root = build_record(&b->input);
@@ -278,7 +288,10 @@ int main(int argc, char **argv) {
     setup = bench_wall() - setup;
     records = kind >= BENCH_LARGE_ASCII ? repetitions / 16u + 1u : repetitions;
     for (round = -1; round < 5; ++round) {
+      b->verify = !bench_enabled("BENCH_NO_VERIFY");
       bench_counts_reset(&allocations);
+      allocations.system_allocator = bench_enabled("BENCH_SYSTEM_ALLOCATOR");
+      allocations.untimed_verification = !b->verify;
       begin = bench_wall();
       cpu = bench_cpu();
       for (i = 0; i < records; ++i)
@@ -286,22 +299,29 @@ int main(int argc, char **argv) {
       cpu_seconds = bench_cpu() - cpu;
       seconds = bench_wall() - begin;
       snapshot = allocations;
+      b->verify = 1;
+      run_once(b, encode);
       if (round < 0)
         continue;
       b->samples.count = kind >= BENCH_LARGE_ASCII ? 128u : 256u;
       b->samples.batch = kind >= BENCH_LARGE_ASCII ? 1u : 16u;
       for (sample = 0; sample < b->samples.count; ++sample) {
+        b->verify = !bench_enabled("BENCH_NO_VERIFY");
         at = bench_wall();
         for (batch = 0; batch < b->samples.batch; ++batch)
           run_once(b, encode);
         b->samples.values[sample] =
             (bench_wall() - at) * 1e9 / (double)b->samples.batch;
       }
+      b->verify = 1;
+      run_once(b, encode);
       bench_report("PJK/libcbor-0.14.0", encode ? "dom-encode" : "dom-decode",
                    bench_fixture_name(kind), round, records, b->length, seconds,
                    cpu_seconds, setup, &snapshot, &b->samples);
     }
   }
   free(b);
-  return 0;
+  if (!matched)
+    fprintf(stderr, "Unknown benchmark fixture: %s\n", argv[3]);
+  return matched ? 0 : 1;
 }

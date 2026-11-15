@@ -192,18 +192,18 @@ static int prepare_source(c89_map_state *state, c89_map_frame *frame,
   return C89CBOR_OK;
 }
 static int select_field(c89_map_state *state, c89_map_frame *parent,
-                        c89cbor_token *token) {
+                        c89cbor_token *token, size_t *events) {
   const lonejson_field *field = parent->field;
   const unsigned char *slot =
       (const unsigned char *)parent->record.input + field->struct_offset;
   const void *items;
   const char *text;
   const void *terminator;
-  size_t count, index = state->depth - 1u, length;
+  size_t count, index = state->depth - 1u, length, capacity, written;
   int present, status;
   c89_map_frame *frame;
   state->error_field = field;
-  if (lonejson_field_has_presence(field)) {
+  if ((field->flags & LONEJSON_FIELD_HAS_PRESENCE) != 0) {
     memcpy(&present,
            (const unsigned char *)parent->record.input + field->presence_offset,
            sizeof(present));
@@ -239,6 +239,22 @@ static int select_field(c89_map_state *state, c89_map_frame *parent,
                             "fixed string has no terminator");
       text = (const char *)slot;
       length = (size_t)((const unsigned char *)terminator - slot);
+    }
+    capacity = state->options.chunk - state->output_length;
+    if (capacity >= 9u && length <= capacity - 9u &&
+        state->options.step_events - *events >= 3u) {
+      if (state->depth == state->options.depth)
+        return c89_map_fail(state, C89CBOR_LIMIT,
+                            "mapped value exceeds nesting limit");
+      status = c89_encoder_buffer_text(&state->codec.encoder, text, length,
+                                       state->output + state->output_length,
+                                       capacity, &written);
+      if (status != 0)
+        return c89_map_fail(state, status, "invalid mapped CBOR text");
+      state->output_length += written;
+      parent->phase = ENCODE_NEXT;
+      *events += 2u;
+      return C89CBOR_OK;
     }
     return push_text(state, index, field, 0, text, length);
   }
@@ -296,8 +312,9 @@ static int select_field(c89_map_state *state, c89_map_frame *parent,
   return prepare_source(state, frame, field, slot);
 }
 static int object_token(c89_map_state *state, c89_map_frame *frame,
-                        c89cbor_token *token) {
+                        c89cbor_token *token, size_t *events) {
   const lonejson_field *field;
+  size_t capacity, written;
   int omit, status;
   switch (frame->phase) {
   case ENCODE_BEGIN:
@@ -315,11 +332,48 @@ static int object_token(c89_map_state *state, c89_map_frame *frame,
       return C89CBOR_TOKEN;
     }
     field = &frame->map->fields[frame->next_field++];
-    status =
-        c89_map_omit(state, field, frame->record.input, state->depth, &omit);
-    if (status != 0 || omit)
-      return status;
+    if ((field->flags & LONEJSON_FIELD_REQUIRED) == 0) {
+      status =
+          c89_map_omit(state, field, frame->record.input, state->depth, &omit);
+      if (status != 0 || omit)
+        return status;
+    }
     frame->field = field;
+    capacity = state->options.chunk - state->output_length;
+    if (field->kind >= LONEJSON_FIELD_KIND_I64 &&
+        field->kind <= LONEJSON_FIELD_KIND_BOOL && capacity >= 18u &&
+        field->json_key_len <= capacity - 18u &&
+        state->options.step_events - *events >= 4u &&
+        state->codec.encoder.state.depth <
+            state->codec.encoder.state.capacity) {
+      status = select_field(state, frame, token, events);
+      if (status != C89CBOR_TOKEN)
+        return status;
+      status = c89_encoder_buffer_pair(&state->codec.encoder, field, token,
+                                       state->output + state->output_length,
+                                       capacity, &written);
+      if (status != 0)
+        return c89_map_fail(state, status, "invalid mapped CBOR field");
+      state->output_length += written;
+      *events += 3u;
+      return C89CBOR_OK;
+    }
+    if (capacity >= 9u && field->json_key_len <= capacity - 9u &&
+        state->options.step_events - *events >= 3u) {
+      status = c89_encoder_buffer_key(&state->codec.encoder, field,
+                                      state->output + state->output_length,
+                                      capacity, &written);
+      if (status != 0)
+        return c89_map_fail(state, status, "invalid mapped CBOR key");
+      state->output_length += written;
+      frame->phase = ENCODE_VALUE;
+      if (state->options.step_events - *events >= 4u) {
+        *events += 3u;
+        return select_field(state, frame, token, events);
+      }
+      *events += 2u;
+      return C89CBOR_OK;
+    }
     token_init(token, C89CBOR_TEXT, (uint64_t)field->json_key_len);
     frame->phase = ENCODE_KEY_DATA;
     return C89CBOR_TOKEN;
@@ -334,7 +388,7 @@ static int object_token(c89_map_state *state, c89_map_frame *frame,
     frame->phase = ENCODE_VALUE;
     return C89CBOR_TOKEN;
   default:
-    return select_field(state, frame, token);
+    return select_field(state, frame, token, events);
   }
 }
 static int array_token(c89_map_state *state, c89_map_frame *frame,
@@ -404,10 +458,24 @@ static size_t utf8_prefix(const unsigned char *bytes, size_t length) {
   return length - start < needed ? start : length;
 }
 static int text_token(c89_map_state *state, c89_map_frame *frame,
-                      c89cbor_token *token) {
-  size_t take, count = 0, prefix;
+                      c89cbor_token *token, size_t *events) {
+  size_t take, count = 0, prefix, capacity, written;
   int status;
   if (frame->phase == ENCODE_BEGIN) {
+    capacity = state->options.chunk - state->output_length;
+    if (!frame->streaming && frame->target == C89CBOR_TEXT && capacity >= 9u &&
+        frame->length <= capacity - 9u &&
+        state->options.step_events - *events >= 3u) {
+      status = c89_encoder_buffer_text(
+          &state->codec.encoder, frame->data, frame->length,
+          state->output + state->output_length, capacity, &written);
+      if (status != 0)
+        return c89_map_fail(state, status, "invalid mapped CBOR text");
+      state->output_length += written;
+      field_complete(state);
+      *events += 2u;
+      return C89CBOR_OK;
+    }
     token_init(token, (c89cbor_type)frame->target, frame->expected);
     token->indefinite = frame->indefinite;
     frame->phase = frame->streaming ? ENCODE_READ : ENCODE_DATA;
@@ -514,9 +582,9 @@ static int begin_json_field(c89_map_state *state) {
   source.read = c89_map_payload_read;
   sink.context = state;
   sink.write = nested_sink;
-  status =
-      c89_json_encode_init(&state->bridge_runtime, &state->bridge, &source,
-                           &sink, &state->options, &state->encoder, &error);
+  status = c89_json_encode_init(&state->json_bridge->runtime,
+                                &state->json_bridge->conversion, &source, &sink,
+                                &state->options, &state->codec.encoder, &error);
   if (status != 0)
     return c89_map_bridge_status(state, status, &error);
   state->bridge_ready = 1;
@@ -538,7 +606,7 @@ static int flush_map(c89_map_state *state, const void *bytes, size_t length,
     if (state->output_offset == state->output_length)
       state->output_offset = state->output_length = 0;
   } else {
-    (void)state->encoder.advance(&state->encoder, count);
+    (void)state->codec.encoder.advance(&state->codec.encoder, count);
   }
   if (status == C89CBOR_OUTPUT)
     return status;
@@ -553,7 +621,7 @@ int c89_map_encode_step(void *context) {
   c89cbor_progress progress;
   c89cbor_error error;
   const void *bytes;
-  size_t length, events = 0;
+  size_t length, written, events = 0;
   int status;
   if (state->done)
     return C89CBOR_DONE;
@@ -562,13 +630,16 @@ int c89_map_encode_step(void *context) {
     return flush_map(state, state->output + state->output_offset,
                      state->output_length - state->output_offset, 1);
   if (state->bridge_ready) {
-    status = state->bridge.step(&state->bridge, &error);
-    (void)state->bridge.progress(&state->bridge, &progress);
+    status = state->json_bridge->conversion.step(
+        &state->json_bridge->conversion, &error);
+    (void)state->json_bridge->conversion.progress(
+        &state->json_bridge->conversion, &progress);
     state->owner->lifetime.progress.input +=
         progress.input - state->bridge_input;
     state->bridge_input = progress.input;
     if (status == C89CBOR_DONE) {
-      (void)state->bridge.cleanup(&state->bridge);
+      (void)state->json_bridge->conversion.cleanup(
+          &state->json_bridge->conversion);
       state->bridge_ready = 0;
       c89_map_payload_close(state);
       field_complete(state);
@@ -577,7 +648,11 @@ int c89_map_encode_step(void *context) {
     return c89_map_bridge_status(state, status, &error);
   }
   while (events < state->options.step_events) {
-    status = state->encoder.peek(&state->encoder, &bytes, &length);
+    status =
+        state->codec.encoder.offset < state->codec.encoder.size ||
+                state->codec.encoder.remaining != 0
+            ? state->codec.encoder.peek(&state->codec.encoder, &bytes, &length)
+            : C89CBOR_OK;
     if (status < 0)
       return c89_map_fail(state, status, "invalid mapped CBOR output");
     if (status == C89CBOR_OUTPUT) {
@@ -585,7 +660,7 @@ int c89_map_encode_step(void *context) {
           (length < state->options.chunk / 2u || state->output_length != 0)) {
         memcpy(state->output + state->output_length, bytes, length);
         state->output_length += length;
-        (void)state->encoder.advance(&state->encoder, length);
+        (void)state->codec.encoder.advance(&state->codec.encoder, length);
       } else {
         if (state->output_length != 0)
           return flush_map(state, state->output, state->output_length, 1);
@@ -598,7 +673,7 @@ int c89_map_encode_step(void *context) {
     if (state->depth == 0) {
       if (state->output_length != 0)
         return flush_map(state, state->output, state->output_length, 1);
-      status = state->encoder.finish(&state->encoder);
+      status = state->codec.encoder.finish(&state->codec.encoder);
       if (status != 0)
         return c89_map_fail(state, status, "incomplete mapped CBOR output");
       state->done = 1;
@@ -616,13 +691,13 @@ int c89_map_encode_step(void *context) {
         return C89CBOR_OK;
     }
     if (frame->kind == C89_MAP_OBJECT)
-      status = object_token(state, frame, &token);
+      status = object_token(state, frame, &token, &events);
     else if (frame->kind == C89_MAP_ARRAY)
       status = array_token(state, frame, &token);
     else if (frame->kind == C89_MAP_JSON)
       return begin_json_field(state);
     else
-      status = text_token(state, frame, &token);
+      status = text_token(state, frame, &token, &events);
     ++events;
     if (status == C89CBOR_INPUT) {
       if (state->output_length != 0)
@@ -632,7 +707,10 @@ int c89_map_encode_step(void *context) {
     if (status < 0)
       return status;
     if (status == C89CBOR_TOKEN) {
-      status = state->encoder.put(&state->encoder, &token);
+      status = c89_encoder_buffer(
+          &state->codec.encoder, &token, state->output + state->output_length,
+          state->options.chunk - state->output_length, &written);
+      state->output_length += written;
       if (status != 0)
         return c89_map_fail(state, status, "invalid mapped CBOR token");
     }

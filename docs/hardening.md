@@ -38,6 +38,12 @@ GC reentry covers descriptor/transfer construction and CWT snapshot copying,
 including close/mutation attempts and Lua allocation failures with immediate
 handle reuse after errors.
 
+Helgrind also covers concurrent mapped operations and the per-thread schema
+cache. That test prepares lonejson runtimes before starting workers and frees
+them after joining; dependency runtime registration uses a compiler spinlock
+that Helgrind cannot model. Mapped work on distinct records remains concurrent,
+without additional suppressions.
+
 Helgrind has one narrow suppression for OpenSSL 3.6.5's name-map counter read
 during signature fetch. The pinned
 [name-map source](https://github.com/openssl/openssl/blob/openssl-3.6.5/crypto/core_namemap.c)

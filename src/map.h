@@ -40,6 +40,7 @@ typedef struct c89_map_frame {
   int streaming;
   size_t target;
   unsigned char *seen;
+  uint64_t seen_bits;
   size_t unknown_start;
   size_t unknown_bytes;
   const unsigned char *data;
@@ -78,14 +79,21 @@ typedef struct c89_map_payload {
   int fd_ready;
   const char *path;
 } c89_map_payload;
+typedef union c89_map_codec {
+  c89cbor_encoder encoder;
+  c89cbor_decoder decoder;
+} c89_map_codec;
+typedef struct c89_map_json {
+  c89cbor runtime;
+  c89cbor_conversion conversion;
+} c89_map_json;
 typedef struct c89_map_state {
   c89_operation operation;
   c89cbor_conversion *owner;
   c89cbor *runtime;
   lonejson *json;
-  c89cbor bridge_runtime;
+  c89_map_json *json_bridge;
   int bridge_runtime_ready;
-  c89cbor_conversion bridge;
   int bridge_ready;
   int bridge_started;
   uint64_t bridge_input;
@@ -94,10 +102,10 @@ typedef struct c89_map_state {
   const lonejson_map *map;
   c89_map_record record;
   int encode;
+  int root_required;
   c89cbor_source source;
   c89cbor_sink sink;
-  c89cbor_encoder encoder;
-  c89cbor_decoder decoder;
+  c89_map_codec codec;
   c89cbor_frame *wire_frames;
   c89_map_frame *frames;
   size_t depth;
@@ -112,6 +120,7 @@ typedef struct c89_map_state {
   size_t unknown_count;
   size_t unknown_length;
   char *key;
+  const char *key_data;
   size_t key_length;
   unsigned char *input;
   size_t input_capacity;

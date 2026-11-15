@@ -102,7 +102,7 @@ int c89_map_fail(c89_map_state *state, int status, const char *message) {
   c89_error(&state->owner->lifetime, status, "mapped-record");
   error->status = status;
   error->offset = state->encode ? state->owner->lifetime.progress.input
-                                : state->decoder.lifetime.progress.input;
+                                : state->codec.decoder.lifetime.progress.input;
   strncpy(error->message, message, sizeof(error->message) - 1u);
   if (state->depth != 0 && state->error_frame < state->depth)
     count = path_chain(state, state->error_frame);
@@ -119,8 +119,8 @@ int c89_map_fail(c89_map_state *state, int status, const char *message) {
   if (state->error_field != NULL && state->error_field->json_key != NULL)
     diagnostic_component(error, &used, state->error_field->json_key,
                          strlen(state->error_field->json_key));
-  else if (state->error_key && state->key != NULL)
-    diagnostic_component(error, &used, state->key, state->key_length);
+  else if (state->error_key && state->key_data != NULL)
+    diagnostic_component(error, &used, state->key_data, state->key_length);
   return status;
 }
 int c89_map_dependency(c89_map_state *state, lonejson_status status) {
@@ -161,9 +161,9 @@ void *c89_map_allocate(c89_map_state *state, size_t count, size_t size) {
   storage = state->allocator.alloc(state->allocator.context, count * size);
   if (storage == NULL) {
     c89_map_fail(state, C89CBOR_NOMEM, "mapped workspace allocation failed");
-  } else {
-    memset(storage, 0, count * size);
   }
+  /* Traversal frames and bitsets initialize on push; byte buffers initialize
+   * only their written spans. No reader may depend on fresh allocator bytes. */
   return storage;
 }
 int c89_map_push(c89_map_state *state, c89_map_kind kind, size_t parent,
@@ -181,8 +181,14 @@ int c89_map_push(c89_map_state *state, c89_map_kind kind, size_t parent,
   frame->path_index = index;
   frame->field = field;
   frame->needs_key = kind == C89_MAP_OBJECT;
-  frame->seen = state->seen + state->depth * state->seen_stride;
-  memset(frame->seen, 0, state->seen_stride);
+  if (!state->encode) {
+    if (state->seen != NULL) {
+      frame->seen = state->seen + state->depth * state->seen_stride;
+      memset(frame->seen, 0, state->seen_stride);
+    } else {
+      frame->seen = (unsigned char *)&frame->seen_bits;
+    }
+  }
   frame->unknown_start = state->unknown_count;
   frame->unknown_bytes = state->unknown_length;
   if (parent == (size_t)-1)
@@ -207,13 +213,20 @@ int c89_map_json_runtime(c89_map_state *state) {
   int status;
   if (state->bridge_runtime_ready)
     return C89CBOR_OK;
+  if (state->json_bridge == NULL) {
+    state->json_bridge =
+        c89_map_allocate(state, 1, sizeof(*state->json_bridge));
+    if (state->json_bridge == NULL)
+      return state->owner->lifetime.error.status;
+    memset(state->json_bridge, 0, sizeof(*state->json_bridge));
+  }
   config = c89cbor_default_config();
   config.allocator = state->allocator;
   config.json = state->json;
   config.step_input = state->options.step_input;
   config.step_output = state->options.step_output;
   config.step_events = state->options.step_events;
-  status = c89cbor_init(&state->bridge_runtime, &config, &error);
+  status = c89cbor_init(&state->json_bridge->runtime, &config, &error);
   if (status != 0)
     return status;
   state->bridge_runtime_ready = 1;
@@ -323,24 +336,16 @@ static void release_map(void *context) {
   c89_map_state *state = context;
   c89cbor_allocator allocator = state->allocator;
   if (state->bridge_ready)
-    (void)state->bridge.cleanup(&state->bridge);
+    (void)state->json_bridge->conversion.cleanup(
+        &state->json_bridge->conversion);
   if (state->bridge_runtime_ready)
-    (void)state->bridge_runtime.cleanup(&state->bridge_runtime);
+    (void)state->json_bridge->runtime.cleanup(&state->json_bridge->runtime);
   c89_map_payload_close(state);
 #define RELEASE_PART(member)                                                   \
   if (state->member != NULL)                                                   \
   allocator.free(allocator.context, state->member)
-  RELEASE_PART(wire_frames);
-  RELEASE_PART(frames);
+  RELEASE_PART(json_bridge);
   RELEASE_PART(seen);
-  RELEASE_PART(path_stack);
-  RELEASE_PART(schema_path);
-  RELEASE_PART(schema_inline);
-  RELEASE_PART(unknown_keys);
-  RELEASE_PART(unknown_storage);
-  RELEASE_PART(key);
-  RELEASE_PART(input);
-  RELEASE_PART(output);
   RELEASE_PART(scratch);
 #undef RELEASE_PART
   allocator.free(allocator.context, state);
@@ -376,23 +381,116 @@ static int validate_bindings(c89_map_state *state) {
   return C89CBOR_OK;
 }
 
+/* Allocate the traversal workspace once. Each slice has the strongest
+ * alignment required by its members; all arithmetic is checked before the
+ * allocator callback. Contents initialize when their frames/spans are used. */
+typedef union workspace_alignment {
+  c89_map_frame mapped;
+  c89cbor_frame wire;
+  c89_map_key key;
+  const lonejson_map *schema;
+  size_t index;
+} workspace_alignment;
+typedef struct workspace_probe {
+  char prefix;
+  workspace_alignment value;
+} workspace_probe;
+typedef struct workspace_layout {
+  size_t total, wire_frames, frames, schema_path, schema_inline, path_stack;
+  size_t input, output, key, unknown_keys, unknown_storage;
+} workspace_layout;
+/* The compiler supplies native slice alignment for the usual bounds. This is
+ * a heap layout, never a stack object; other bounds use the checked layout. */
+typedef struct default_workspace {
+  c89_map_state state;
+  c89cbor_frame wire_frames[C89CBOR_DEPTH];
+  c89_map_frame frames[C89CBOR_DEPTH];
+  const lonejson_map *schema_path[C89CBOR_DEPTH];
+  unsigned char schema_inline[C89CBOR_DEPTH];
+  size_t path_stack[C89CBOR_DEPTH];
+  unsigned char input[C89CBOR_CHUNK];
+  unsigned char buffer[C89CBOR_CHUNK];
+} default_workspace;
+static const workspace_layout default_layout = {
+    sizeof(default_workspace),
+    offsetof(default_workspace, wire_frames),
+    offsetof(default_workspace, frames),
+    offsetof(default_workspace, schema_path),
+    offsetof(default_workspace, schema_inline),
+    offsetof(default_workspace, path_stack),
+    offsetof(default_workspace, input),
+    offsetof(default_workspace, buffer),
+    offsetof(default_workspace, buffer),
+    0,
+    0};
+static int layout_workspace(const c89cbor_options *options, int encode,
+                            workspace_layout *layout) {
+  size_t used = sizeof(c89_map_state), count, size, padding;
+  size_t alignment = offsetof(workspace_probe, value);
+  if (options->depth == C89CBOR_DEPTH && options->chunk == C89CBOR_CHUNK &&
+      (encode || (!options->allow_unknown_fields &&
+                  options->key_bytes == C89CBOR_CHUNK))) {
+    *layout = default_layout;
+    return C89CBOR_OK;
+  }
+  if (options->depth == (size_t)-1 || options->chunk > (size_t)-1 - 4u)
+    return C89CBOR_LIMIT;
+#define PART(member, length)                                                   \
+  do {                                                                         \
+    count = (length);                                                          \
+    size = sizeof(*((c89_map_state *)0)->member);                              \
+    padding = (alignment - used % alignment) % alignment;                      \
+    if (padding > (size_t)-1 - used ||                                         \
+        count > ((size_t)-1 - used - padding) / size)                          \
+      return C89CBOR_LIMIT;                                                    \
+    used += padding;                                                           \
+    layout->member = used;                                                     \
+    used += count * size;                                                      \
+  } while (0)
+  PART(wire_frames, options->depth);
+  PART(frames, options->depth);
+  PART(schema_path, options->depth);
+  PART(schema_inline, options->depth);
+  PART(path_stack, options->depth);
+  PART(input, options->chunk < 4u ? 4u : options->chunk);
+  if (encode) {
+    PART(output, options->chunk);
+  } else {
+    PART(key, options->key_bytes);
+    if (options->allow_unknown_fields) {
+      PART(unknown_keys, options->active_keys);
+      PART(unknown_storage, options->active_key_bytes);
+    }
+  }
+#undef PART
+  layout->total = used;
+  return C89CBOR_OK;
+}
+static void attach_workspace(c89_map_state *state,
+                             const workspace_layout *layout) {
+#define PART(member)                                                           \
+  state->member = (void *)((unsigned char *)state + layout->member)
+  PART(wire_frames);
+  PART(frames);
+  PART(schema_path);
+  PART(schema_inline);
+  PART(path_stack);
+  PART(input);
+  if (state->encode) {
+    PART(output);
+  } else {
+    PART(key);
+    if (state->options.allow_unknown_fields) {
+      PART(unknown_keys);
+      PART(unknown_storage);
+    }
+  }
+#undef PART
+}
 static int prepare_map(c89_map_state *state, size_t extent) {
   c89cbor *runtime = state->runtime;
   int status;
-  if (state->options.depth == (size_t)-1 ||
-      state->options.chunk > (size_t)-1 - 4u)
-    return c89_map_fail(state, C89CBOR_LIMIT, "mapped workspace size overflow");
-  state->wire_frames = c89_map_allocate(state, state->options.depth,
-                                        sizeof(*state->wire_frames));
-  state->frames =
-      c89_map_allocate(state, state->options.depth, sizeof(*state->frames));
-  state->schema_path = c89_map_allocate(state, state->options.depth,
-                                        sizeof(*state->schema_path));
-  state->schema_inline = c89_map_allocate(state, state->options.depth, 1);
-  state->path_stack =
-      c89_map_allocate(state, state->options.depth, sizeof(*state->path_stack));
-  if (state->owner->lifetime.error.status != 0)
-    return state->owner->lifetime.error.status;
+  state->key_data = state->key;
   status = c89_map_schema(state, state->map, extent, 0);
   if (status != 0)
     return status;
@@ -404,16 +502,11 @@ static int prepare_map(c89_map_state *state, size_t extent) {
   state->seen_stride = (state->max_fields + 7u) / 8u;
   if (state->seen_stride == 0)
     state->seen_stride = 1;
-  state->seen =
-      c89_map_allocate(state, state->options.depth, state->seen_stride);
-  state->unknown_keys = c89_map_allocate(state, state->options.active_keys,
-                                         sizeof(*state->unknown_keys));
-  state->unknown_storage =
-      c89_map_allocate(state, state->options.active_key_bytes, 1);
-  state->key = c89_map_allocate(state, state->options.key_bytes, 1);
-  state->input_capacity = state->options.chunk < 4u ? 4u : state->options.chunk;
-  state->input = c89_map_allocate(state, state->input_capacity, 1);
-  state->output = c89_map_allocate(state, state->options.chunk, 1);
+  if (!state->encode &&
+      state->seen_stride > sizeof(state->frames[0].seen_bits)) {
+    state->seen =
+        c89_map_allocate(state, state->options.depth, state->seen_stride);
+  }
   if (state->owner->lifetime.error.status != 0)
     return state->owner->lifetime.error.status;
   status = validate_bindings(state);
@@ -429,8 +522,9 @@ static int prepare_map(c89_map_state *state, size_t extent) {
     state->json = runtime->json;
   }
   if (state->encode) {
-    status = c89cbor_encoder_init(NULL, &state->encoder, state->wire_frames,
-                                  state->options.depth, state->options.chunk);
+    status =
+        c89cbor_encoder_init(NULL, &state->codec.encoder, state->wire_frames,
+                             state->options.depth, state->options.chunk);
     if (status != 0)
       return c89_map_fail(state, status, "could not initialize mapped encoder");
     status = c89_map_push(state, C89_MAP_OBJECT, (size_t)-1, NULL, 0);
@@ -439,8 +533,9 @@ static int prepare_map(c89_map_state *state, size_t extent) {
     state->frames[0].map = state->map;
     state->frames[0].record.input = state->record.input;
   } else {
-    status = c89cbor_decoder_init(NULL, &state->decoder, state->wire_frames,
-                                  state->options.depth, state->options.chunk);
+    status =
+        c89cbor_decoder_init(NULL, &state->codec.decoder, state->wire_frames,
+                             state->options.depth, state->options.chunk);
     if (status != 0)
       return c89_map_fail(state, status, "could not initialize mapped decoder");
   }
@@ -453,6 +548,8 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
                           const c89cbor_options *options, lonejson *json,
                           int encode, c89cbor_error *error) {
   c89_map_state *state;
+  c89cbor_options resolved;
+  workspace_layout layout = {0};
   int status = c89_conversion_prepare(runtime, conversion, error);
   if (status != 0)
     return status;
@@ -465,12 +562,22 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
     return C89CBOR_INVALID;
   }
   conversion->lifetime.busy = 1;
-  state = conversion->lifetime.allocator.alloc(
-      conversion->lifetime.allocator.context, sizeof(*state));
+  c89_options_resolve(runtime, options, &resolved);
+  status = layout_workspace(&resolved, encode, &layout);
+  state = status == 0
+              ? conversion->lifetime.allocator.alloc(
+                    conversion->lifetime.allocator.context, layout.total)
+              : NULL;
   if (state == NULL) {
-    status = c89_error(&conversion->lifetime, C89CBOR_NOMEM, "mapped-record");
+    status = c89_error(&conversion->lifetime,
+                       status == 0 ? C89CBOR_NOMEM : status, "mapped-record");
   } else {
-    memset(state, 0, sizeof(*state));
+    /* Only the selected codec is initialized below. Its embedded frames are
+     * unused because mapped traversal supplies workspace frames. */
+    memset(state, 0, offsetof(c89_map_state, codec));
+    memset((unsigned char *)state + offsetof(c89_map_state, wire_frames), 0,
+           sizeof(*state) - offsetof(c89_map_state, wire_frames));
+    state->codec.decoder.lifetime.progress.input = 0;
     conversion->state = state;
     state->operation.step = encode ? c89_map_encode_step : c89_map_decode_step;
     state->operation.release = release_map;
@@ -489,7 +596,9 @@ static int initialize_map(c89cbor *runtime, c89cbor_conversion *conversion,
       state->source = *source;
       state->record.output = output_record;
     }
-    c89_options_resolve(runtime, options, &state->options);
+    state->options = resolved;
+    state->input_capacity = resolved.chunk < 4u ? 4u : resolved.chunk;
+    attach_workspace(state, &layout);
     status = prepare_map(state, extent);
   }
   conversion->lifetime.busy = 0;

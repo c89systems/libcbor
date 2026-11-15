@@ -260,6 +260,11 @@ if(C89CBOR_BENCHMARKS)
         "-DREFERENCE=$<TARGET_FILE:reference_mapped_benchmark>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/interop"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/interop.cmake")
       set_tests_properties(benchmark-reference-smoke interop-reference PROPERTIES TIMEOUT 30)
+      add_test(NAME benchmark-audit COMMAND ${CMAKE_COMMAND}
+        "-DNATIVE=$<TARGET_FILE:profile_benchmark>"
+        "-DREFERENCE=$<TARGET_FILE:reference_mapped_benchmark>"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark-audit.cmake)
+      set_tests_properties(benchmark-audit PROPERTIES TIMEOUT 30)
     endif()
     c89_owned(reference_benchmark)
     target_include_directories(reference_benchmark SYSTEM PRIVATE "${C89CBOR_REFERENCE_PREFIX}/include")

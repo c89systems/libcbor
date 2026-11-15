@@ -71,6 +71,15 @@ void bench_counts_reset(bench_counts *counts) {
   memset(counts, 0, sizeof(*counts));
   counts->bytes = counts->peak = live;
 }
+int bench_enabled(const char *name) {
+  const char *value = getenv(name);
+  if (value == NULL || strcmp(value, "0") == 0)
+    return 0;
+  if (strcmp(value, "1") == 0)
+    return 1;
+  fprintf(stderr, "%s must be 0 or 1\n", name);
+  abort();
+}
 double bench_wall(void) {
   struct timespec value;
   if (clock_gettime(CLOCK_MONOTONIC, &value) != 0)
@@ -113,7 +122,7 @@ void bench_report(const char *implementation, const char *name,
          "calls\":%lu,\"reallocation_"
          "calls\":%lu,\"peak_owned_bytes\":%lu,"
          "\"endpoint_copy_bytes\":%.0f,\"read_calls\":%.0f,\"write_calls\":%."
-         "0f,\"rss_bytes\":%.0f,\"setup_seconds\":%.9f}\n",
+         "0f,\"rss_bytes\":%.0f,\"setup_seconds\":%.9f,",
          implementation, name, fixture, round, (unsigned long)records,
          (unsigned long)wire_size, seconds, cpu_seconds,
          (double)records / seconds, seconds * 1e9 / (double)records,
@@ -123,4 +132,8 @@ void bench_report(const char *implementation, const char *name,
          (unsigned long)counts->reallocations, (unsigned long)counts->peak,
          (double)counts->copies, (double)counts->reads, (double)counts->writes,
          (double)rss, setup_seconds);
+  printf("\"system_allocator\":%d,\"untimed_verification\":%d,"
+         "\"transient_schema\":%d}\n",
+         counts->system_allocator, counts->untimed_verification,
+         counts->transient_schema);
 }

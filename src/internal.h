@@ -9,6 +9,21 @@ typedef struct c89_operation {
   int (*step)(void *state);
   void (*release)(void *state);
 } c89_operation;
+int c89_utf8(c89cbor_frame *frame, const unsigned char *data, size_t count);
+int c89_encoder_buffer(c89cbor_encoder *encoder, const c89cbor_token *token,
+                       unsigned char *output, size_t capacity, size_t *written);
+int c89_encoder_buffer_text(c89cbor_encoder *encoder, const void *text,
+                            size_t length, unsigned char *output,
+                            size_t capacity, size_t *written);
+int c89_encoder_buffer_key(c89cbor_encoder *encoder,
+                           const lonejson_field *field, unsigned char *output,
+                           size_t capacity, size_t *written);
+int c89_encoder_buffer_pair(c89cbor_encoder *encoder,
+                            const lonejson_field *field,
+                            const c89cbor_token *value, unsigned char *output,
+                            size_t capacity, size_t *written);
+int c89_decoder_text(c89cbor_decoder *decoder, const unsigned char *input,
+                     size_t length, size_t *consumed, int matched);
 void c89_options_resolve(const c89cbor *runtime, const c89cbor_options *options,
                          c89cbor_options *resolved);
 int c89_conversion_prepare(c89cbor *runtime, c89cbor_conversion *conversion,
