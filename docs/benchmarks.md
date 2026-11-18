@@ -62,7 +62,7 @@ JSONL includes the control flags. Latency samples use 16-record batch means for
 small fixtures and individual operations for large text, with sample counts and
 batch sizes reported.
 
-### Current mapped measurements
+### Mapped workspace measurements
 
 The workspace/short-text optimization (`36c6d4d`) was measured against `70ab496`
 with identical benchmark objects, Release options and CPU affinity 7. The full
@@ -114,6 +114,37 @@ Peak allocation counters observe configured allocator hooks; RSS is the process
 high-water mark. Endpoint copy counts measure harness reads, writes and final
 record copies. Library-internal copies, provider allocations and Lua VM storage
 have separate ownership and are outside those counters.
+
+## Small-record codec costs
+
+`codec_roundtrip_static` and `codec_roundtrip_shared` measure the existing public
+C codec API in encode, decode or roundtrip mode. Each record includes finish and
+reset; initialization is outside timing. Output passes through bounded borrowed
+spans. Grammar and UTF-8 validation stay enabled; the final argument optionally
+adds byte comparisons. For example:
+
+```sh
+scripts/build.sh core x86_64-linux-musl Release '' -DC89CBOR_BENCHMARKS=ON
+build/x86_64-linux-musl-release/codec_roundtrip_static roundtrip 64 4194304 32768 text 0
+```
+
+On 2026-11-18, paired runs against v0.1.0 used the pinned musl Release compiler,
+CPU affinity 7, one warmup and five measured rounds per invocation. Execution
+order was reversed between passes. These ASCII roundtrip medians are nanoseconds
+per record, with 20 measured rounds for 64 bytes and 10 for larger records:
+
+| Payload bytes | Static before | Static after | Shared before | Shared after |
+| ---: | ---: | ---: | ---: | ---: |
+| 64 | 110.0 | 93.8 | 121.9 | 114.2 |
+| 4096 | 590.1 | 292.4 | 630.9 | 307.6 |
+| 32768 | 4066.1 | 1640.4 | 4170.7 | 1656.5 |
+
+The codec scans ASCII in bounded 32-byte groups and reuses established grammar
+bounds when consuming DATA and emitting implicit END events. The 4 KiB multibyte
+UTF-8 control retained essentially the same instruction count; its elapsed-time
+medians stayed within 2.1% of baseline. Raw rounds, binary/source hashes and build
+context are under `build/small-payload/`. The table uses 32 KiB chunks; separate
+2 KiB chunk and byte-string controls are retained there too.
 
 ## Codec, Lua and transport workloads
 

@@ -274,12 +274,111 @@ static void incomplete_text(void) {
   assert(c89cbor_encoder_read(&encoder, &out, 1, &n) == C89CBOR_MALFORMED);
   assert(n == 0);
 }
+static void text_scan_case(const unsigned char *bytes, size_t length,
+                           size_t chunk, int expected) {
+  c89cbor_decoder d;
+  c89cbor_encoder e;
+  c89cbor_token t, decoded;
+  const void *output, *again;
+  size_t n, used, at = 0, repeated;
+  int status = C89CBOR_OK;
+  assert(c89cbor_decoder_init(NULL, &d, NULL, 0, chunk) == 0);
+  assert(c89cbor_encoder_init(NULL, &e, NULL, 0, chunk) == 0);
+  memset(&t, 0, sizeof(t));
+  t.type = C89CBOR_TEXT;
+  t.argument = length;
+  assert(c89cbor_encoder_put(&e, &t) == 0);
+  do {
+    assert(c89cbor_encoder_peek(&e, &output, &n) == C89CBOR_OUTPUT);
+    status = c89cbor_decoder_next(&d, output, n, &used, &decoded);
+    assert(used == n && (status == C89CBOR_INPUT || status == C89CBOR_TOKEN));
+    status = c89cbor_encoder_advance(&e, n);
+  } while (status == C89CBOR_OUTPUT);
+  assert(decoded.type == C89CBOR_TEXT && decoded.argument == length);
+  memset(&t, 0, sizeof(t));
+  t.type = C89CBOR_DATA;
+  t.data = bytes;
+  t.length = length;
+  assert(c89cbor_encoder_put(&e, &t) == 0);
+  while (at < length) {
+    size_t take = length - at < chunk ? length - at : chunk;
+    status = c89cbor_encoder_peek(&e, &output, &n);
+    if (status == C89CBOR_MALFORMED) {
+      assert(expected == C89CBOR_MALFORMED && output == NULL && n == 0);
+      assert(c89cbor_decoder_next(&d, bytes + at, take, &used, &decoded) ==
+             status);
+      assert(used == take);
+      break;
+    }
+    assert(status == C89CBOR_OUTPUT && n == take);
+    assert(c89cbor_encoder_peek(&e, &again, &repeated) == C89CBOR_OUTPUT);
+    assert(again == output && repeated == n);
+    assert(c89cbor_decoder_next(&d, output, n, &used, &decoded) ==
+           C89CBOR_TOKEN);
+    assert(used == n && decoded.type == C89CBOR_DATA && decoded.length == n);
+    assert(memcmp(decoded.data, bytes + at, n) == 0);
+    assert(c89cbor_encoder_advance(&e, n) >= 0);
+    at += n;
+  }
+  if (expected == C89CBOR_MALFORMED) {
+    assert(status == expected);
+    assert(c89cbor_encoder_finish(&e) == expected);
+    assert(c89cbor_decoder_finish(&d) == expected);
+    assert(c89cbor_decoder_next(&d, NULL, 0, &used, &decoded) == expected &&
+           used == 0);
+    assert(c89cbor_encoder_peek(&e, &output, &n) == expected && n == 0);
+    assert(c89cbor_encoder_reset(&e) == C89CBOR_INVALID);
+    assert(c89cbor_decoder_reset(&d) == C89CBOR_INVALID);
+  } else {
+    memset(&t, 0, sizeof(t));
+    t.type = C89CBOR_END;
+    t.argument = C89CBOR_TEXT;
+    assert(c89cbor_encoder_put(&e, &t) == 0);
+    assert(c89cbor_decoder_next(&d, NULL, 0, &used, &decoded) == C89CBOR_TOKEN);
+    assert(used == 0 && decoded.type == C89CBOR_END &&
+           decoded.argument == C89CBOR_TEXT);
+    assert(c89cbor_decoder_next(&d, NULL, 0, &used, &decoded) == C89CBOR_DONE);
+    assert(c89cbor_encoder_finish(&e) == 0 && c89cbor_decoder_finish(&d) == 0);
+    assert(c89cbor_encoder_reset(&e) == 0 && c89cbor_decoder_reset(&d) == 0);
+  }
+  assert(c89cbor_encoder_cleanup(&e) == 0 && c89cbor_decoder_cleanup(&d) == 0);
+}
+static void text_scans(void) {
+  unsigned char storage[144], *bytes;
+  static const size_t chunks[] = {1, 7, 8, 15, 16, 31, 32, 63, 64, 96};
+  size_t alignment, length, position, c;
+  for (alignment = 0; alignment < 8; ++alignment) {
+    bytes = storage + alignment;
+    for (length = 0; length <= 96; ++length) {
+      memset(bytes, 'a', length);
+      if (length != 0)
+        bytes[length / 2] = 0;
+      text_scan_case(bytes, length, 128, C89CBOR_OK);
+    }
+    for (position = 0; position <= 64; ++position) {
+      memset(bytes, 'a', 96);
+      memcpy(bytes + position, "\xf0\x9f\x98\x80", 4);
+      for (c = 0; c < sizeof(chunks) / sizeof(chunks[0]); ++c)
+        text_scan_case(bytes, 96, chunks[c], C89CBOR_OK);
+      text_scan_case(bytes, position + 1, 128, C89CBOR_MALFORMED);
+      memset(bytes + position, 'a', 4);
+      bytes[position] = 0x80;
+      text_scan_case(bytes, 96, 128, C89CBOR_MALFORMED);
+      memcpy(bytes + position, "\xed\xa0\x80", 3);
+      text_scan_case(bytes, 96, 128, C89CBOR_MALFORMED);
+      memset(bytes + position, 'a', 4);
+      bytes[position] = 0xf0;
+      text_scan_case(bytes, 96, 32, C89CBOR_MALFORMED);
+    }
+  }
+}
 int main(void) {
   pthread_t worker;
   vectors();
   bounds();
   ownership();
   incomplete_text();
+  text_scans();
   assert(pthread_create(&worker, NULL, no_alloc, NULL) == 0);
   assert(pthread_join(worker, NULL) == 0);
   puts("codec: vectors, fragmentation, truncation, limits, ownership, 64 MiB "

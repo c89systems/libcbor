@@ -228,6 +228,31 @@ if(BUILD_TESTING AND NOT C89CBOR_DISABLE_TESTS)
   endforeach()
 endif()
 if(C89CBOR_BENCHMARKS)
+  foreach(kind static shared)
+    add_executable(codec_roundtrip_${kind} bench/roundtrip.c)
+    c89_owned(codec_roundtrip_${kind})
+    target_compile_options(codec_roundtrip_${kind} PRIVATE -UNDEBUG)
+    target_link_libraries(codec_roundtrip_${kind} PRIVATE c89cbor_${kind})
+    c89_runtime(codec_roundtrip_${kind})
+    if(BUILD_TESTING AND NOT C89CBOR_DISABLE_TESTS)
+      foreach(fixture bytes text utf8)
+        foreach(mode encode decode roundtrip)
+          add_test(NAME benchmark-codec-${mode}-${kind}-${fixture}
+            COMMAND codec_roundtrip_${kind} ${mode} 64 16 32768 ${fixture} 1)
+          set_tests_properties(benchmark-codec-${mode}-${kind}-${fixture} PROPERTIES TIMEOUT 15)
+        endforeach()
+      endforeach()
+      add_test(NAME benchmark-codec-${kind}-invalid-mode
+        COMMAND codec_roundtrip_${kind} invalid 64 1 32768 text 1)
+      add_test(NAME benchmark-codec-${kind}-invalid-size
+        COMMAND codec_roundtrip_${kind} roundtrip 32769 1 32768 text 1)
+      add_test(NAME benchmark-codec-${kind}-invalid-number
+        COMMAND codec_roundtrip_${kind} roundtrip 64 invalid 32768 text 1)
+      set_tests_properties(benchmark-codec-${kind}-invalid-mode
+        benchmark-codec-${kind}-invalid-size benchmark-codec-${kind}-invalid-number
+        PROPERTIES WILL_FAIL TRUE TIMEOUT 5)
+    endif()
+  endforeach()
   add_executable(cose_benchmark bench/cose.c bench/measure.c)
   c89_owned(cose_benchmark)
   target_compile_options(cose_benchmark PRIVATE -UNDEBUG)

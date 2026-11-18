@@ -71,22 +71,45 @@ static int begin(c89cbor_state *s, const c89cbor_token *t) {
     return fail(s, C89CBOR_MALFORMED);
   return accept_value(s, t);
 }
+/* Bounded unaligned loads; stop before the first non-ASCII byte. */
+static size_t ascii_prefix(const unsigned char *data, size_t count) {
+  size_t i = 0;
+  while (count - i >= 4 * sizeof(uint64_t)) {
+    uint64_t a, b, c, d;
+    memcpy(&a, data + i, sizeof(a));
+    memcpy(&b, data + i + sizeof(a), sizeof(b));
+    memcpy(&c, data + i + 2 * sizeof(a), sizeof(c));
+    memcpy(&d, data + i + 3 * sizeof(a), sizeof(d));
+    if ((a | b | c | d) & UINT64_C(0x8080808080808080))
+      break;
+    i += 4 * sizeof(uint64_t);
+  }
+  while (count - i >= sizeof(uint64_t)) {
+    uint64_t word;
+    memcpy(&word, data + i, sizeof(word));
+    if (word & UINT64_C(0x8080808080808080))
+      break;
+    i += sizeof(word);
+  }
+  while (i < count && data[i] < 128U)
+    ++i;
+  return i;
+}
 int c89_utf8(c89cbor_frame *f, const unsigned char *data, size_t count) {
   size_t i = 0;
   unsigned int pending = f->utf8, byte;
-  uint32_t scalar = f->scalar, minimum = f->minimum;
+  uint32_t scalar, minimum;
+  if (!pending && count != 0 && data[0] < 128U) {
+    i = ascii_prefix(data, count);
+    if (i == count)
+      return 1;
+  }
+  scalar = f->scalar;
+  minimum = f->minimum;
   while (i < count) {
     byte = data[i];
     if (!pending && byte < 128U) {
-      while (count - i >= sizeof(uint64_t)) {
-        uint64_t word;
-        memcpy(&word, data + i, sizeof(word));
-        if (word & UINT64_C(0x8080808080808080))
-          break;
-        i += sizeof(word);
-      }
-      while (i < count && data[i] < 128U)
-        ++i;
+      i += ascii_prefix(data + i, count - i);
       continue;
     }
     ++i;
@@ -124,16 +147,23 @@ static int data_room(c89cbor_state *s, const void *data, size_t n) {
     return fail(s, C89CBOR_MALFORMED);
   return C89CBOR_OK;
 }
-static int data_take(c89cbor_state *s, const void *data, size_t n) {
-  c89cbor_frame *f;
-  if (data_room(s, data, n) < 0)
-    return s->failed;
-  f = top(s);
+/* Consume a span already bounded to a live definite string frame. */
+static int data_consume(c89cbor_state *s, c89cbor_frame *f, const void *data,
+                        size_t n) {
   if (f->type == C89CBOR_TEXT &&
       (!c89_utf8(f, data, n) || ((uint64_t)n == f->remaining && f->utf8)))
     return fail(s, C89CBOR_MALFORMED);
   f->remaining -= (uint64_t)n;
   return C89CBOR_OK;
+}
+static int data_take(c89cbor_state *s, const void *data, size_t n) {
+  if (data_room(s, data, n) < 0)
+    return s->failed;
+  return data_consume(s, top(s), data, n);
+}
+static void end_frame(c89cbor_state *s) {
+  --s->depth;
+  done(s);
 }
 static int end(c89cbor_state *s, uint64_t type) {
   c89cbor_frame *f = top(s);
@@ -141,8 +171,7 @@ static int end(c89cbor_state *s, uint64_t type) {
       (!f->indefinite && f->remaining != 0) || f->utf8 ||
       (f->type == C89CBOR_MAP && f->odd))
     return fail(s, C89CBOR_MALFORMED);
-  --s->depth;
-  done(s);
+  end_frame(s);
   return C89CBOR_OK;
 }
 static int state_init(c89cbor_state *s, c89cbor_frame *frames, size_t capacity,
@@ -285,8 +314,10 @@ static int decoder_next_work(c89cbor_decoder *d, const void *input, size_t n,
   if (f != NULL && !f->indefinite && f->remaining == 0) {
     t->type = C89CBOR_END;
     t->argument = (uint64_t)f->type;
-    rc = end(&d->state, t->argument);
-    return rc < 0 ? rc : C89CBOR_TOKEN;
+    /* Reaching zero proves the frame's final DATA/child was accepted. UTF-8
+     * completion and map parity were checked before decrementing remaining. */
+    end_frame(&d->state);
+    return C89CBOR_TOKEN;
   }
   if (d->state.complete)
     return C89CBOR_DONE;
@@ -297,7 +328,7 @@ static int decoder_next_work(c89cbor_decoder *d, const void *input, size_t n,
     take = n < d->state.chunk ? n : d->state.chunk;
     if ((uint64_t)take > f->remaining)
       take = (size_t)f->remaining;
-    rc = data_take(&d->state, p, take);
+    rc = data_consume(&d->state, f, p, take);
     *consumed = take;
     if (rc < 0)
       return rc;
@@ -542,7 +573,8 @@ int c89cbor_encoder_peek(c89cbor_encoder *e, const void **bytes,
     return C89CBOR_OK;
   if (e->validated == 0) {
     take = e->remaining < e->state.chunk ? e->remaining : e->state.chunk;
-    status = data_take(&e->state, e->data, take);
+    /* put checked the complete DATA extent; remaining bounds each chunk. */
+    status = data_consume(&e->state, top(&e->state), e->data, take);
     if (status != 0)
       return c89_error(&e->lifetime, status, "encoder");
     e->validated = take;
